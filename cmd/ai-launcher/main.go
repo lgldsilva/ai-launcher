@@ -18,6 +18,15 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/tui"
 )
 
+// Build metadata injected via -ldflags "-X main.version=..." at build time
+// (Makefile and .goreleaser.yaml). These identify the BINARY release; they are
+// unrelated to config.CurrentVersion, which versions the config file schema.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 type stringList []string
 
 func (s *stringList) String() string { return strings.Join(*s, ",") }
@@ -53,6 +62,7 @@ type cliOptions struct {
 	dryRun, save, install, upgrade bool
 	listProfiles                   bool
 	continueSession                bool
+	showVersion                    bool
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
@@ -93,6 +103,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.saveProfile, "save-profile", "", "save the fully merged selection as the named profile in the global config and exit without launching")
 	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
+	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
 }
 
 // applyToLocal folds every explicitly-set flag into the local configuration
@@ -177,6 +188,10 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	opts.register(flags)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if opts.showVersion {
+		_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
+		return nil
 	}
 
 	home, err := os.UserHomeDir()

@@ -3,6 +3,11 @@ COVERAGE_FILE ?= coverage.out
 COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher
 COVERAGE_MIN ?= 90
 DIST_DIR ?= dist
+# Build metadata injected into cmd/ai-launcher's version/commit/date vars.
+# Kept as shell command substitutions so `make build` stays honest even when
+# the variables are evaluated in a recipe. GoReleaser injects the same vars
+# with its own template values for release builds.
+LDFLAGS ?= -ldflags "-X main.version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X main.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo none) -X main.date=$$(date -u +%Y-%m-%d)"
 # Quality tools run through `go run` so no system-wide install is required;
 # override with the installed binary to speed up local runs (for example
 # `make lint-full GOLANGCI_LINT=golangci-lint`).
@@ -13,22 +18,22 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
 .PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
 
 build:
-	$(GO) build -buildvcs=false -o bin/ai-launcher ./cmd/ai-launcher
+	$(GO) build -buildvcs=false $(LDFLAGS) -o bin/ai-launcher ./cmd/ai-launcher
 
 build-linux:
 	@mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-linux-amd64 ./cmd/ai-launcher
-	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-linux-arm64 ./cmd/ai-launcher
+	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false $(LDFLAGS) -o $(DIST_DIR)/ai-launcher-linux-amd64 ./cmd/ai-launcher
+	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false $(LDFLAGS) -o $(DIST_DIR)/ai-launcher-linux-arm64 ./cmd/ai-launcher
 
 build-macos:
 	@mkdir -p $(DIST_DIR)
-	GOOS=darwin GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-darwin-amd64 ./cmd/ai-launcher
-	GOOS=darwin GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-darwin-arm64 ./cmd/ai-launcher
+	GOOS=darwin GOARCH=amd64 $(GO) build -buildvcs=false $(LDFLAGS) -o $(DIST_DIR)/ai-launcher-darwin-amd64 ./cmd/ai-launcher
+	GOOS=darwin GOARCH=arm64 $(GO) build -buildvcs=false $(LDFLAGS) -o $(DIST_DIR)/ai-launcher-darwin-arm64 ./cmd/ai-launcher
 
 build-windows:
 	@mkdir -p $(DIST_DIR)
-	GOOS=windows GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-windows-amd64.exe ./cmd/ai-launcher
-	GOOS=windows GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-windows-arm64.exe ./cmd/ai-launcher
+	GOOS=windows GOARCH=amd64 $(GO) build -buildvcs=false $(LDFLAGS) -o $(DIST_DIR)/ai-launcher-windows-amd64.exe ./cmd/ai-launcher
+	GOOS=windows GOARCH=arm64 $(GO) build -buildvcs=false $(LDFLAGS) -o $(DIST_DIR)/ai-launcher-windows-arm64.exe ./cmd/ai-launcher
 
 build-release: build-linux build-macos build-windows
 

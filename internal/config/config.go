@@ -13,6 +13,9 @@ import (
 )
 
 // CurrentVersion is the configuration schema version written by this build.
+// It versions the config FILE format only — it is not the binary release
+// version (that is the `version` variable in cmd/ai-launcher, injected via
+// ldflags at build time and printed by --version).
 const CurrentVersion = "2.0"
 
 // DefaultMemoryServerURL is the ai-memory server used when the global config
