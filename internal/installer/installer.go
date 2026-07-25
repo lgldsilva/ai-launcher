@@ -430,6 +430,23 @@ func isSHA256(value string) bool {
 	return err == nil
 }
 
+// ExtractArchiveBinary extracts the named binary from a downloaded release
+// archive (tar.gz, tgz, or zip, detected from the asset name), applying the
+// same path-traversal guard used for third-party installs. It is exported for
+// the self-update flow, which consumes the same GoReleaser archive layout but
+// replaces the running executable instead of installing another tool.
+func ExtractArchiveBinary(data []byte, assetName, binaryName string) ([]byte, error) {
+	return extractBinary(data, assetName, binaryName, binaryName)
+}
+
+// ChecksumFor returns the SHA-256 hex recorded for filename inside a checksum
+// file body such as GoReleaser's checksums.txt. It is exported for the
+// self-update flow, which verifies the release archive against checksums.txt
+// before replacing the running executable.
+func ChecksumFor(data []byte, filename string) (string, error) {
+	return checksumFor(data, filename)
+}
+
 func extractBinary(data []byte, assetName, binary, command string) ([]byte, error) {
 	name := strings.TrimSpace(binary)
 	if name == "" {

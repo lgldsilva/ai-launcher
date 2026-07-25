@@ -15,6 +15,7 @@ import (
 	launchcmd "github.com/lgldsilva/ai-launcher/internal/cmd"
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
+	"github.com/lgldsilva/ai-launcher/internal/selfupdate"
 	"github.com/lgldsilva/ai-launcher/internal/tui"
 )
 
@@ -182,6 +183,14 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
+	// A positional `upgrade` as the first argument is the self-update
+	// subcommand (mirroring semidx). It must be intercepted before the launch
+	// flag parsing, which would otherwise treat it as extra agent arguments.
+	// It is unrelated to the --upgrade flag, which forces a reinstall of the
+	// configured third-party tools.
+	if len(args) > 0 && args[0] == "upgrade" {
+		return runUpgrade(args[1:], out, errOut)
+	}
 	flags := flag.NewFlagSet("ai-launcher", flag.ContinueOnError)
 	flags.SetOutput(errOut)
 	var opts cliOptions
@@ -296,6 +305,87 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
 	}
 	return launch(args, opts, global, local, launchConfig, in, out, errOut)
+}
+
+// upgradeResolveTag and upgradeApply are seams: tests stub them to exercise
+// the upgrade wiring without network access or executable replacement.
+var upgradeResolveTag = func(ctx context.Context, updater *selfupdate.Updater, wantVersion string) (string, error) {
+	if wantVersion != "" {
+		return wantVersion, nil
+	}
+	return updater.LatestTag(ctx)
+}
+
+var upgradeApply = func(ctx context.Context, updater *selfupdate.Updater, tag string) error {
+	return updater.Apply(ctx, tag)
+}
+
+// runUpgrade implements `ai-launcher upgrade [--check] [--version vX.Y.Z]`,
+// the self-update of the running binary from this repository's GitHub
+// releases. Checksum verification is strict (a missing checksums.txt is a
+// hard error) because the flow overwrites the running executable.
+func runUpgrade(args []string, out, errOut io.Writer) error {
+	flags := flag.NewFlagSet("upgrade", flag.ContinueOnError)
+	flags.SetOutput(errOut)
+	check := flags.Bool("check", false, "only report whether an update is available")
+	wantVersion := flags.String("version", "", "install a specific release tag (default: latest)")
+	flags.Usage = func() {
+		_, _ = fmt.Fprint(errOut, `usage: ai-launcher upgrade [--check] [--version vX.Y.Z]
+
+Self-update the ai-launcher binary from the project's GitHub releases.
+Downloads the archive for this OS/arch, verifies its SHA-256 against the
+release checksums.txt (mandatory), and atomically replaces the running
+executable.
+
+Environment overrides:
+  AI_LAUNCHER_UPDATE_API    release API base (default `+selfupdate.DefaultAPIBaseURL+`)
+  AI_LAUNCHER_UPDATE_URL    download base URL (default `+selfupdate.DefaultDownloadBaseURL+`)
+  AI_LAUNCHER_UPDATE_TOKEN  GitHub token for private releases (sent as a
+                            Bearer header; never printed or logged)
+`)
+	}
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	updater := &selfupdate.Updater{
+		CurrentVersion:  version,
+		APIBaseURL:      envOr("AI_LAUNCHER_UPDATE_API", selfupdate.DefaultAPIBaseURL),
+		DownloadBaseURL: envOr("AI_LAUNCHER_UPDATE_URL", selfupdate.DefaultDownloadBaseURL),
+		Token:           os.Getenv("AI_LAUNCHER_UPDATE_TOKEN"),
+	}
+	ctx := context.Background()
+	tag, err := upgradeResolveTag(ctx, updater, *wantVersion)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "current: %s\nlatest:  %s\n", version, tag)
+	if *check {
+		if selfupdate.SameVersion(version, tag) {
+			_, _ = fmt.Fprintln(out, "already up to date.")
+		} else {
+			_, _ = fmt.Fprintln(out, "an update is available — run `ai-launcher upgrade`.")
+		}
+		return nil
+	}
+	if *wantVersion == "" && selfupdate.SameVersion(version, tag) {
+		_, _ = fmt.Fprintf(out, "already up to date (%s)\n", tag)
+		return nil
+	}
+	if err := upgradeApply(ctx, updater, tag); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "ai-launcher updated: %s → %s\n", version, tag)
+	return nil
+}
+
+func envOr(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 // applyProfile layers a named profile over the local configuration. Only the
