@@ -80,7 +80,7 @@ func TestModelAddsAndRejectsDuplicateMounts(t *testing.T) {
 func TestModelNavigatesMountBrowser(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "project")
-	if err := os.Mkdir(child, 0o755); err != nil {
+	if err := os.Mkdir(child, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})

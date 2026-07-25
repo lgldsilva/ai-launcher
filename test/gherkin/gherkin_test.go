@@ -56,61 +56,89 @@ func TestGherkinLauncherContract(t *testing.T) {
 
 func runScenario(t *testing.T, scenario featureScenario) {
 	t.Helper()
-	if step, ok := scenario.step("Given a validation configuration"); ok {
-		var spec launchSpec
-		if err := yaml.Unmarshal([]byte(step.doc), &spec); err != nil {
-			t.Fatalf("parse validation configuration: %v", err)
-		}
-		missing := make(map[string]bool, len(spec.Missing))
-		for _, command := range spec.Missing {
-			missing[command] = true
-		}
-		validator := launcher.NewValidator()
-		validator.LookPath = func(command string) (string, error) {
-			if missing[command] {
-				return "", errors.New("not found")
-			}
-			return "/test/bin/" + command, nil
-		}
-		issues := validator.Validate(toLaunchConfig(spec))
-		expected, ok := scenario.step("Then issue codes equal")
-		if !ok {
-			t.Fatal("validation scenario must define expected issue codes")
-		}
-		if got, want := issueCodes(issues), nonEmptyLines(expected.doc); !reflect.DeepEqual(got, want) {
-			t.Fatalf("Validate() issue codes = %#v; want %#v", got, want)
-		}
+	if runValidationScenario(t, scenario) {
 		return
 	}
-	if step, ok := scenario.step("Given a launch configuration"); ok {
-		var spec launchSpec
-		if err := yaml.Unmarshal([]byte(step.doc), &spec); err != nil {
-			t.Fatalf("parse launch configuration: %v", err)
-		}
-		if spec.ClearHome {
-			t.Setenv("HOME", "")
-		}
-		argv, err := launcher.Build(toLaunchConfig(spec))
-		if failure, expected := scenario.failureExpectation(); expected {
-			if err == nil || !strings.Contains(err.Error(), failure) {
-				t.Fatalf("Build() error = %v; want containing %q", err, failure)
-			}
-			return
-		}
-		if err != nil {
-			t.Fatalf("Build() error = %v", err)
-		}
-		expected, ok := scenario.step("Then the command equals")
-		if !ok {
-			t.Fatal("launch scenario must define an expected command")
-		}
-		want := nonEmptyLines(expected.doc)
-		if !reflect.DeepEqual(argv, want) {
-			t.Fatalf("Build() = %#v; want %#v", argv, want)
-		}
+	if runBuildScenario(t, scenario) {
 		return
 	}
+	runLocalConfigScenario(t, scenario)
+}
 
+// runValidationScenario handles "Given a validation configuration" scenarios,
+// reporting whether the scenario matched.
+func runValidationScenario(t *testing.T, scenario featureScenario) bool {
+	t.Helper()
+	step, ok := scenario.step("Given a validation configuration")
+	if !ok {
+		return false
+	}
+	var spec launchSpec
+	if err := yaml.Unmarshal([]byte(step.doc), &spec); err != nil {
+		t.Fatalf("parse validation configuration: %v", err)
+	}
+	missing := make(map[string]bool, len(spec.Missing))
+	for _, command := range spec.Missing {
+		missing[command] = true
+	}
+	validator := launcher.NewValidator()
+	validator.LookPath = func(command string) (string, error) {
+		if missing[command] {
+			return "", errors.New("not found")
+		}
+		return "/test/bin/" + command, nil
+	}
+	issues := validator.Validate(toLaunchConfig(spec))
+	expected, ok := scenario.step("Then issue codes equal")
+	if !ok {
+		t.Fatal("validation scenario must define expected issue codes")
+	}
+	if got, want := issueCodes(issues), nonEmptyLines(expected.doc); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Validate() issue codes = %#v; want %#v", got, want)
+	}
+	return true
+}
+
+// runBuildScenario handles "Given a launch configuration" scenarios,
+// reporting whether the scenario matched.
+func runBuildScenario(t *testing.T, scenario featureScenario) bool {
+	t.Helper()
+	step, ok := scenario.step("Given a launch configuration")
+	if !ok {
+		return false
+	}
+	var spec launchSpec
+	if err := yaml.Unmarshal([]byte(step.doc), &spec); err != nil {
+		t.Fatalf("parse launch configuration: %v", err)
+	}
+	if spec.ClearHome {
+		t.Setenv("HOME", "")
+	}
+	argv, err := launcher.Build(toLaunchConfig(spec))
+	if failure, expected := scenario.failureExpectation(); expected {
+		if err == nil || !strings.Contains(err.Error(), failure) {
+			t.Fatalf("Build() error = %v; want containing %q", err, failure)
+		}
+		return true
+	}
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	expected, ok := scenario.step("Then the command equals")
+	if !ok {
+		t.Fatal("launch scenario must define an expected command")
+	}
+	want := nonEmptyLines(expected.doc)
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("Build() = %#v; want %#v", argv, want)
+	}
+	return true
+}
+
+// runLocalConfigScenario handles "Given a local configuration" scenarios and
+// fails when the scenario has no supported Given step.
+func runLocalConfigScenario(t *testing.T, scenario featureScenario) {
+	t.Helper()
 	local, ok := scenario.step("Given a local configuration")
 	if !ok {
 		t.Fatal("scenario has no supported Given step")
@@ -198,11 +226,11 @@ func localOption(options config.Options, name string) (bool, bool) {
 
 func parseFeature(t *testing.T, path string) []featureScenario {
 	t.Helper()
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path comes from the test's own ../features glob
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var scenarios []featureScenario
 	var current *featureScenario

@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
 	github.com/goccy/go-yaml v1.19.2
+	pgregory.net/rapid v1.3.0
 )
 
 require (

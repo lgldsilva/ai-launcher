@@ -2,7 +2,11 @@ package catalog
 
 import (
 	"errors"
+	"reflect"
+	"strconv"
 	"testing"
+
+	"pgregory.net/rapid"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
@@ -83,4 +87,42 @@ func TestResolveByNameAndRejectsUnknown(t *testing.T) {
 	if _, err := catalog.Resolve("unknown"); err == nil {
 		t.Fatal("unknown agent should return an error")
 	}
+}
+
+// TestPropertyNormalizePermissionsIsIdempotent generates permission catalogs
+// with arbitrary dependency graphs (including cycles and references to
+// unknown IDs) and asserts that normalization is a fixpoint: applying it to
+// an already-normalized selection changes nothing.
+func TestPropertyNormalizePermissionsIsIdempotent(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		count := rapid.IntRange(1, 8).Draw(rt, "permissionCount")
+		permissions := make([]config.Permission, count)
+		for i := range permissions {
+			requires := rapid.SliceOf(rapid.IntRange(0, count)).Draw(rt, "requires"+strconv.Itoa(i))
+			dependencies := make([]string, 0, len(requires))
+			for _, index := range requires {
+				// Index == count references an unknown permission on purpose.
+				dependencies = append(dependencies, "p"+strconv.Itoa(index))
+			}
+			permissions[i] = config.Permission{
+				ID:       "p" + strconv.Itoa(i),
+				Name:     "Permission " + strconv.Itoa(i),
+				Default:  rapid.Bool().Draw(rt, "default"+strconv.Itoa(i)),
+				Locked:   rapid.Bool().Draw(rt, "locked"+strconv.Itoa(i)),
+				Requires: dependencies,
+			}
+		}
+		selected := make(map[string]bool)
+		selections := rapid.SliceOf(rapid.IntRange(0, count)).Draw(rt, "selections")
+		for _, index := range selections {
+			selected["p"+strconv.Itoa(index)] = rapid.Bool().Draw(rt, "selected"+strconv.Itoa(index))
+		}
+
+		catalog := New(config.Global{Permissions: permissions})
+		once := catalog.NormalizePermissions(selected)
+		twice := catalog.NormalizePermissions(once)
+		if !reflect.DeepEqual(once, twice) {
+			rt.Fatalf("NormalizePermissions is not idempotent:\nselected=%#v\nonce=%#v\ntwice=%#v", selected, once, twice)
+		}
+	})
 }

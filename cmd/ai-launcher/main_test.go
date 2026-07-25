@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -90,7 +91,7 @@ func TestRunAddPersistsAgentWithoutLaunchingIt(t *testing.T) {
 	var out, errOut bytes.Buffer
 	root := t.TempDir()
 	executable := filepath.Join(root, "xpto")
-	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { // #nosec G306 -- test fixture must be executable
 		t.Fatal(err)
 	}
 	globalPath := filepath.Join(root, "config", "config.yaml")
@@ -145,7 +146,7 @@ func TestConfiguredInstallTargetsAcceptsAliasAndAddsMemoryDependency(t *testing.
 }
 
 func TestWireMemoryRejectsIncompleteRecipe(t *testing.T) {
-	err := wireMemory(nil, "ai-memory", "", "", &config.MemoryIntegration{InstallMCP: true}, &bytes.Buffer{}, &bytes.Buffer{}, nil)
+	err := wireMemory(context.TODO(), "ai-memory", "", "", &config.MemoryIntegration{InstallMCP: true}, &bytes.Buffer{}, &bytes.Buffer{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "MCP client is empty") {
 		t.Fatalf("wireMemory() error = %v; want incomplete recipe error", err)
 	}
@@ -164,7 +165,7 @@ func TestMemoryInstallArgsUseHTTPSAndHarnessSpecificConfig(t *testing.T) {
 func TestConfigFileForResolvesHarnessSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "claude-target")
-	if err := os.MkdirAll(target, 0o755); err != nil {
+	if err := os.MkdirAll(target, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, ".claude")
@@ -192,7 +193,7 @@ func TestInstallLogIsPrivateAndPersistent(t *testing.T) {
 	if err := trace.Close(); err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(path)
+	contents, err := os.ReadFile(path) // #nosec G304 -- path is the install log created by the test itself
 	if err != nil || !strings.Contains(string(contents), "test event") {
 		t.Fatalf("install log = %q, err=%v", contents, err)
 	}

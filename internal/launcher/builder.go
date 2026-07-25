@@ -31,6 +31,8 @@ func Environment(cfg LaunchConfig) []string {
 	return env
 }
 
+// LaunchConfig carries every input needed to build and validate the argv used
+// to start an agent, without performing any I/O.
 type LaunchConfig struct {
 	Agent           config.Agent
 	Executable      string
@@ -53,34 +55,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		return nil, errors.New("agent command is required")
 	}
 	if cfg.UseJail {
-		command = append(command, "ai-jail")
-		if cfg.Permissions["ssh"] {
-			command = append(command, "--ssh")
-		}
-		if cfg.Permissions["gh"] {
-			home := cfg.HomeDir
-			if home == "" {
-				home = os.Getenv("HOME")
-			}
-			command = append(command, "--rw-map", filepathOrEmpty(home, ".config/gh"))
-		}
-		if cfg.Permissions["docker"] {
-			command = append(command, "--docker")
-		}
-		if cfg.Permissions["gpu"] {
-			command = append(command, "--gpu")
-		}
-		for _, mount := range cfg.Mounts {
-			path := strings.TrimSpace(mount.Path)
-			if path == "" {
-				continue
-			}
-			if strings.EqualFold(mount.Mode, "ro") || strings.EqualFold(mount.Mode, "read-only") {
-				command = append(command, "--map", path)
-			} else {
-				command = append(command, "--rw-map", path)
-			}
-		}
+		command = appendJailArgs(command, cfg)
 	}
 	if cfg.UseMemory {
 		command = append(command, "ai-memory", "run")
@@ -105,6 +80,40 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	return command, nil
 }
 
+// appendJailArgs prepends the ai-jail wrapper with the flags derived from the
+// enabled permissions and configured mounts.
+func appendJailArgs(command []string, cfg LaunchConfig) []string {
+	command = append(command, "ai-jail")
+	if cfg.Permissions["ssh"] {
+		command = append(command, "--ssh")
+	}
+	if cfg.Permissions["gh"] {
+		home := cfg.HomeDir
+		if home == "" {
+			home = os.Getenv("HOME")
+		}
+		command = append(command, "--rw-map", filepathOrEmpty(home, ".config/gh"))
+	}
+	if cfg.Permissions["docker"] {
+		command = append(command, "--docker")
+	}
+	if cfg.Permissions["gpu"] {
+		command = append(command, "--gpu")
+	}
+	for _, mount := range cfg.Mounts {
+		path := strings.TrimSpace(mount.Path)
+		if path == "" {
+			continue
+		}
+		if strings.EqualFold(mount.Mode, "ro") || strings.EqualFold(mount.Mode, "read-only") {
+			command = append(command, "--map", path)
+		} else {
+			command = append(command, "--rw-map", path)
+		}
+	}
+	return command
+}
+
 func filepathOrEmpty(home, suffix string) string {
 	if home == "" {
 		return suffix
@@ -112,6 +121,7 @@ func filepathOrEmpty(home, suffix string) string {
 	return strings.TrimRight(home, "/") + "/" + suffix
 }
 
+// Issue is a single validation problem with a stable machine-readable Code.
 type Issue struct {
 	Code    string
 	Message string
@@ -119,15 +129,20 @@ type Issue struct {
 
 func (i Issue) Error() string { return fmt.Sprintf("%s: %s", i.Code, i.Message) }
 
+// Validator checks a LaunchConfig against the host (PATH lookups and mount
+// existence) and reports every problem found instead of failing fast.
 type Validator struct {
 	LookPath func(string) (string, error)
 	Stat     func(string) (os.FileInfo, error)
 }
 
+// NewValidator returns a Validator backed by the real PATH and filesystem.
 func NewValidator() Validator {
 	return Validator{LookPath: exec.LookPath, Stat: os.Stat}
 }
 
+// Validate returns every issue found in cfg, or an empty slice when the
+// configuration can be launched.
 func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues := make([]Issue, 0)
 	lookPath := v.LookPath

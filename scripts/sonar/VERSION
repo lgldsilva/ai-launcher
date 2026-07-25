@@ -1,0 +1,5 @@
+source=ai-standards
+path=scripts/sonar
+commit=e408521
+installed_at=2026-07-25T03:11:08Z
+# Re-sync: ~/.config/ai-standards/scripts/sonar/install-into-repo.sh /storage/Projetos/ai-launcher

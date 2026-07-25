@@ -1,13 +1,13 @@
 package config
 
 import (
-	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-	"testing/quick"
+
+	"pgregory.net/rapid"
 )
 
 func TestDefaultConfigurationsExposeLauncherContract(t *testing.T) {
@@ -286,72 +286,40 @@ func TestSaveLoadLocalPreservesExplicitDisabledOptions(t *testing.T) {
 	}
 }
 
-type persistedLocal struct {
-	Agent       string
-	Yolo        bool
-	Workstream  string
-	ExtraArg    string
-	SSH         bool
-	ReadOnlyMap bool
-}
-
-func (persistedLocal) Generate(random *rand.Rand, size int) reflect.Value {
-	return reflect.ValueOf(persistedLocal{
-		Agent:       "agent-" + propertyToken(random, size),
-		Yolo:        random.Intn(2) == 1,
-		Workstream:  propertyToken(random, size),
-		ExtraArg:    "--" + propertyToken(random, size),
-		SSH:         random.Intn(2) == 1,
-		ReadOnlyMap: random.Intn(2) == 1,
-	})
-}
-
-func propertyToken(random *rand.Rand, size int) string {
-	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-_"
-	length := random.Intn(size%12 + 1)
-	if length == 0 {
-		return "x"
-	}
-	result := make([]byte, length)
-	for i := range result {
-		result[i] = alphabet[random.Intn(len(alphabet))]
-	}
-	return string(result)
-}
-
 // TestPropertySaveLoadPreservesConfiguredFields exercises serialization with
-// randomized strings and both permission/mount variants using only testing/quick.
+// generated strings and both permission/mount variants using rapid.
 func TestPropertySaveLoadPreservesConfiguredFields(t *testing.T) {
-	check := func(input persistedLocal) bool {
-		path := filepath.Join(t.TempDir(), "config.yaml")
+	token := rapid.StringMatching(`[a-z0-9\-_]{1,12}`)
+	rapid.Check(t, func(rt *rapid.T) {
 		mode := "rw"
-		if input.ReadOnlyMap {
+		if rapid.Bool().Draw(rt, "readOnly") {
 			mode = "read-only"
 		}
+		workstream := token.Draw(rt, "workstream")
 		want := Local{
-			Agent:       input.Agent,
-			Permissions: map[string]bool{"ssh": input.SSH},
-			Mounts:      []Mount{{Path: "/workspace/" + input.Workstream, Mode: mode}},
+			Agent:       "agent-" + token.Draw(rt, "agent"),
+			Permissions: map[string]bool{"ssh": rapid.Bool().Draw(rt, "ssh")},
+			Mounts:      []Mount{{Path: "/workspace/" + workstream, Mode: mode}},
 			Options: Options{
 				Jail:          true,
 				Memory:        true,
-				Yolo:          input.Yolo,
-				NewWorkstream: input.Workstream,
-				ExtraArgs:     []string{input.ExtraArg},
+				Yolo:          rapid.Bool().Draw(rt, "yolo"),
+				NewWorkstream: workstream,
+				ExtraArgs:     []string{"--" + token.Draw(rt, "extraArg")},
 			},
 		}
+		path := filepath.Join(t.TempDir(), "config.yaml")
 		if err := SaveLocal(path, want); err != nil {
-			return false
+			rt.Fatalf("SaveLocal() error = %v", err)
 		}
 		got, err := LoadLocal(path)
 		if err != nil {
-			return false
+			rt.Fatalf("LoadLocal() error = %v", err)
 		}
-		return got.Agent == want.Agent && reflect.DeepEqual(got.Permissions, want.Permissions) && reflect.DeepEqual(got.Mounts, want.Mounts) && reflect.DeepEqual(got.Options, want.Options)
-	}
-	if err := quick.Check(check, &quick.Config{MaxCount: 100}); err != nil {
-		t.Fatalf("local config round-trip property failed: %v", err)
-	}
+		if got.Agent != want.Agent || !reflect.DeepEqual(got.Permissions, want.Permissions) || !reflect.DeepEqual(got.Mounts, want.Mounts) || !reflect.DeepEqual(got.Options, want.Options) {
+			rt.Fatalf("local config round-trip mismatch: got %#v; want %#v", got, want)
+		}
+	})
 }
 
 func TestValidateVersionAcceptsCompatibleVersionsAndRejectsOthers(t *testing.T) {
