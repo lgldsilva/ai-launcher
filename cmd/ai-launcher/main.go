@@ -345,8 +345,16 @@ func profileFromLaunch(launch launcher.LaunchConfig) config.Profile {
 // it, and builds, validates, and executes the resulting argv.
 func launch(args []string, opts cliOptions, global config.Global, local config.Local, launchConfig launcher.LaunchConfig, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		confirmed, err := tui.RunWithSave(global, launchConfig, func(updated launcher.LaunchConfig) error {
-			return saveIfRequested(true, opts.localPath, local, updated)
+		confirmed, err := tui.RunWithHooks(global, launchConfig, tui.Hooks{
+			Save: func(updated launcher.LaunchConfig) error {
+				return saveIfRequested(true, opts.localPath, local, updated)
+			},
+			SaveProfile: func(name string, updated launcher.LaunchConfig) error {
+				if err := config.SetProfile(&global, name, profileFromLaunch(updated)); err != nil {
+					return err
+				}
+				return config.SaveGlobal(opts.globalPath, global)
+			},
 		})
 		if err != nil {
 			return nil

@@ -118,7 +118,7 @@ func TestModelNavigatesMountBrowser(t *testing.T) {
 func TestModelSaveAndHelpShortcuts(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
 	saved := false
-	model.save = func(launcher.LaunchConfig) error {
+	model.hooks.Save = func(launcher.LaunchConfig) error {
 		saved = true
 		return nil
 	}
@@ -149,5 +149,93 @@ func TestModelCanExecuteFromTheAgentSection(t *testing.T) {
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(model.result) == 0 {
 		t.Fatal("Enter on the already-selected agent did not build a command")
+	}
+}
+
+func TestModelLoadsProfileFromTheProfilesSection(t *testing.T) {
+	global := config.DefaultGlobal()
+	if err := config.SetProfile(&global, "review", config.Profile{
+		Agent:   "custom-cli",
+		Mounts:  []config.Mount{{Path: "/reference", Mode: "read-only"}},
+		Options: &config.Options{Yolo: true, ParamValues: map[string]string{"model": "v1"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel(global, launcher.LaunchConfig{UseJail: true, Permissions: map[string]bool{}})
+	if model.sectionCount() != 5 {
+		t.Fatalf("sectionCount() = %d; want 5 with profiles", model.sectionCount())
+	}
+	if !strings.Contains(model.View(), "Perfis") {
+		t.Fatal("view does not render the profiles section")
+	}
+	model = applyKey(t, model, runeKey("5"))
+	if model.section != 4 {
+		t.Fatalf("numeric jump to profiles = %d", model.section)
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+	if model.launch.Agent.Command != "custom-cli" || !model.launch.Yolo || model.launch.ParamValues["model"] != "v1" {
+		t.Fatalf("profile not applied: %#v", model.launch)
+	}
+	if len(model.launch.Mounts) != 1 || model.launch.Mounts[0].Path != "/reference" {
+		t.Fatalf("profile mounts = %#v", model.launch.Mounts)
+	}
+	if !strings.Contains(model.status, "Perfil carregado") {
+		t.Fatalf("status = %q", model.status)
+	}
+}
+
+func TestModelEditsDeclaredParamValues(t *testing.T) {
+	launch := launcher.LaunchConfig{
+		Agent: config.Agent{Command: "kimi", Params: []config.Param{{Name: "query", Flag: "--query", TakesValue: true}}},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	model.section = 3
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	for range 3 {
+		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if model.cursor != optionToggleCount {
+		t.Fatalf("cursor = %d; want first param row", model.cursor)
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.textInputActive || model.textInputKind != "param" {
+		t.Fatal("enter on a param row did not open the param input")
+	}
+	model = applyKey(t, model, runeKey("oi"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if model.launch.ParamValues["query"] != "oi" {
+		t.Fatalf("param values = %#v", model.launch.ParamValues)
+	}
+	if !strings.Contains(model.View(), "query: oi (--query)") {
+		t.Fatalf("options view does not show the param value: %s", model.View())
+	}
+
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyBackspace})
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyBackspace})
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := model.launch.ParamValues["query"]; ok {
+		t.Fatalf("empty param input should clear the value: %#v", model.launch.ParamValues)
+	}
+}
+
+func TestModelSavesProfileWithCtrlP(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}, Permissions: map[string]bool{}})
+	var savedName string
+	model.hooks.SaveProfile = func(name string, _ launcher.LaunchConfig) error {
+		savedName = name
+		return nil
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyCtrlP})
+	if !model.textInputActive || model.textInputKind != "profile" {
+		t.Fatal("ctrl+p did not open the profile name input")
+	}
+	model = applyKey(t, model, runeKey("review"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if savedName != "review" || !strings.Contains(model.status, "Perfil salvo") {
+		t.Fatalf("save profile: name=%q status=%q", savedName, model.status)
+	}
+	if len(model.profileNames) != 1 || model.profileNames[0] != "review" || model.sectionCount() != 5 {
+		t.Fatalf("profiles after save = %#v", model.profileNames)
 	}
 }
