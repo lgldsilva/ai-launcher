@@ -675,26 +675,6 @@ func lastArgValue(args []string, flagName string) string {
 	return ""
 }
 
-func configFileFor(home, configured, target string, hooks bool) string {
-	if strings.TrimSpace(configured) != "" {
-		return expandHomePath(home, configured)
-	}
-	var path string
-	switch {
-	case hooks && target == "claude-code":
-		path = filepath.Join(home, ".claude", "settings.json")
-	case target == "antigravity-cli":
-		if hooks {
-			path = filepath.Join(home, ".gemini", "config", "hooks.json")
-		} else {
-			path = filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")
-		}
-	default:
-		return ""
-	}
-	return resolveSymlinkParent(path)
-}
-
 func prepareMemoryConfigFile(home, configured, target string, hooks bool) (string, func() error, error) {
 	if strings.TrimSpace(configured) != "" {
 		return expandHomePath(home, configured), func() error { return nil }, nil
