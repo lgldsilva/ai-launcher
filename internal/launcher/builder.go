@@ -380,32 +380,56 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		goos = runtime.GOOS
 	}
 	onWindows := goos == "windows"
-	if !cfg.ContinueSession {
-		agentPath := cfg.Agent.Command
-		if cfg.Executable != "" {
-			agentPath = cfg.Executable
-		}
-		if _, err := lookPath(agentPath); err != nil {
-			issues = append(issues, Issue{Code: "agent-not-found", Message: fmt.Sprintf("%q is not available in PATH", cfg.Agent.Command)})
-		}
-	}
-	if cfg.UseJail {
-		switch {
-		case onWindows:
-			issues = append(issues, Issue{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true})
-		default:
-			if _, err := lookPath("ai-jail"); err != nil {
-				issues = append(issues, Issue{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"})
-			}
-		}
-	} else if !cfg.JailFlags.IsZero() || cfg.JailExec {
-		issues = append(issues, Issue{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true})
-	}
+	issues = append(issues, agentIssues(cfg, lookPath)...)
+	issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
 	if cfg.UseMemory {
 		if _, err := lookPath("ai-memory"); err != nil {
 			issues = append(issues, Issue{Code: "memory-not-found", Message: "ai-memory is required when memory integration is enabled"})
 		}
 	}
+	issues = append(issues, mountIssues(cfg, stat)...)
+	issues = append(issues, permissionIssues(cfg, onWindows)...)
+	issues = append(issues, undeclaredParamIssues(cfg)...)
+	return issues
+}
+
+// agentIssues reports when the configured agent executable is unavailable.
+// Continue sessions have no harness, so there is nothing to look up.
+func agentIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Issue {
+	if cfg.ContinueSession {
+		return nil
+	}
+	agentPath := cfg.Agent.Command
+	if cfg.Executable != "" {
+		agentPath = cfg.Executable
+	}
+	if _, err := lookPath(agentPath); err != nil {
+		return []Issue{{Code: "agent-not-found", Message: fmt.Sprintf("%q is not available in PATH", cfg.Agent.Command)}}
+	}
+	return nil
+}
+
+// jailIssues checks the ai-jail dependency, degrading to warnings where the
+// jail cannot apply (Windows) or does not apply (jail disabled).
+func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindows bool) []Issue {
+	if cfg.UseJail {
+		if onWindows {
+			return []Issue{{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true}}
+		}
+		if _, err := lookPath("ai-jail"); err != nil {
+			return []Issue{{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"}}
+		}
+		return nil
+	}
+	if !cfg.JailFlags.IsZero() || cfg.JailExec {
+		return []Issue{{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true}}
+	}
+	return nil
+}
+
+// mountIssues reports configured mounts that do not exist on the host.
+func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {
+	issues := make([]Issue, 0)
 	for _, mount := range cfg.Mounts {
 		if strings.TrimSpace(mount.Path) == "" {
 			continue
@@ -414,6 +438,13 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 			issues = append(issues, Issue{Code: "mount-not-found", Message: fmt.Sprintf("mount path %q does not exist", mount.Path)})
 		}
 	}
+	return issues
+}
+
+// permissionIssues checks the cross-permission dependencies (jail-backed
+// permissions and gpu requiring docker).
+func permissionIssues(cfg LaunchConfig, onWindows bool) []Issue {
+	issues := make([]Issue, 0)
 	if cfg.Permissions["ssh"] || cfg.Permissions["gh"] || cfg.Permissions["docker"] || cfg.Permissions["gpu"] {
 		if !cfg.UseJail {
 			issue := Issue{Code: "permission-without-jail", Message: "ssh, gh, docker, and gpu permissions require ai-jail"}
@@ -427,7 +458,6 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	if cfg.Permissions["gpu"] && !cfg.Permissions["docker"] {
 		issues = append(issues, Issue{Code: "gpu-without-docker", Message: "gpu permission requires docker"})
 	}
-	issues = append(issues, undeclaredParamIssues(cfg)...)
 	return issues
 }
 
