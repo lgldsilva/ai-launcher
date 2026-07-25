@@ -1,151 +1,166 @@
-# Decisões de design
+# Design decisions
 
-Decisões temáticas, não ADRs numerados. Cada uma segue **Decisão → Por quê →
-Como → Trade-offs**, ancorada no incidente concreto que a forçou.
+Thematic decisions, not numbered ADRs. Each one follows **Decision → Why →
+How → Trade-offs**, anchored on the concrete incident that forced it.
 
-## Orquestrar ai-jail/ai-memory upstream em vez de reimplementar
+## Orchestrate upstream ai-jail/ai-memory instead of reimplementing
 
-**Decisão.** O launcher nunca forka nem embute sandbox ou memória: ele invoca os
-binários de terceiros (`akitaonrails/ai-jail`, `akitaonrails/ai-memory`).
+**Decision.** The launcher never forks or embeds sandbox or memory: it
+invokes the third-party binaries (`akitaonrails/ai-jail`,
+`akitaonrails/ai-memory`).
 
-**Por quê.** As duas ferramentas têm cadência de release rápida e autor ativo;
-reimplementar bubblewrap/sandbox-exec ou o protocolo MCP do ai-memory seria um
-fork eternamente atrás. O preço do acoplamento é o drift de CLI — e ele é
-real: a modelagem dos flags do ai-jail v1.15 (`--lockdown`, `--private-home`,
-toggles `--no-*` para capacidades default-on) só existe porque a CLI mudou sob
-nós.
+**Why.** Both tools have a fast release cadence and an active author;
+reimplementing bubblewrap/sandbox-exec or the ai-memory MCP protocol would be
+a fork forever behind. The price of coupling is CLI drift — and it is real:
+the modeling of the ai-jail v1.15 flags (`--lockdown`, `--private-home`,
+`--no-*` toggles for default-on capabilities) only exists because the CLI
+changed under us.
 
-**Como.** Contrato explícito: a suíte Gherkin em `test/features/launcher.feature`
-(executada por `test/gherkin`) trava a composição exata do argv — ordem
-`ai-jail → ai-memory run → harness`, formas `--no-*`, escopo de
-workstream/workspace/project. Se o upstream mudar, o contrato quebra no CI,
-não na máquina do usuário. Os flags do jail vivem em uma estrutura declarativa
-(`config.JailFlags` tri-state), então absorver uma nova versão do ai-jail é
-adicionar uma linha numa tabela, não reescrever `if`s.
+**How.** Explicit contract: the Gherkin suite in
+`test/features/launcher.feature` (run by `test/gherkin`) locks the exact argv
+composition — `ai-jail → ai-memory run → harness` order, `--no-*` forms,
+workstream/workspace/project scope. If upstream changes, the contract breaks
+in CI, not on the user's machine. The jail flags live in a declarative
+structure (tri-state `config.JailFlags`), so absorbing a new ai-jail version
+is adding a row to a table, not rewriting `if`s.
 
-**Trade-offs.** Dependemos da superfície de CLI de terceiros e do formato dos
-assets de release (ex.: ai-jail publica só linux-x86_64 e macos-aarch64). Em
-troca, nunca carregamos código de sandbox próprio.
+**Trade-offs.** We depend on the third-party CLI surface and the release
+asset formats (e.g. ai-jail publishes only linux-x86_64 and macos-aarch64).
+In exchange, we never carry sandbox code of our own.
 
-## Parâmetros por harness orientados a dados
+## Data-driven per-harness parameters
 
-**Decisão.** Flags específicos de cada harness são declarados no catálogo
-(`agents[].params`: `name`, `flag`, `takes_value`) e preenchidos por
-`--param nome=valor` ou pela linha do parâmetro na TUI — nunca por código
-especial por agente.
+**Decision.** Harness-specific flags are declared in the catalog
+(`agents[].params`: `name`, `flag`, `takes_value`) and filled via `--param
+name=value` or the parameter row in the TUI — never by per-agent special-case
+code.
 
-**Por quê.** O gatilho foi o Kimi: além de `--model`, ele aceita `--query`
-(query inicial). Codificar isso em Go significaria rebuild do launcher para
-cada flag novo de qualquer harness — insustentável com ~20 agentes no catálogo.
+**Why.** The trigger was Kimi: besides `--model`, it accepts `--query`
+(initial query). Encoding that in Go would mean rebuilding the launcher for
+every new flag of any harness — unsustainable with ~20 agents in the catalog.
 
-**Como.** `launcher.Build` emite os parâmetros declarados na ordem de
-declaração; nomes não declarados são ignorados no argv e reportados pelo
-validador (`param-not-declared`). A TUI renderiza uma linha de texto por
-parâmetro declarado do agente selecionado.
+**How.** `launcher.Build` emits the declared parameters in declaration order;
+undeclared names are ignored in the argv and reported by the validator
+(`param-not-declared`). The TUI renders one text row per parameter declared
+by the selected agent.
 
-**Trade-offs.** O catálogo pode ficar desatualizado em relação ao harness
-(mesmo problema de drift do item anterior, mesma mitigação: dados, não
-código). `--extra-args` continua existindo como válvula de escape para
-qualquer coisa não declarada.
+**Trade-offs.** The catalog can go stale relative to the harness (same drift
+problem as the previous item, same mitigation: data, not code).
+`--extra-args` remains as the escape valve for anything undeclared.
 
-## Windows como cidadão de primeira classe, sem jail
+## Windows as a first-class citizen, without jail
 
-**Decisão.** Windows recebe binário nativo e fluxo completo, mas o jail é
-desativado automaticamente — com aviso, nunca com erro.
+**Decision.** Windows gets a native binary and the full flow, but the jail is
+disabled automatically — with a warning, never with an error.
 
-**Por quê.** O ai-jail "provavelmente nunca" vai suportar Windows (bubblewrap
-e sandbox-exec são mecanismos Unix). Bloquear o launcher no Windows por causa
-disso expulsaria o usuário; esconder a ausência do sandbox seria desonesto.
+**Why.** ai-jail will "probably never" support Windows (bubblewrap and
+sandbox-exec are Unix mechanisms). Blocking the launcher on Windows because
+of that would expel the user; hiding the absence of the sandbox would be
+dishonest.
 
-**Como.** `launcher.ConstrainToPlatform` força `UseJail=false` no Windows e
-desliga toda permissão que requer jail (ssh, gh, docker, gpu), emitindo o
-aviso `jail-unsupported-windows`. A TUI esconde o toggle de Jail e filtra as
-permissões dependentes. O instalador pula o ai-jail e instala o ai-memory pelo
-asset nativo `ai-memory-windows-x86_64.zip`. O caminho recomendado para
-sandbox no Windows é WSL2.
+**How.** `launcher.ConstrainToPlatform` forces `UseJail=false` on Windows and
+turns off every permission that requires jail (ssh, gh, docker, gpu),
+emitting the `jail-unsupported-windows` warning. The TUI hides the Jail
+toggle and filters the dependent permissions. The installer skips ai-jail and
+installs ai-memory from the native `ai-memory-windows-x86_64.zip` asset. The
+recommended path for sandboxing on Windows is WSL2.
 
-**Trade-offs.** No Windows o harness roda com todos os privilégios do usuário
-— isso está dito explicitamente na seção de segurança do README. Aceitamos
-essa assimetria porque a alternativa (sem Windows) é pior.
+**Trade-offs.** On Windows the harness runs with all the user's privileges —
+this is stated explicitly in the README security section. We accept the
+asymmetry because the alternative (no Windows) is worse.
 
-## Checksum SHA-256 obrigatório em instalações
+## Mandatory SHA-256 checksum on installs — and a stricter one on self-update
 
-**Decisão.** Toda instalação via release do GitHub exige checksum verificável;
-sem ele, a instalação falha.
+**Decision.** Every install from a GitHub release requires a verifiable
+checksum; without one, the install fails. Self-update (`ai-launcher upgrade`)
+and the `install.sh` curl installer go further: the release `checksums.txt`
+is mandatory and there is no `allow_unverified` escape hatch.
 
-**Por quê.** O launcher baixa e executa binários de terceiros em nome do
-usuário — é exatamente o ponto onde um supply-chain attack entra. Tags de
-release e assets são mutáveis; "baixou, rodou" sem verificação é inaceitável
-numa ferramenta cujo propósito é segurança.
+**Why.** The launcher downloads and executes third-party binaries on the
+user's behalf — that is exactly where a supply-chain attack gets in. Release
+tags and assets are mutable; "downloaded, ran" without verification is
+unacceptable in a tool whose purpose is security. Self-update is worse: it
+overwrites the very executable you will run next, so a silent skip of
+verification (the behavior we rejected from other upgraders) is not an
+option.
 
-**Como.** `internal/installer` procura o digest em `.sha256`, `.sha256sum`,
-`checksums.txt`, `SHA256SUMS` ou no corpo da release, e só extrai depois de
-conferir. A válvula `allow_unverified: true` existe para receitas com outra
-forma confiável de verificação, mas é uma decisão explícita do operador,
-registrada no YAML.
+**How.** `internal/installer` looks for the digest in `.sha256`,
+`.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release body, and only
+extracts after checking. The `allow_unverified: true` valve exists for
+recipes with another trusted form of verification, but it is an explicit
+operator decision, recorded in the YAML. `internal/selfupdate` and
+`install.sh` reuse the same checksum parsing but treat a missing
+`checksums.txt`, a missing entry, or a mismatch as a hard error, then replace
+the binary atomically (rename on POSIX, move-aside + rollback on Windows).
 
-**Trade-offs.** Projetos que não publicam checksum não são instaláveis por
-receita (seguem executáveis se já estiverem no PATH). Preferimos isso a
-instalar cegamente.
+**Trade-offs.** Projects that do not publish checksums are not installable by
+recipe (they remain executable if already on the PATH). We prefer that to
+installing blindly. Self-update additionally requires the launcher to live in
+a user-writable directory (e.g. `~/.local/bin`) — the error message says so
+instead of suggesting sudo.
 
-## Gate de 90% de cobertura só nos pacotes de lógica pura
+## 90% coverage gate only on the pure-logic packages
 
-**Decisão.** O gate de 90% mede apenas `internal/config`, `internal/catalog` e
-`internal/launcher` (excluindo o executor PTY e os `replace_*.go`).
-`internal/tui` e `internal/installer` ficam fora do denominador.
+**Decision.** The 90% gate measures only `internal/config`,
+`internal/catalog`, and `internal/launcher` (excluding the PTY executor and
+the `replace_*.go` files). `internal/tui` and `internal/installer` stay out
+of the denominator.
 
-**Por quê.** Cobertura de linha em código acoplado a terminal interativo e a
-processos spawnados mede teatro, não segurança — forçar 90% ali geraria testes
-frágeis e fingidos. O que realmente não pode quebrar é a lógica pura:
-persistência de config, defaults seguros, composição do argv.
+**Why.** Line coverage in code coupled to an interactive terminal and to
+spawned processes measures theater, not safety — forcing 90% there would
+generate fragile, fake tests. What really cannot break is the pure logic:
+config persistence, safe defaults, argv composition.
 
-**Como.** `make test-coverage` (e o job `test` do CI) filtram o profile com
-`awk` e falham abaixo de 90% no total filtrado; `COVER_PKGS` em
-`.ai-standards.env` repete a mesma fronteira para os hooks. TUI, instalador e
-executor são cobertos por `go test -race -shuffle=on ./...` (race-only) e
-pela suíte de contrato Gherkin.
+**How.** `make test-coverage` (and the CI `test` job) filter the profile with
+`awk` and fail below 90% on the filtered total; `COVER_PKGS` in
+`.ai-standards.env` repeats the same boundary for the hooks. TUI, installer,
+and executor are covered by `go test -race -shuffle=on ./...` (race-only) and
+by the Gherkin contract suite.
 
-**Trade-offs.** Bugs de interação (teclas, terminal) dependem de race tests e
-verificação manual. É a divisão honesta: gate onde a métrica significa algo.
+**Trade-offs.** Interaction bugs (keys, terminal) depend on race tests and
+manual verification. It is the honest split: a gate where the metric means
+something.
 
-## A TUI executa de verdade
+## The TUI executes for real
 
-**Decisão.** `Enter` na TUI lança o harness; a TUI não é um gerador de
-comando.
+**Decision.** `Enter` in the TUI launches the harness; the TUI is not a
+command generator.
 
-**Por quê.** A versão anterior imprimia o argv e saía — o usuário tinha que
-copiar e colar, o que anula o propósito de um "launcher" e convidava a erro de
-transcrição justamente na parte sensível (ordem dos wrappers).
+**Why.** The previous version printed the argv and exited — the user had to
+copy and paste, which defeats the purpose of a "launcher" and invited
+transcription error precisely in the sensitive part (wrapper order).
 
-**Como.** A TUI mantém todo o estado em `launcher.LaunchConfig` e devolve a
-configuração confirmada; `main` monta o argv com o mesmo `launcher.Build` da
-CLI e executa via `exec` (substituição de processo) ou PTY. Dry-run explícito
-(`--dry-run`, `d`/`Ctrl+D` dentro da TUI) é o único caminho que só imprime.
+**How.** The TUI keeps all state in `launcher.LaunchConfig` and returns the
+confirmed configuration; `main` builds the argv with the same
+`launcher.Build` as the CLI and executes via `exec` (process replacement) or
+PTY. Explicit dry-run (`--dry-run`, `d`/`Ctrl+D` inside the TUI) is the only
+path that only prints.
 
-**Trade-offs.** Executar de verdade exige preflight sério — daí o
-`launcher.Validator` com códigos de issue estáveis e warnings não-fatais (ex.:
-jail no Windows), em vez de fail-fast no primeiro problema.
+**Trade-offs.** Executing for real demands serious preflight — hence the
+`launcher.Validator` with stable issue codes and non-fatal warnings (e.g.
+jail on Windows), instead of fail-fast on the first problem.
 
-## O que NÃO estamos fazendo (ainda)
+## What we are NOT doing (yet)
 
-- **Sandbox nativo no Windows.** Depende de upstream (ai-jail "probably
-  never"); o caminho suportado é WSL2.
-- **GUI.** A TUI é a interface; não há plano de interface gráfica.
-- **Sistema de plugins.** Extensibilidade é por dados (catálogo YAML), não por
-  código carregável.
-- **Registry próprio de harnesses.** O catálogo é local e por máquina; não
-  publicamos nem consumimos um registry central.
-- **Gerenciadores de pacote.** O instalador fala só com GitHub Releases;
-  `npm`/`apt`/`brew` ficam fora por decisão.
+- **Native sandbox on Windows.** Depends on upstream (ai-jail "probably
+  never"); the supported path is WSL2.
+- **GUI.** The TUI is the interface; there is no graphical interface planned.
+- **Plugin system.** Extensibility is by data (YAML catalog), not by loadable
+  code.
+- **Own harness registry.** The catalog is local and per-machine; we neither
+  publish nor consume a central registry.
+- **Package managers.** The installer talks only to GitHub Releases;
+  `npm`/`apt`/`brew` are out by decision.
 
-## Erros a evitar
+## Mistakes to avoid
 
-- [ ] Não reimplemente funcionalidade do ai-jail/ai-memory — absorva o upstream e atualize o contrato Gherkin.
-- [ ] Não adicione `if agente == "x"` no builder — declare um `params:` no catálogo.
-- [ ] Não emita flags do jail como string solta — use `config.JailFlags` (tri-state) para respeitar os defaults do ai-jail.
-- [ ] Não instale nada sem checksum verificável — não "contorne" com `allow_unverified` no catálogo padrão.
-- [ ] Não coloque `internal/tui` ou o executor PTY no denominador do gate de cobertura.
-- [ ] Não escreva tokens em logs, argv ou configs locais — token só via env do processo filho.
-- [ ] Não mude a ordem canônica `ai-jail → ai-memory run → harness` — se mudar, a suíte de contrato deve falhar primeiro.
-- [ ] Não transforme a TUI de volta em gerador de comando — dry-run é o caminho explícito para só imprimir.
-- [ ] Não trate o aviso de jail no Windows como erro — degradação com aviso é o comportamento correto.
+- [ ] Do not reimplement ai-jail/ai-memory functionality — absorb upstream and update the Gherkin contract.
+- [ ] Do not add `if agent == "x"` in the builder — declare a `params:` entry in the catalog.
+- [ ] Do not emit jail flags as loose strings — use `config.JailFlags` (tri-state) to respect ai-jail defaults.
+- [ ] Do not install anything without a verifiable checksum — do not "work around" it with `allow_unverified` in the default catalog.
+- [ ] Do not weaken self-update verification — a missing `checksums.txt` is a hard error, never a silent skip.
+- [ ] Do not put `internal/tui` or the PTY executor in the coverage gate denominator.
+- [ ] Do not write tokens to logs, argv, or local configs — token only via the child process env.
+- [ ] Do not change the canonical `ai-jail → ai-memory run → harness` order — if it changes, the contract suite must fail first.
+- [ ] Do not turn the TUI back into a command generator — dry-run is the explicit print-only path.
+- [ ] Do not treat the Windows jail warning as an error — degradation with a warning is the correct behavior.
