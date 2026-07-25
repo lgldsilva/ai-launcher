@@ -1,0 +1,36 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck and unused are on by default;
+  # they are listed explicitly to document the enforced baseline.
+  enable:
+    - errcheck
+    - gocognit
+    - gosec
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    gocognit:
+      min-complexity: 30
+    errcheck:
+      check-blank: false
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - "checkPublicInterface"
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

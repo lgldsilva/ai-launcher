@@ -3,8 +3,14 @@ COVERAGE_FILE ?= coverage.out
 COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher
 COVERAGE_MIN ?= 90
 DIST_DIR ?= dist
+# Quality tools run through `go run` so no system-wide install is required;
+# override with the installed binary to speed up local runs (for example
+# `make lint-full GOLANGCI_LINT=golangci-lint`).
+GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@latest
+GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
 
-.PHONY: build build-linux build-macos build-windows build-release test fmt lint test-unit test-property test-gherkin test-coverage test-mutation test-all
+.PHONY: build build-linux build-macos build-windows build-release test fmt lint lint-full sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
 
 build:
 	$(GO) build -buildvcs=false -o bin/ai-launcher ./cmd/ai-launcher
@@ -35,14 +41,24 @@ fmt:
 lint:
 	$(GO) vet ./...
 
+lint-full:
+	$(GOLANGCI_LINT) run ./...
+
+sec:
+	$(GOSEC) ./...
+	$(GOVULNCHECK) ./...
+
 test-unit:
 	$(GO) test ./internal/config ./internal/catalog ./internal/launcher
 
 test-property:
-	$(GO) test ./internal/config -run '^TestProperty' -count=1
+	$(GO) test ./internal/config ./internal/catalog -run '^TestProperty' -count=1
 
 test-gherkin:
 	$(GO) test ./test/gherkin -run '^TestGherkin' -count=1
+
+test-race:
+	$(GO) test -race -shuffle=on ./...
 
 test-coverage:
 	$(GO) test -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
@@ -62,4 +78,4 @@ test-mutation:
 		printf '%s\n' 'SKIP: optional go-mutesting is not installed; see docs/TEST_STRATEGY.md'; \
 	fi
 
-test-all: test-unit test-property test-gherkin test-coverage test-mutation
+test-all: test-unit test-property test-gherkin test-race test-coverage lint lint-full sec test-mutation
