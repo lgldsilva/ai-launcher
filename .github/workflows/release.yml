@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re)build the release for (e.g. v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write # needed to create the GitHub Release; nothing broader
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    env:
+      # On tag pushes the tag is github.ref_name; on manual runs it is the input.
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || '' }}
+
+      # Toolchain pinned via go.mod (go 1.24). Stdlib CVEs are fixed by
+      # bumping this toolchain, not by changing go.mod dependencies.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries and checksums
+        run: make release-local
+
+      - name: Verify checksums
+        run: cd dist && sha256sum -c SHA256SUMS
+
+      # SBOM is generated after checksums so it does not end up inside
+      # SHA256SUMS; it is attached to the release as a separate asset.
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          format: cyclonedx-json
+          output-file: dist/sbom.cdx.json
+          upload-artifact: false
+
+      # `gh` is preinstalled on GitHub runners: no third-party action to
+      # pin/audit, and asset upload + note generation in a single command.
+      # The delete makes workflow_dispatch rebuilds idempotent (keeps the tag,
+      # drops the old release and its assets before recreating them).
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            dist/ai-launcher-linux-amd64 \
+            dist/ai-launcher-linux-arm64 \
+            dist/ai-launcher-darwin-amd64 \
+            dist/ai-launcher-darwin-arm64 \
+            dist/ai-launcher-windows-amd64.exe \
+            dist/ai-launcher-windows-arm64.exe \
+            dist/SHA256SUMS \
+            dist/sbom.cdx.json
