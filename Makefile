@@ -75,7 +75,7 @@ test-mutation:
 	@if command -v go-mutesting >/dev/null 2>&1; then \
 		go-mutesting ./internal/config/...; \
 	else \
-		printf '%s\n' 'SKIP: optional go-mutesting is not installed; see docs/TEST_STRATEGY.md'; \
+		printf '%s\n' 'SKIP: optional go-mutesting is not installed; see docs/test-strategy.md'; \
 	fi
 
 test-all: test-unit test-property test-gherkin test-race test-coverage lint lint-full sec test-mutation
