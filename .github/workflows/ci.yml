@@ -102,3 +102,45 @@ jobs:
           format: cyclonedx-json
           upload-artifact: true
           artifact-name: ai-launcher-sbom
+
+  # SonarCloud (sonarcloud.io) — cloud analysis that works from GitHub-hosted
+  # runners. Needs the SONAR_TOKEN secret; organization/project key come from
+  # repo variables with the defaults below. Every step skips cleanly until the
+  # secret exists, so forks and early setup stay green.
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION || 'lgldsilva' }}
+      SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || 'lgldsilva_ai-launcher' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          fetch-depth: 0 # full history for accurate new-code detection
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Coverage
+        if: ${{ env.SONAR_TOKEN != '' }}
+        run: |
+          go test -covermode=atomic \
+            -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher \
+            -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher
+      # npx scanner: no third-party action to pin/audit; reads
+      # sonar-project.properties from the repo root for sources/exclusions.
+      - name: SonarCloud analysis (waits for the quality gate)
+        if: ${{ env.SONAR_TOKEN != '' }}
+        run: |
+          npx -y sonarqube-scanner \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token="$SONAR_TOKEN" \
+            -Dsonar.organization="$SONAR_ORGANIZATION" \
+            -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+            -Dsonar.qualitygate.wait=true
+      - name: SonarCloud skipped
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: echo "SONAR_TOKEN not set — skipping SonarCloud analysis."

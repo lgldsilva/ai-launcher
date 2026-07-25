@@ -1,0 +1,73 @@
+# GoReleaser — cross-platform release artifacts for ai-launcher.
+#
+# Builds the CLI for linux/macOS/Windows on amd64+arm64, packages each as
+# tar.gz (zip on Windows) with README + LICENSE, emits SHA-256 checksums and a
+# grouped changelog, and publishes a GitHub Release. Run by .github/workflows/
+# release.yml on a `v*` tag. GitHub is auto-detected from GITHUB_TOKEN and the
+# git remote, so no gitea_urls/release block is needed here.
+#
+# Validate locally without publishing:
+#   go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --snapshot --clean --skip=publish
+version: 2
+
+project_name: ai-launcher
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: ai-launcher
+    main: ./cmd/ai-launcher
+    binary: ai-launcher
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .Date }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: ai-launcher
+    formats: [tar.gz]
+    # Windows users expect a zip.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: git
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - '^Merge '

@@ -169,3 +169,18 @@ func TestInvalidParamFlagReturnsError(t *testing.T) {
 		t.Fatalf("run() error = %v; want invalid --param error", err)
 	}
 }
+
+func TestVersionFlagPrintsBuildMetadata(t *testing.T) {
+	out, err := runDryRun(t, "--version")
+	if err != nil {
+		t.Fatalf("run(--version) error = %v", err)
+	}
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" || !strings.Contains(trimmed, "ai-launcher") {
+		t.Fatalf("--version output = %q; want a non-empty line containing \"ai-launcher\"", out)
+	}
+	want := "ai-launcher " + version + " (" + commit + ", " + date + ")"
+	if trimmed != want {
+		t.Fatalf("--version output = %q; want %q", trimmed, want)
+	}
+}
