@@ -61,7 +61,7 @@ func TestContinueRowSelectsAndLaunchesAiMemoryRun(t *testing.T) {
 		UseMemory:   true,
 		Permissions: map[string]bool{},
 	})
-	if !strings.Contains(model.View(), "Continuar última sessão") {
+	if !strings.Contains(model.View(), "Continue last session") {
 		t.Fatalf("agents view = %s; want the continue row", model.View())
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
