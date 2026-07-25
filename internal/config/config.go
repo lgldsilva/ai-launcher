@@ -316,7 +316,7 @@ func DefaultGlobal() Global {
 			}},
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: true, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
 			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", "antigravity-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration("antigravity-cli", "antigravity-cli")},
-			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: defaultMemoryIntegration("pi", "pi")},
+			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
 			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: defaultMemoryIntegration("omp", "omp")},
 			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: true, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: defaultMemoryIntegration("cursor", "cursor")},
@@ -393,6 +393,13 @@ func modelParam(example string) Param {
 
 func mcpOnlyMemoryIntegration(client string) *MemoryIntegration {
 	return &MemoryIntegration{Client: client, InstallMCP: true}
+}
+
+// hooksOnlyMemoryIntegration is for harnesses whose ai-memory support is a
+// generated extension installed by `install-hooks` (e.g. Pi); upstream
+// rejects `install-mcp` for them.
+func hooksOnlyMemoryIntegration(agent string) *MemoryIntegration {
+	return &MemoryIntegration{Agent: agent, InstallHooks: true}
 }
 
 // JailDependentIDs returns the IDs of permissions that require "jail"

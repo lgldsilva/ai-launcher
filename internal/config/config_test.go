@@ -56,8 +56,8 @@ func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 		if agent.Command == "mimo" && !reflect.DeepEqual(agent.Aliases, []string{"mimocode", "mimo-code"}) {
 			t.Fatalf("mimo aliases = %#v", agent.Aliases)
 		}
-		if agent.Command == "pi" && (agent.Memory == nil || !agent.Memory.InstallMCP || !agent.Memory.InstallHooks) {
-			t.Fatalf("Pi memory integration = %#v; want full hooks+MCP", agent.Memory)
+		if agent.Command == "pi" && (agent.Memory == nil || agent.Memory.InstallMCP || !agent.Memory.InstallHooks) {
+			t.Fatalf("Pi memory integration = %#v; want hooks-only", agent.Memory)
 		}
 		if agent.Command == "openclaw" && (agent.Memory == nil || !agent.Memory.InstallMCP || agent.Memory.InstallHooks) {
 			t.Fatalf("OpenClaw memory integration = %#v; want MCP-only", agent.Memory)
