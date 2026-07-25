@@ -1,0 +1,77 @@
+name: Auto-tag (semver)
+
+# Continuous delivery: on every push to main (and on manual dispatch), compute
+# the next semantic version from the Conventional Commits since the last tag
+# and, if it bumps, create and push a `v*` tag. That tag is what triggers
+# release.yml (GoReleaser build + GitHub Release + SBOM) — this workflow only
+# cuts the tag; it never builds or publishes.
+#
+# workflow_dispatch lets an operator cut a release on demand — e.g. to
+# bootstrap the first version after enabling CD, without waiting for the next
+# merge.
+#
+# WHY a PAT and not the auto-provided token: a tag pushed with the Actions
+# auto-token (secrets.GITHUB_TOKEN) does NOT re-trigger another workflow (loop
+# guard), so release.yml would never fire. Pushing with a real PAT (secret
+# RELEASE_TAG_TOKEN, repo + workflow scope) makes the tag event fire
+# release.yml.
+#
+# Version bump (svu, Conventional Commits): feat -> minor, fix/others -> patch,
+# `!`/BREAKING CHANGE -> major. No bump-worthy commit since the last tag -> svu
+# returns the current version and this workflow tags nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialise so two quick merges can't race to compute/push the same tag.
+concurrency: autotag-main
+
+permissions:
+  contents: write
+
+jobs:
+  autotag:
+    runs-on: ubuntu-latest
+    env:
+      # PAT (repo + workflow scope) so the pushed tag re-triggers release.yml.
+      # Absent (not yet provisioned) -> the job skips cleanly and stays green.
+      RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ env.RELEASE_TAG_TOKEN != '' }}
+        with:
+          fetch-depth: 0 # full history + tags, so svu can see the last tag
+          token: ${{ secrets.RELEASE_TAG_TOKEN }} # persisted creds used by the push below
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: ${{ env.RELEASE_TAG_TOKEN != '' }}
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Compute + push next tag
+        if: ${{ env.RELEASE_TAG_TOKEN != '' }}
+        run: |
+          set -eu
+          # svu pinned to a version that builds with go.mod's toolchain.
+          SVU="github.com/caarlos0/svu/v3@v3.2.1"
+          CURRENT="$(go run "$SVU" current)"
+          NEXT="$(go run "$SVU" next)"
+          echo "current=$CURRENT next=$NEXT"
+          if [ "$NEXT" = "$CURRENT" ]; then
+            echo "No version bump from the commits since $CURRENT — nothing to tag."
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            echo "Tag $NEXT already exists — skipping."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEXT" -m "release $NEXT"
+          # Push with the PAT (persisted by checkout) so the tag event fires release.yml.
+          git push origin "refs/tags/$NEXT"
+          echo "Tagged and pushed $NEXT — release.yml will build & publish it."
+      - name: Auto-tag skipped
+        if: ${{ env.RELEASE_TAG_TOKEN == '' }}
+        run: echo "RELEASE_TAG_TOKEN not set — skipping auto-tag (no PAT to push a release-triggering tag)."
