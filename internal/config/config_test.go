@@ -334,3 +334,232 @@ func TestValidateVersionAcceptsCompatibleVersionsAndRejectsOthers(t *testing.T) 
 		}
 	}
 }
+
+func TestDefaultGlobalDeclaresHarnessParamsAndYoloFlags(t *testing.T) {
+	agents := make(map[string]Agent)
+	for _, agent := range DefaultGlobal().Agents {
+		agents[agent.Command] = agent
+	}
+	yoloFlags := map[string]string{
+		"claude":   "--dangerously-skip-permissions",
+		"codex":    "--dangerously-bypass-approvals-and-sandbox",
+		"opencode": "--auto",
+		"pi":       "--approve",
+		"crush":    "--yolo",
+		"kimi":     "--yolo",
+	}
+	for command, flag := range yoloFlags {
+		if agents[command].YoloFlag != flag {
+			t.Errorf("%s yolo flag = %q; want %q", command, agents[command].YoloFlag, flag)
+		}
+	}
+	for _, command := range []string{"claude", "codex", "kimi", "gemini"} {
+		params := agents[command].Params
+		if len(params) == 0 || params[0].Name != "model" || params[0].Flag != "--model" || !params[0].TakesValue {
+			t.Errorf("%s params = %#v; want a model param first", command, params)
+		}
+	}
+	kimi := agents["kimi"]
+	if len(kimi.Params) != 2 || kimi.Params[1].Name != "query" || kimi.Params[1].Flag != "--query" || !kimi.Params[1].TakesValue {
+		t.Fatalf("kimi params = %#v; want model and query", kimi.Params)
+	}
+	if len(agents["crush"].Params) != 0 {
+		t.Fatalf("crush params = %#v; want none (extra_args pass-through)", agents["crush"].Params)
+	}
+}
+
+func TestLoadGlobalParsesAgentParamsAndYoloFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	contents := []byte(`agents:
+  - name: Custom
+    command: custom-cli
+    yolo_flag: --force-yolo
+    params:
+      - name: model
+        flag: --model
+        description: Model to run
+        takes_value: true
+      - name: fast
+        flag: --fast
+        takes_value: false
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+`)
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	agent := got.Agents[0]
+	if agent.YoloFlag != "--force-yolo" {
+		t.Fatalf("yolo flag = %q", agent.YoloFlag)
+	}
+	want := []Param{
+		{Name: "model", Flag: "--model", Description: "Model to run", TakesValue: true},
+		{Name: "fast", Flag: "--fast"},
+	}
+	if !reflect.DeepEqual(agent.Params, want) {
+		t.Fatalf("params = %#v; want %#v", agent.Params, want)
+	}
+}
+
+func TestProfileSaveLoadDeleteListRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
+	global := DefaultGlobal()
+	review := Profile{
+		Agent:       "claude",
+		Permissions: map[string]bool{"ssh": true},
+		Mounts:      []Mount{{Path: "/reference", Mode: "read-only"}},
+		Options: &Options{
+			Jail: true, Memory: true, Yolo: true,
+			ExtraArgs:   []string{"--verbose"},
+			ParamValues: map[string]string{"model": "sonnet"},
+		},
+	}
+	quick := Profile{Agent: "kimi"}
+	if err := SetProfile(&global, "review", review); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetProfile(&global, "quick", quick); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveGlobal(path, global); err != nil {
+		t.Fatalf("SaveGlobal() error = %v", err)
+	}
+
+	loaded, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	if names := ProfileNames(loaded); !reflect.DeepEqual(names, []string{"quick", "review"}) {
+		t.Fatalf("ProfileNames() = %#v", names)
+	}
+	if !reflect.DeepEqual(loaded.Profiles["review"], review) {
+		t.Fatalf("loaded profile = %#v; want %#v", loaded.Profiles["review"], review)
+	}
+	if !reflect.DeepEqual(loaded.Profiles["quick"], quick) {
+		t.Fatalf("loaded minimal profile = %#v; want %#v", loaded.Profiles["quick"], quick)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("global config mode = %04o; want 0600", info.Mode().Perm())
+	}
+
+	if !DeleteProfile(&loaded, "quick") {
+		t.Fatal("DeleteProfile(quick) = false; want true")
+	}
+	if DeleteProfile(&loaded, "quick") {
+		t.Fatal("DeleteProfile(quick) twice = true; want false")
+	}
+	if err := SaveGlobal(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := ProfileNames(reloaded); !reflect.DeepEqual(names, []string{"review"}) {
+		t.Fatalf("profiles after delete = %#v", names)
+	}
+}
+
+func TestSetProfileRejectsInvalidInput(t *testing.T) {
+	if err := SetProfile(nil, "p", Profile{Agent: "claude"}); err == nil {
+		t.Fatal("SetProfile(nil global) = nil; want error")
+	}
+	global := Global{}
+	if err := SetProfile(&global, "  ", Profile{Agent: "claude"}); err == nil {
+		t.Fatal("SetProfile(empty name) = nil; want error")
+	}
+	if err := SetProfile(&global, "p", Profile{}); err == nil {
+		t.Fatal("SetProfile(empty agent) = nil; want error")
+	}
+	if DeleteProfile(nil, "p") {
+		t.Fatal("DeleteProfile(nil global) = true; want false")
+	}
+	if names := ProfileNames(Global{}); len(names) != 0 {
+		t.Fatalf("ProfileNames(empty) = %#v", names)
+	}
+}
+
+func TestProfileSummaryDescribesSelection(t *testing.T) {
+	full := Profile{
+		Agent:  "claude",
+		Mounts: []Mount{{Path: "/a"}, {Path: "/b"}},
+		Options: &Options{
+			Jail: true, Memory: true, Yolo: true,
+			ParamValues: map[string]string{"model": "sonnet"},
+		},
+	}
+	if got, want := ProfileSummary(full), "jail,memory,yolo params=1 mounts=2"; got != want {
+		t.Fatalf("ProfileSummary(full) = %q; want %q", got, want)
+	}
+	minimal := Profile{Agent: "kimi", Options: &Options{}}
+	if got := ProfileSummary(minimal); got != "" {
+		t.Fatalf("ProfileSummary(minimal) = %q; want empty", got)
+	}
+	if got := ProfileSummary(Profile{Agent: "kimi"}); got != "" {
+		t.Fatalf("ProfileSummary(nil options) = %q; want empty", got)
+	}
+}
+
+// TestPropertyProfileRoundTripPreservesAllFields saves and reloads generated
+// profiles through the global config, checking every field survives.
+func TestPropertyProfileRoundTripPreservesAllFields(t *testing.T) {
+	token := rapid.StringMatching(`[a-z0-9\-_]{1,12}`)
+	boolMap := rapid.MapOf(token, rapid.Bool())
+	textMap := rapid.MapOf(token, token)
+	rapid.Check(t, func(rt *rapid.T) {
+		permissions := boolMap.Draw(rt, "permissions")
+		if len(permissions) == 0 {
+			permissions = nil
+		}
+		paramValues := textMap.Draw(rt, "paramValues")
+		if len(paramValues) == 0 {
+			paramValues = nil
+		}
+		var mounts []Mount
+		if rapid.Bool().Draw(rt, "hasMount") {
+			mounts = []Mount{{Path: "/workspace/" + token.Draw(rt, "mount"), Mode: "rw"}}
+		}
+		var extraArgs []string
+		if rapid.Bool().Draw(rt, "hasExtraArg") {
+			extraArgs = []string{"--" + token.Draw(rt, "extraArg")}
+		}
+		want := Profile{
+			Agent:       "agent-" + token.Draw(rt, "agent"),
+			Permissions: permissions,
+			Mounts:      mounts,
+			Options: &Options{
+				Jail:          rapid.Bool().Draw(rt, "jail"),
+				Memory:        rapid.Bool().Draw(rt, "memory"),
+				Yolo:          rapid.Bool().Draw(rt, "yolo"),
+				NewWorkstream: token.Draw(rt, "workstream"),
+				ExtraArgs:     extraArgs,
+				ParamValues:   paramValues,
+			},
+		}
+		global := DefaultGlobal()
+		if err := SetProfile(&global, "generated", want); err != nil {
+			rt.Fatalf("SetProfile() error = %v", err)
+		}
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := SaveGlobal(path, global); err != nil {
+			rt.Fatalf("SaveGlobal() error = %v", err)
+		}
+		loaded, err := LoadGlobal(path)
+		if err != nil {
+			rt.Fatalf("LoadGlobal() error = %v", err)
+		}
+		if got := loaded.Profiles["generated"]; !reflect.DeepEqual(got, want) {
+			rt.Fatalf("profile round-trip mismatch: got %#v; want %#v", got, want)
+		}
+	})
+}

@@ -27,18 +27,21 @@ type featureStep struct {
 }
 
 type launchSpec struct {
-	Agent         string          `yaml:"agent"`
-	Executable    string          `yaml:"executable"`
-	Home          string          `yaml:"home"`
-	ClearHome     bool            `yaml:"clear_home"`
-	Jail          bool            `yaml:"jail"`
-	Memory        bool            `yaml:"memory"`
-	NewWorkstream string          `yaml:"new_workstream"`
-	Permissions   map[string]bool `yaml:"permissions"`
-	Mounts        []config.Mount  `yaml:"mounts"`
-	Yolo          bool            `yaml:"yolo"`
-	Args          []string        `yaml:"args"`
-	Missing       []string        `yaml:"missing_commands"`
+	Agent         string            `yaml:"agent"`
+	Executable    string            `yaml:"executable"`
+	Home          string            `yaml:"home"`
+	ClearHome     bool              `yaml:"clear_home"`
+	Jail          bool              `yaml:"jail"`
+	Memory        bool              `yaml:"memory"`
+	NewWorkstream string            `yaml:"new_workstream"`
+	Permissions   map[string]bool   `yaml:"permissions"`
+	Mounts        []config.Mount    `yaml:"mounts"`
+	Yolo          bool              `yaml:"yolo"`
+	YoloFlag      string            `yaml:"yolo_flag"`
+	Params        []config.Param    `yaml:"params"`
+	ParamValues   map[string]string `yaml:"param_values"`
+	Args          []string          `yaml:"args"`
+	Missing       []string          `yaml:"missing_commands"`
 }
 
 func TestGherkinLauncherContract(t *testing.T) {
@@ -60,6 +63,9 @@ func runScenario(t *testing.T, scenario featureScenario) {
 		return
 	}
 	if runBuildScenario(t, scenario) {
+		return
+	}
+	if runGlobalConfigScenario(t, scenario) {
 		return
 	}
 	runLocalConfigScenario(t, scenario)
@@ -169,7 +175,7 @@ func runLocalConfigScenario(t *testing.T, scenario featureScenario) {
 
 func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 	return launcher.LaunchConfig{
-		Agent:         config.Agent{Command: spec.Agent},
+		Agent:         config.Agent{Command: spec.Agent, YoloFlag: spec.YoloFlag, Params: spec.Params},
 		Executable:    spec.Executable,
 		HomeDir:       spec.Home,
 		UseJail:       spec.Jail,
@@ -179,6 +185,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		Mounts:        spec.Mounts,
 		Yolo:          spec.Yolo,
 		ExtraArgs:     spec.Args,
+		ParamValues:   spec.ParamValues,
 	}
 }
 
@@ -192,6 +199,81 @@ func issueCodes(issues []launcher.Issue) []string {
 
 var optionExpectation = regexp.MustCompile(`^(?:Then|And) option "([^"]+)" is (true|false)$`)
 var failureExpectation = regexp.MustCompile(`^Then command construction fails with "([^"]+)"$`)
+var profileAgentExpectation = regexp.MustCompile(`^(?:Then|And) profile "([^"]+)" has agent "([^"]+)"$`)
+var profileOptionExpectation = regexp.MustCompile(`^(?:Then|And) profile "([^"]+)" option "([^"]+)" is (true|false)$`)
+var profileParamExpectation = regexp.MustCompile(`^(?:Then|And) profile "([^"]+)" param "([^"]+)" is "([^"]*)"$`)
+
+// runGlobalConfigScenario handles "Given a global configuration" scenarios,
+// saving and reloading the document through the config layer and checking
+// profile expectations. It reports whether the scenario matched.
+func runGlobalConfigScenario(t *testing.T, scenario featureScenario) bool {
+	t.Helper()
+	step, ok := scenario.step("Given a global configuration")
+	if !ok {
+		return false
+	}
+	var global config.Global
+	if err := yaml.Unmarshal([]byte(step.doc), &global); err != nil {
+		t.Fatalf("parse global configuration: %v", err)
+	}
+	if _, ok := scenario.step("When the global configuration is saved and loaded"); !ok {
+		t.Fatal("global configuration scenario must save and load the config")
+	}
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	if err := config.SaveGlobal(path, global); err != nil {
+		t.Fatalf("SaveGlobal() error = %v", err)
+	}
+	loaded, err := config.LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	checked := 0
+	for _, expectation := range scenario.steps {
+		checked += checkProfileExpectation(t, loaded, expectation.text)
+	}
+	if checked == 0 {
+		t.Fatal("global configuration scenario has no supported expectation")
+	}
+	return true
+}
+
+// checkProfileExpectation verifies one Then/And step against the loaded
+// global config, returning 1 when the step was a recognized profile check.
+func checkProfileExpectation(t *testing.T, global config.Global, text string) int {
+	t.Helper()
+	if match := profileAgentExpectation.FindStringSubmatch(text); len(match) == 3 {
+		profile, ok := global.Profiles[match[1]]
+		if !ok || profile.Agent != match[2] {
+			t.Fatalf("profile %q agent = %q; want %q", match[1], profile.Agent, match[2])
+		}
+		return 1
+	}
+	if match := profileOptionExpectation.FindStringSubmatch(text); len(match) == 4 {
+		profile, ok := global.Profiles[match[1]]
+		if !ok || profile.Options == nil {
+			t.Fatalf("profile %q has no options block", match[1])
+		}
+		got, known := localOption(*profile.Options, match[2])
+		if !known {
+			t.Fatalf("unknown option in feature: %q", match[2])
+		}
+		if want := match[3] == "true"; got != want {
+			t.Fatalf("profile %q option %q = %t; want %t", match[1], match[2], got, want)
+		}
+		return 1
+	}
+	if match := profileParamExpectation.FindStringSubmatch(text); len(match) == 4 {
+		profile, ok := global.Profiles[match[1]]
+		if !ok || profile.Options == nil {
+			t.Fatalf("profile %q has no options block", match[1])
+		}
+		if got := profile.Options.ParamValues[match[2]]; got != match[3] {
+			t.Fatalf("profile %q param %q = %q; want %q", match[1], match[2], got, match[3])
+		}
+		return 1
+	}
+	return 0
+}
 
 func (s featureScenario) step(text string) (featureStep, bool) {
 	for _, step := range s.steps {

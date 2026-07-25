@@ -27,29 +27,41 @@ var (
 	badStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8"))
 )
 
+// Hooks groups the optional persistence callbacks invoked by the TUI.
+type Hooks struct {
+	Save        func(launcher.LaunchConfig) error
+	SaveProfile func(name string, launch launcher.LaunchConfig) error
+}
+
 // Model is the bubbletea model for the interactive launcher. All durable
 // state lives in launch so the CLI and TUI share the same builder.
 type Model struct {
-	catalog       catalog.Catalog
-	launch        launcher.LaunchConfig
-	save          func(launcher.LaunchConfig) error
-	agents        []catalog.AgentStatus
-	permissionIDs []string
-	section       int
-	cursor        int
-	mountInput    string
-	mountMode     string
-	mountDir      string
-	mountEntries  []string
-	mountCursor   int
-	mountTyped    bool
-	inputActive   bool
-	helpOpen      bool
-	width         int
-	height        int
-	status        string
-	result        []string
-	cancelled     bool
+	catalog         catalog.Catalog
+	launch          launcher.LaunchConfig
+	hooks           Hooks
+	agents          []catalog.AgentStatus
+	permissionIDs   []string
+	profiles        map[string]config.Profile
+	profileNames    []string
+	section         int
+	cursor          int
+	mountInput      string
+	mountMode       string
+	mountDir        string
+	mountEntries    []string
+	mountCursor     int
+	mountTyped      bool
+	inputActive     bool
+	textInputActive bool
+	textInputKind   string
+	textInputValue  string
+	paramTarget     config.Param
+	helpOpen        bool
+	width           int
+	height          int
+	status          string
+	result          []string
+	cancelled       bool
 }
 
 // NewModel builds the initial TUI model from the global catalog and the
@@ -64,6 +76,8 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 		launch:        launch,
 		agents:        c.Agents(),
 		permissionIDs: make([]string, 0, len(global.Permissions)),
+		profiles:      global.Profiles,
+		profileNames:  config.ProfileNames(global),
 		mountMode:     "ro",
 	}
 	for _, permission := range global.Permissions {
@@ -76,13 +90,14 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 // Run starts the interactive TUI and returns the confirmed launch
 // configuration, or ErrCancelled when the user quits.
 func Run(global config.Global, launch launcher.LaunchConfig) (launcher.LaunchConfig, error) {
-	return RunWithSave(global, launch, nil)
+	return RunWithHooks(global, launch, Hooks{})
 }
 
-// RunWithSave is Run with an optional save hook invoked on Ctrl+S.
-func RunWithSave(global config.Global, launch launcher.LaunchConfig, save func(launcher.LaunchConfig) error) (launcher.LaunchConfig, error) {
+// RunWithHooks is Run with optional save hooks invoked on Ctrl+S (local
+// config) and Ctrl+P (named profile in the global config).
+func RunWithHooks(global config.Global, launch launcher.LaunchConfig, hooks Hooks) (launcher.LaunchConfig, error) {
 	model := NewModel(global, launch)
-	model.save = save
+	model.hooks = hooks
 	final, err := tea.NewProgram(model).Run()
 	if err != nil {
 		return launch, err
@@ -110,53 +125,100 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inputActive {
 			return m.updateMountInput(value)
 		}
-		switch value.String() {
-		case "ctrl+c", "q", "esc":
-			m.cancelled = true
+		if m.textInputActive {
+			return m.updateTextInput(value)
+		}
+		return m.handleMainKey(value)
+	}
+	return m, nil
+}
+
+// handleMainKey dispatches key presses when no text input is active.
+func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "ctrl+c", "q", "esc":
+		m.cancelled = true
+		return m, tea.Quit
+	case "tab", "ctrl+j":
+		m.section = (m.section + 1) % m.sectionCount()
+		m.cursor = 0
+	case "shift+tab", "ctrl+k":
+		m.section = (m.section + m.sectionCount() - 1) % m.sectionCount()
+		m.cursor = 0
+	case "1", "2", "3", "4", "5":
+		if section := int(key.String()[0] - '1'); section < m.sectionCount() {
+			m.section = section
+			m.cursor = 0
+		}
+	case "up", "k":
+		m.moveCursor(-1)
+	case "down", "j":
+		m.moveCursor(1)
+	case "space", " ":
+		m.toggleCurrent()
+	case "/":
+		if m.section == 2 {
+			m.startMountBrowser()
+		}
+	case "backspace":
+		m.removeMount()
+	case "d", "ctrl+d":
+		m.preview(true)
+	case "?":
+		m.helpOpen = true
+	case "ctrl+s":
+		m.saveLocal()
+	case "ctrl+p":
+		m.startProfileInput()
+	case "enter":
+		if m.section == 2 && len(m.launch.Mounts) == 0 {
+			m.startMountBrowser()
+		} else if m.section == 3 && m.cursor >= optionToggleCount {
+			m.startParamInput()
+		} else if m.section == 4 && m.cursor < len(m.profileNames) {
+			m.loadProfile(m.profileNames[m.cursor])
+		} else if m.preview(false) {
 			return m, tea.Quit
-		case "tab", "ctrl+j":
-			m.section = (m.section + 1) % 4
-			m.cursor = 0
-		case "shift+tab", "ctrl+k":
-			m.section = (m.section + 3) % 4
-			m.cursor = 0
-		case "1", "2", "3", "4":
-			m.section = int(value.String()[0] - '1')
-			m.cursor = 0
-		case "up", "k":
-			m.moveCursor(-1)
-		case "down", "j":
-			m.moveCursor(1)
-		case "space", " ":
-			m.toggleCurrent()
-		case "/":
-			if m.section == 2 {
-				m.startMountBrowser()
-			}
-		case "backspace":
-			m.removeMount()
-		case "d", "ctrl+d":
-			m.preview(true)
-		case "?":
-			m.helpOpen = true
-		case "ctrl+s":
-			if m.save == nil {
-				m.status = "Salvar não está disponível neste modo"
-			} else if err := m.save(m.launch); err != nil {
-				m.status = "Erro ao salvar: " + err.Error()
-			} else {
-				m.status = "Seleção salva em .ai-launch.yaml"
-			}
-		case "enter":
-			if m.section == 2 && len(m.launch.Mounts) == 0 {
-				m.startMountBrowser()
-			} else if m.preview(false) {
-				return m, tea.Quit
-			}
 		}
 	}
 	return m, nil
 }
+
+// sectionCount reports how many sections the layout currently has; the
+// profiles section only exists when the global config saves at least one.
+func (m Model) sectionCount() int {
+	if len(m.profileNames) > 0 {
+		return 5
+	}
+	return 4
+}
+
+// saveLocal persists the current selection to .ai-launch.yaml via the hook.
+func (m *Model) saveLocal() {
+	if m.hooks.Save == nil {
+		m.status = "Salvar não está disponível neste modo"
+	} else if err := m.hooks.Save(m.launch); err != nil {
+		m.status = "Erro ao salvar: " + err.Error()
+	} else {
+		m.status = "Seleção salva em .ai-launch.yaml"
+	}
+}
+
+// startProfileInput opens the text input that names a new saved profile.
+func (m *Model) startProfileInput() {
+	if m.hooks.SaveProfile == nil {
+		m.status = "Salvar perfil não está disponível neste modo"
+		return
+	}
+	m.textInputKind = "profile"
+	m.textInputValue = ""
+	m.textInputActive = true
+	m.status = "Nome do perfil · Enter salva · Esc cancela"
+}
+
+// optionToggleCount is the number of fixed toggle rows in the options
+// section; catalog-declared param rows follow them.
+const optionToggleCount = 4
 
 // View implements tea.Model and renders the whole screen.
 func (m Model) View() string {
@@ -169,7 +231,15 @@ func (m Model) View() string {
 	m.permissionsView(&b)
 	m.mountsView(&b)
 	m.optionsView(&b)
+	m.profilesView(&b)
 
+	if m.textInputActive {
+		label := "Perfil"
+		if m.textInputKind == "param" {
+			label = m.paramTarget.Name + " (" + m.paramTarget.Flag + ")"
+		}
+		fmt.Fprintf(&b, "\n  %s: %s█\n", label, m.textInputValue)
+	}
 	b.WriteString("\n")
 	preview, err := launcher.Build(m.launch)
 	if err == nil {
@@ -278,6 +348,38 @@ func (m Model) optionsView(b *strings.Builder) {
 	if m.launch.NewWorkstream != "" {
 		b.WriteString("  workstream: " + m.launch.NewWorkstream + "\n")
 	}
+	for i, param := range m.launch.Agent.Params {
+		pointer := "  "
+		if m.section == 3 && m.cursor == optionToggleCount+i {
+			pointer = "❯ "
+		}
+		value := m.launch.ParamValues[param.Name]
+		if value == "" {
+			value = mutedStyle.Render("(vazio)")
+		}
+		fmt.Fprintf(b, "%s%s: %s (%s)\n", pointer, param.Name, value, param.Flag)
+	}
+}
+
+// profilesView renders the saved profiles section, shown only when the
+// global config has at least one profile.
+func (m Model) profilesView(b *strings.Builder) {
+	if len(m.profileNames) == 0 {
+		return
+	}
+	b.WriteString("\nPerfis\n")
+	for i, name := range m.profileNames {
+		pointer := "  "
+		if m.section == 4 && i == m.cursor {
+			pointer = "❯ "
+		}
+		profile := m.profiles[name]
+		line := fmt.Sprintf("%s%-18s (%s)", pointer, name, profile.Agent)
+		if summary := config.ProfileSummary(profile); summary != "" {
+			line += " " + mutedStyle.Render(summary)
+		}
+		b.WriteString(line + "\n")
+	}
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -288,7 +390,9 @@ func (m *Model) moveCursor(delta int) {
 	case 2:
 		limit = len(m.launch.Mounts)
 	case 3:
-		limit = 4
+		limit = optionToggleCount + len(m.launch.Agent.Params)
+	case 4:
+		limit = len(m.profileNames)
 	}
 	if limit == 0 {
 		return
@@ -324,22 +428,185 @@ func (m *Model) toggleCurrent() {
 			m.status = "Modo do mount alternado"
 		}
 	case 3:
-		switch m.cursor {
-		case 0:
-			m.launch.UseJail = !m.launch.UseJail
-		case 1:
-			m.launch.UseMemory = !m.launch.UseMemory
-		case 2:
-			if m.launch.NewWorkstream == "" {
-				m.launch.NewWorkstream = "new-workstream"
-			} else {
-				m.launch.NewWorkstream = ""
-			}
-		case 3:
-			m.launch.Yolo = !m.launch.Yolo
+		m.toggleOption()
+	case 4:
+		if m.cursor < len(m.profileNames) {
+			m.loadProfile(m.profileNames[m.cursor])
 		}
-		m.status = "Opção alternada"
 	}
+}
+
+// toggleOption flips one of the fixed option toggles, or opens the text
+// input when the cursor is on a catalog-declared param row.
+func (m *Model) toggleOption() {
+	if m.cursor >= optionToggleCount {
+		m.startParamInput()
+		return
+	}
+	switch m.cursor {
+	case 0:
+		m.launch.UseJail = !m.launch.UseJail
+	case 1:
+		m.launch.UseMemory = !m.launch.UseMemory
+	case 2:
+		if m.launch.NewWorkstream == "" {
+			m.launch.NewWorkstream = "new-workstream"
+		} else {
+			m.launch.NewWorkstream = ""
+		}
+	case 3:
+		m.launch.Yolo = !m.launch.Yolo
+	}
+	m.status = "Opção alternada"
+}
+
+// startParamInput opens the text input for the param row under the cursor.
+func (m *Model) startParamInput() {
+	index := m.cursor - optionToggleCount
+	params := m.launch.Agent.Params
+	if index < 0 || index >= len(params) {
+		return
+	}
+	m.paramTarget = params[index]
+	m.textInputKind = "param"
+	m.textInputValue = m.launch.ParamValues[m.paramTarget.Name]
+	m.textInputActive = true
+	m.status = "Editando " + m.paramTarget.Name + " (" + m.paramTarget.Flag + ") · Enter confirma · Esc cancela"
+}
+
+// loadProfile replaces the current selection with a saved profile, keeping
+// the local values for every block the profile omits.
+func (m *Model) loadProfile(name string) {
+	profile, ok := m.profiles[name]
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(profile.Agent) != "" {
+		status, err := m.catalog.Resolve(profile.Agent)
+		agent := status.Agent
+		executable := status.Path
+		if err != nil {
+			agent = config.Agent{Name: profile.Agent, Command: profile.Agent}
+			executable = ""
+		} else if status.ResolvedCommand != "" {
+			agent.Command = status.ResolvedCommand
+		}
+		m.launch.Agent = agent
+		m.launch.Executable = executable
+	}
+	if profile.Permissions != nil {
+		m.launch.Permissions = m.catalog.NormalizePermissions(profile.Permissions)
+	}
+	if profile.Mounts != nil {
+		m.launch.Mounts = append([]config.Mount(nil), profile.Mounts...)
+	}
+	if profile.Options != nil {
+		m.launch.UseJail = profile.Options.Jail
+		m.launch.UseMemory = profile.Options.Memory
+		m.launch.Yolo = profile.Options.Yolo
+		m.launch.NewWorkstream = profile.Options.NewWorkstream
+		m.launch.ExtraArgs = append([]string(nil), profile.Options.ExtraArgs...)
+		m.launch.ParamValues = copyParamValues(profile.Options.ParamValues)
+	}
+	m.status = "Perfil carregado: " + name
+}
+
+func copyParamValues(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	copied := make(map[string]string, len(values))
+	for name, value := range values {
+		copied[name] = value
+	}
+	return copied
+}
+
+// updateTextInput handles keys while a single-line text input (param value
+// or profile name) is active.
+func (m *Model) updateTextInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.textInputActive = false
+		m.status = "Edição cancelada"
+	case "enter":
+		m.commitTextInput()
+	case "backspace":
+		if m.textInputValue != "" {
+			runes := []rune(m.textInputValue)
+			m.textInputValue = string(runes[:len(runes)-1])
+		}
+	default:
+		if key.Type == tea.KeyRunes {
+			m.textInputValue += string(key.Runes)
+		}
+	}
+	return *m, nil
+}
+
+// commitTextInput applies the active text input: a param value is stored in
+// param_values (empty clears it), a profile name saves the selection via the
+// SaveProfile hook.
+func (m *Model) commitTextInput() {
+	value := strings.TrimSpace(m.textInputValue)
+	m.textInputActive = false
+	if m.textInputKind == "profile" {
+		m.saveProfileAs(value)
+		return
+	}
+	if value == "" {
+		delete(m.launch.ParamValues, m.paramTarget.Name)
+		m.status = "Parâmetro limpo: " + m.paramTarget.Name
+		return
+	}
+	if m.launch.ParamValues == nil {
+		m.launch.ParamValues = make(map[string]string)
+	}
+	m.launch.ParamValues[m.paramTarget.Name] = value
+	m.status = "Parâmetro definido: " + m.paramTarget.Name
+}
+
+// saveProfileAs persists the current selection as a named profile and adds
+// it to the profiles section.
+func (m *Model) saveProfileAs(name string) {
+	if name == "" {
+		m.status = "O nome do perfil não pode ser vazio"
+		return
+	}
+	if err := m.hooks.SaveProfile(name, m.launch); err != nil {
+		m.status = "Erro ao salvar perfil: " + err.Error()
+		return
+	}
+	if m.profiles == nil {
+		m.profiles = make(map[string]config.Profile)
+	}
+	m.profiles[name] = config.Profile{
+		Agent:       m.launch.Agent.Command,
+		Permissions: m.launch.Permissions,
+		Mounts:      m.launch.Mounts,
+		Options: &config.Options{
+			Jail:          m.launch.UseJail,
+			Memory:        m.launch.UseMemory,
+			Yolo:          m.launch.Yolo,
+			NewWorkstream: m.launch.NewWorkstream,
+			ExtraArgs:     m.launch.ExtraArgs,
+			ParamValues:   m.launch.ParamValues,
+		},
+	}
+	if !containsString(m.profileNames, name) {
+		m.profileNames = append(m.profileNames, name)
+		sort.Strings(m.profileNames)
+	}
+	m.status = "Perfil salvo: " + name
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -493,16 +760,17 @@ func (m *Model) removeMount() {
 func (m Model) helpView() string {
 	return titleStyle.Render("ai-launcher · ajuda") + "\n\n" +
 		"Tab / Shift+Tab   próxima seção\n" +
-		"1-4               saltar para uma seção\n" +
+		"1-5               saltar para uma seção\n" +
 		"↑↓ / j k          navegar\n" +
-		"Space             alternar seleção\n" +
+		"Space             alternar seleção / carregar perfil\n" +
 		"/                 abrir navegador de mounts\n" +
 		"→ / l             entrar no diretório\n" +
 		"← / h             subir para o diretório pai\n" +
-		"Enter             adicionar diretório / executar\n" +
+		"Enter             adicionar diretório, editar parâmetro ou executar\n" +
 		"Backspace         remover mount\n" +
 		"Ctrl+D / d        dry-run\n" +
-		"Ctrl+S            salvar configuração\n" +
+		"Ctrl+S            salvar .ai-launch.yaml\n" +
+		"Ctrl+P            salvar como perfil nomeado\n" +
 		"q / Esc           sair\n\n" +
 		mutedStyle.Render("Pressione qualquer tecla para fechar")
 }
