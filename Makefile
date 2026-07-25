@@ -10,7 +10,7 @@ GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lin
 GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@latest
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
 
-.PHONY: build build-linux build-macos build-windows build-release test fmt lint lint-full sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
+.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
 
 build:
 	$(GO) build -buildvcs=false -o bin/ai-launcher ./cmd/ai-launcher
@@ -31,6 +31,14 @@ build-windows:
 	GOOS=windows GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/ai-launcher-windows-arm64.exe ./cmd/ai-launcher
 
 build-release: build-linux build-macos build-windows
+
+# Checksums cover every file already in dist/ except SHA256SUMS itself,
+# sorted by filename so the file is reproducible. Verify with:
+#   cd dist && sha256sum -c SHA256SUMS
+release-checksums: build-release
+	@cd $(DIST_DIR) && ls -1 | grep -vx 'SHA256SUMS' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+
+release-local: build-release release-checksums
 
 test:
 	$(GO) test ./...
