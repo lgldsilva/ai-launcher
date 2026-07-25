@@ -43,6 +43,9 @@ build-release: build-linux build-macos build-windows
 release-checksums: build-release
 	@cd $(DIST_DIR) && ls -1 | grep -vx 'SHA256SUMS' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
 
+# Local fallback for cutting release artifacts without CI. The canonical
+# local check of what release.yml publishes is the GoReleaser snapshot:
+#   go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --snapshot --clean --skip=publish
 release-local: build-release release-checksums
 
 test:
