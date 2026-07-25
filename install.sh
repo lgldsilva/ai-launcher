@@ -11,6 +11,10 @@
 #
 # Env overrides: AI_LAUNCHER_API, AI_LAUNCHER_DOWNLOAD_BASE,
 # AI_LAUNCHER_INSTALL_DIR
+#
+# Note: while the repository is PRIVATE this script cannot download release
+# assets (the pretty download URLs 404). Use `ai-launcher upgrade` with
+# AI_LAUNCHER_UPDATE_TOKEN instead, which fetches assets through the API.
 set -eu
 
 API="${AI_LAUNCHER_API:-https://api.github.com/repos/lgldsilva/ai-launcher}"
