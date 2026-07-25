@@ -16,6 +16,8 @@ func Replace(argv []string) error {
 	return ReplaceWithEnv(argv, nil)
 }
 
+// ReplaceWithEnv is Replace with an explicit environment (nil inherits the
+// current one). The path is resolved through PATH before exec'ing.
 func ReplaceWithEnv(argv, env []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("cannot replace with an empty command")
@@ -27,5 +29,5 @@ func ReplaceWithEnv(argv, env []string) error {
 	if env == nil {
 		env = os.Environ()
 	}
-	return syscall.Exec(path, argv, env)
+	return syscall.Exec(path, argv, env) // #nosec G204 -- argv is built from the user's own launcher configuration; exec'ing it is the tool's purpose
 }

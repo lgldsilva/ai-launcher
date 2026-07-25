@@ -11,10 +11,14 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
+// CurrentVersion is the configuration schema version written by this build.
 const CurrentVersion = "2.0"
 
+// DefaultMemoryServerURL is the ai-memory server used when the global config
+// does not override it.
 const DefaultMemoryServerURL = "https://aimemory.raspberrypi.lan"
 
+// Agent describes a launchable AI agent CLI and its optional integrations.
 type Agent struct {
 	Name           string             `yaml:"name"`
 	Command        string             `yaml:"command"`
@@ -53,6 +57,8 @@ type MemoryIntegration struct {
 	HooksConfigFile string `yaml:"hooks_config_file,omitempty"`
 }
 
+// Tool describes an auxiliary CLI (for example ai-jail or ai-memory) that the
+// launcher can install on demand.
 type Tool struct {
 	Name        string         `yaml:"name"`
 	Command     string         `yaml:"command"`
@@ -63,6 +69,8 @@ type Tool struct {
 	Release     *GitHubRelease `yaml:"release,omitempty"`
 }
 
+// Permission is a toggleable capability with optional dependencies on other
+// permissions (Requires) and a Locked flag for values the user cannot change.
 type Permission struct {
 	ID       string   `yaml:"id"`
 	Name     string   `yaml:"name"`
@@ -71,11 +79,14 @@ type Permission struct {
 	Requires []string `yaml:"requires,omitempty"`
 }
 
+// Mount is a host directory exposed inside the sandbox. Mode is "rw" or
+// "read-only"; an empty mode defaults to read-write.
 type Mount struct {
 	Path string `yaml:"path"`
 	Mode string `yaml:"mode,omitempty"`
 }
 
+// Options holds the per-launch behavior toggles persisted in the local config.
 type Options struct {
 	Jail          bool     `yaml:"jail"`
 	Memory        bool     `yaml:"memory"`
@@ -116,6 +127,7 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 	return nil
 }
 
+// Global is the machine-wide catalog of agents, tools, and permissions.
 type Global struct {
 	Version         string       `yaml:"version"`
 	MemoryServerURL string       `yaml:"memory_server_url,omitempty"`
@@ -125,6 +137,7 @@ type Global struct {
 	DefaultMounts   []string     `yaml:"default_mounts,omitempty"`
 }
 
+// Local is the per-workspace launcher configuration.
 type Local struct {
 	Version     string          `yaml:"version"`
 	Agent       string          `yaml:"agent"`
@@ -133,6 +146,8 @@ type Local struct {
 	Options     Options         `yaml:"options"`
 }
 
+// DefaultGlobal returns the built-in global catalog used when no global
+// config file exists or when individual sections are missing from it.
 func DefaultGlobal() Global {
 	return Global{
 		Version:         CurrentVersion,
@@ -196,6 +211,7 @@ func DefaultGlobal() Global {
 	}
 }
 
+// DefaultLocal returns the safe-by-default local configuration.
 func DefaultLocal() Local {
 	return Local{Version: CurrentVersion, Agent: "claude", Permissions: map[string]bool{}, Options: Options{Jail: true, Memory: true}}
 }
@@ -208,12 +224,14 @@ func hooksOnlyMemoryIntegration(agent string) *MemoryIntegration {
 	return &MemoryIntegration{Agent: agent, InstallHooks: true}
 }
 
+// LoadGlobal reads the global config, falling back to DefaultGlobal for a
+// missing file and merging built-in defaults for omitted sections.
 func LoadGlobal(path string) (Global, error) {
 	defaults := DefaultGlobal()
 	if path == "" {
 		return defaults, nil
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- path is the user-supplied global config location by design
 	if errors.Is(err, os.ErrNotExist) {
 		return defaults, nil
 	}
@@ -243,7 +261,7 @@ func SaveGlobal(path string, cfg Global) error {
 	if err != nil {
 		return fmt.Errorf("encode global config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create global config directory: %w", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".ai-launch-global-*.tmp")
@@ -251,13 +269,13 @@ func SaveGlobal(path string, cfg Global) error {
 		return fmt.Errorf("create temporary global config: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write global config: %w", err)
 	}
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("protect global config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -294,12 +312,14 @@ func UpsertAgent(global *Global, agent Agent) error {
 	return nil
 }
 
+// LoadLocal reads the workspace-local config, falling back to DefaultLocal
+// for a missing file and retaining safe defaults for omitted option keys.
 func LoadLocal(path string) (Local, error) {
 	cfg := DefaultLocal()
 	if path == "" {
 		return cfg, nil
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- path is the user-supplied local config location by design
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil
 	}
@@ -337,6 +357,8 @@ func LoadLocal(path string) (Local, error) {
 	return loaded, nil
 }
 
+// SaveLocal persists the local config atomically and with user-only
+// permissions.
 func SaveLocal(path string, cfg Local) error {
 	if path == "" {
 		return errors.New("local config path is empty")
@@ -349,7 +371,7 @@ func SaveLocal(path string, cfg Local) error {
 	if err != nil {
 		return fmt.Errorf("encode local config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".ai-launch-*.tmp")
@@ -357,13 +379,13 @@ func SaveLocal(path string, cfg Local) error {
 		return fmt.Errorf("create temporary config: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write local config: %w", err)
 	}
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("protect local config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -375,6 +397,8 @@ func SaveLocal(path string, cfg Local) error {
 	return nil
 }
 
+// ValidateVersion reports whether a config schema version is compatible with
+// this build (empty, "1", "1.0", or CurrentVersion).
 func ValidateVersion(version string) error {
 	version = strings.TrimSpace(version)
 	if version == "" || version == "1" || version == "1.0" || version == CurrentVersion {

@@ -37,10 +37,10 @@ func TestInstallDownloadsChecksummedArchiveAndSkipsCurrentVersion(t *testing.T) 
 			})
 		case "/download/tool":
 			downloads.Add(1)
-			response.Write(archive)
+			_, _ = response.Write(archive)
 		case "/download/checksum":
 			downloads.Add(1)
-			response.Write([]byte(checksum))
+			_, _ = response.Write([]byte(checksum))
 		default:
 			http.NotFound(response, request)
 		}
@@ -68,7 +68,7 @@ func TestInstallDownloadsChecksummedArchiveAndSkipsCurrentVersion(t *testing.T) 
 	if first.Status != "installed" || first.Version != "v1.2.3" || first.Path != target {
 		t.Fatalf("first result = %#v", first)
 	}
-	contents, err := os.ReadFile(target)
+	contents, err := os.ReadFile(target) // #nosec G304 -- target is the install path created by the test itself
 	if err != nil || string(contents) != "#!/bin/sh\necho tool\n" {
 		t.Fatalf("installed executable = %q, err=%v", contents, err)
 	}
@@ -97,7 +97,7 @@ func TestInstallRejectsMissingOrInvalidChecksumUnlessExplicitlyAllowed(t *testin
 			_ = json.NewEncoder(response).Encode(releaseResponse{TagName: "v1", Assets: []Asset{{Name: "raw", BrowserDownloadURL: serverURL(request, "/raw")}}})
 			return
 		}
-		response.Write(data)
+		_, _ = response.Write(data)
 	}))
 	defer server.Close()
 	root := t.TempDir()
@@ -129,7 +129,7 @@ func TestInstallAcceptsGitHubAssetDigest(t *testing.T) {
 				Assets:  []Asset{{Name: "tool.tar.gz", Digest: "sha256:" + hex.EncodeToString(digest[:]), BrowserDownloadURL: serverURL(request, "/tool")}},
 			})
 		case "/tool":
-			response.Write(archive)
+			_, _ = response.Write(archive)
 		default:
 			http.NotFound(response, request)
 		}
@@ -152,10 +152,10 @@ func TestInstallSourceUpdatesHTTPSWrapper(t *testing.T) {
 	var version atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if version.Load() == 0 {
-			response.Write([]byte("#!/usr/bin/env bash\necho v1\n"))
+			_, _ = response.Write([]byte("#!/usr/bin/env bash\necho v1\n"))
 			return
 		}
-		response.Write([]byte("#!/usr/bin/env bash\necho v2\n"))
+		_, _ = response.Write([]byte("#!/usr/bin/env bash\necho v2\n"))
 	}))
 	defer server.Close()
 	root := t.TempDir()
@@ -176,7 +176,7 @@ func TestInstallSourceUpdatesHTTPSWrapper(t *testing.T) {
 	if err != nil || third.Status != "installed" {
 		t.Fatalf("updated source install = %#v, err=%v", third, err)
 	}
-	contents, err := os.ReadFile(target)
+	contents, err := os.ReadFile(target) // #nosec G304 -- target is the install path created by the test itself
 	if err != nil || !strings.Contains(string(contents), "v2") {
 		t.Fatalf("updated source contents = %q, err=%v", contents, err)
 	}

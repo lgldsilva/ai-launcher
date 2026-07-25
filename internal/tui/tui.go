@@ -17,6 +17,7 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
+// ErrCancelled is returned when the user quits the TUI without launching.
 var ErrCancelled = errors.New("launcher cancelled")
 
 var (
@@ -26,6 +27,8 @@ var (
 	badStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8"))
 )
 
+// Model is the bubbletea model for the interactive launcher. All durable
+// state lives in launch so the CLI and TUI share the same builder.
 type Model struct {
 	catalog       catalog.Catalog
 	launch        launcher.LaunchConfig
@@ -49,6 +52,8 @@ type Model struct {
 	cancelled     bool
 }
 
+// NewModel builds the initial TUI model from the global catalog and the
+// launch configuration derived from flags and the local config.
 func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	c := catalog.New(global)
 	if launch.Permissions == nil {
@@ -68,10 +73,13 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	return model
 }
 
+// Run starts the interactive TUI and returns the confirmed launch
+// configuration, or ErrCancelled when the user quits.
 func Run(global config.Global, launch launcher.LaunchConfig) (launcher.LaunchConfig, error) {
 	return RunWithSave(global, launch, nil)
 }
 
+// RunWithSave is Run with an optional save hook invoked on Ctrl+S.
 func RunWithSave(global config.Global, launch launcher.LaunchConfig, save func(launcher.LaunchConfig) error) (launcher.LaunchConfig, error) {
 	model := NewModel(global, launch)
 	model.save = save
@@ -86,8 +94,10 @@ func RunWithSave(global config.Global, launch launcher.LaunchConfig, save func(l
 	return model.launch, nil
 }
 
+// Init implements tea.Model; the TUI has no startup command.
 func (m Model) Init() tea.Cmd { return nil }
 
+// Update implements tea.Model, handling window size and key events.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -148,12 +158,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View implements tea.Model and renders the whole screen.
 func (m Model) View() string {
 	if m.helpOpen {
 		return m.helpView()
 	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("ai-launcher"))
+	m.agentsView(&b)
+	m.permissionsView(&b)
+	m.mountsView(&b)
+	m.optionsView(&b)
+
+	b.WriteString("\n")
+	preview, err := launcher.Build(m.launch)
+	if err == nil {
+		b.WriteString(mutedStyle.Render("Preview: " + strings.Join(preview, " ")))
+		b.WriteString("\n")
+	}
+	if m.status != "" {
+		b.WriteString("\n" + m.status + "\n")
+	}
+	return b.String()
+}
+
+func (m Model) agentsView(b *strings.Builder) {
 	b.WriteString("\n\nAgente\n")
 	for i, status := range m.agents {
 		pointer := "  "
@@ -168,9 +197,11 @@ func (m Model) View() string {
 		if status.ResolvedCommand != "" && status.ResolvedCommand != status.Agent.Command {
 			command += " via " + status.ResolvedCommand
 		}
-		b.WriteString(fmt.Sprintf("%s%-18s (%s) %s\n", pointer, status.Agent.Name, command, state))
+		fmt.Fprintf(b, "%s%-18s (%s) %s\n", pointer, status.Agent.Name, command, state)
 	}
+}
 
+func (m Model) permissionsView(b *strings.Builder) {
 	b.WriteString("\nPermissões\n")
 	for i, id := range m.permissionIDs {
 		permission, _ := m.catalog.Permission(id)
@@ -185,9 +216,11 @@ func (m Model) View() string {
 		if permission.Locked {
 			mark = "[◆]"
 		}
-		b.WriteString(fmt.Sprintf("%s%s %-22s\n", pointer, mark, permission.Name))
+		fmt.Fprintf(b, "%s%s %-22s\n", pointer, mark, permission.Name)
 	}
+}
 
+func (m Model) mountsView(b *strings.Builder) {
 	b.WriteString("\nMounts\n")
 	if len(m.launch.Mounts) == 0 {
 		b.WriteString("  (nenhum; pressione / para adicionar)\n")
@@ -201,10 +234,10 @@ func (m Model) View() string {
 		if mode == "" {
 			mode = "rw"
 		}
-		b.WriteString(fmt.Sprintf("%s%s [%s]\n", pointer, mount.Path, mode))
+		fmt.Fprintf(b, "%s%s [%s]\n", pointer, mount.Path, mode)
 	}
 	if m.inputActive {
-		b.WriteString(fmt.Sprintf("  Adicionar mount (%s): %s█\n", m.mountMode, m.mountInput))
+		fmt.Fprintf(b, "  Adicionar mount (%s): %s█\n", m.mountMode, m.mountInput)
 		b.WriteString("  Navegador: " + m.mountDir + "\n")
 		if len(m.mountEntries) == 0 {
 			b.WriteString("    (sem subdiretórios legíveis; digite um caminho)\n")
@@ -218,7 +251,9 @@ func (m Model) View() string {
 			}
 		}
 	}
+}
 
+func (m Model) optionsView(b *strings.Builder) {
 	b.WriteString("\nOpções\n")
 	options := []struct {
 		name string
@@ -238,22 +273,11 @@ func (m Model) View() string {
 		if option.on {
 			mark = "[✓]"
 		}
-		b.WriteString(fmt.Sprintf("%s%s %s\n", pointer, mark, option.name))
+		fmt.Fprintf(b, "%s%s %s\n", pointer, mark, option.name)
 	}
 	if m.launch.NewWorkstream != "" {
 		b.WriteString("  workstream: " + m.launch.NewWorkstream + "\n")
 	}
-
-	b.WriteString("\n")
-	preview, err := launcher.Build(m.launch)
-	if err == nil {
-		b.WriteString(mutedStyle.Render("Preview: " + strings.Join(preview, " ")))
-		b.WriteString("\n")
-	}
-	if m.status != "" {
-		b.WriteString("\n" + m.status + "\n")
-	}
-	return b.String()
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -329,32 +353,8 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			path = m.selectedMountPath()
 		}
 		m.addMount(path)
-	case "right", "l":
-		if !m.mountTyped && len(m.mountEntries) > 0 {
-			path := m.selectedMountPath()
-			if info, err := os.Stat(path); err == nil && info.IsDir() {
-				m.mountDir = path
-				m.refreshMountEntries()
-				m.status = "Diretório aberto; Enter adiciona, ←/h sobe"
-			}
-		}
-	case "left", "h":
-		if !m.mountTyped {
-			parent := filepath.Dir(m.mountDir)
-			if parent != m.mountDir {
-				m.mountDir = parent
-				m.refreshMountEntries()
-				m.status = "Diretório pai aberto"
-			}
-		}
-	case "up", "k":
-		if !m.mountTyped && len(m.mountEntries) > 0 {
-			m.mountCursor = (m.mountCursor + len(m.mountEntries) - 1) % len(m.mountEntries)
-		}
-	case "down", "j":
-		if !m.mountTyped && len(m.mountEntries) > 0 {
-			m.mountCursor = (m.mountCursor + 1) % len(m.mountEntries)
-		}
+	case "right", "l", "left", "h", "up", "k", "down", "j":
+		m.navigateMountBrowser(key.String())
 	case "tab":
 		if m.mountMode == "ro" {
 			m.mountMode = "rw"
@@ -377,6 +377,41 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return *m, nil
+}
+
+// navigateMountBrowser handles the browser-only movement keys. It is a no-op
+// while the user is typing a path manually (mountTyped).
+func (m *Model) navigateMountBrowser(key string) {
+	if m.mountTyped {
+		return
+	}
+	switch key {
+	case "right", "l":
+		if len(m.mountEntries) == 0 {
+			return
+		}
+		path := m.selectedMountPath()
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			m.mountDir = path
+			m.refreshMountEntries()
+			m.status = "Diretório aberto; Enter adiciona, ←/h sobe"
+		}
+	case "left", "h":
+		parent := filepath.Dir(m.mountDir)
+		if parent != m.mountDir {
+			m.mountDir = parent
+			m.refreshMountEntries()
+			m.status = "Diretório pai aberto"
+		}
+	case "up", "k":
+		if len(m.mountEntries) > 0 {
+			m.mountCursor = (m.mountCursor + len(m.mountEntries) - 1) % len(m.mountEntries)
+		}
+	case "down", "j":
+		if len(m.mountEntries) > 0 {
+			m.mountCursor = (m.mountCursor + 1) % len(m.mountEntries)
+		}
+	}
 }
 
 func (m *Model) startMountBrowser() {

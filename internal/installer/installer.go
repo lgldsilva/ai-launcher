@@ -26,6 +26,8 @@ import (
 
 const maxDownloadSize int64 = 512 << 20
 
+// Installer downloads and verifies executables from GitHub releases and
+// trusted HTTPS sources, tracking installed versions in a state file.
 type Installer struct {
 	HTTPClient *http.Client
 	APIBaseURL string
@@ -36,6 +38,8 @@ type Installer struct {
 	CurrentDir string
 }
 
+// Result reports the outcome of an install attempt: Status is one of
+// "installed", "current", or "unconfigured".
 type Result struct {
 	Name    string
 	Version string
@@ -49,6 +53,7 @@ type releaseResponse struct {
 	Assets  []Asset `json:"assets"`
 }
 
+// Asset is a GitHub release asset as returned by the GitHub API.
 type Asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
@@ -68,6 +73,7 @@ type stateEntry struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
+// New returns an Installer rooted at homeDir using the public GitHub API.
 func New(homeDir string) *Installer {
 	return &Installer{
 		HTTPClient: http.DefaultClient,
@@ -79,6 +85,9 @@ func New(homeDir string) *Installer {
 	}
 }
 
+// Install downloads, checksum-verifies, and installs the release asset for
+// the current platform. When force is false and the recorded install already
+// matches the latest release it is a no-op returning Status "current".
 func (i *Installer) Install(ctx context.Context, name, command, configuredPath string, release *config.GitHubRelease, force bool) (Result, error) {
 	if release == nil {
 		return Result{Name: name, Status: "unconfigured"}, fmt.Errorf("%s has no GitHub release recipe", name)
@@ -167,7 +176,7 @@ func (i *Installer) InstallSource(ctx context.Context, name, command, configured
 		return Result{Name: name}, errors.New("source does not look like an executable script")
 	}
 	if !force {
-		if existing, readErr := os.ReadFile(target); readErr == nil && bytes.Equal(existing, data) && isExecutable(target) {
+		if existing, readErr := os.ReadFile(target); readErr == nil && bytes.Equal(existing, data) && isExecutable(target) { // #nosec G304 -- target is the install path derived from the user's own configuration
 			return Result{Name: name, Path: target, Status: "current"}, nil
 		}
 	}
@@ -220,7 +229,7 @@ func (i *Installer) latestRelease(ctx context.Context, repository string) (relea
 	if err != nil {
 		return releaseResponse{}, fmt.Errorf("query GitHub release: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return releaseResponse{}, fmt.Errorf("GitHub release request returned %s: %s", response.Status, strings.TrimSpace(string(body)))
@@ -275,7 +284,7 @@ func (i *Installer) download(ctx context.Context, asset Asset) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("download returned %s", response.Status)
 	}
@@ -363,22 +372,8 @@ func checksumFor(data []byte, filename string) (string, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) >= 2 {
-			for _, index := range []int{0, 1} {
-				if index >= len(fields) || !isSHA256(fields[index]) {
-					continue
-				}
-				var candidateName string
-				if index == 0 {
-					candidateName = strings.Join(fields[1:], " ")
-				} else {
-					candidateName = strings.Join(fields[:index], " ")
-				}
-				candidateName = strings.TrimSpace(strings.TrimPrefix(candidateName, "*"))
-				if candidateName == filename || filepath.Base(candidateName) == base {
-					return strings.ToLower(fields[index]), nil
-				}
-			}
+		if hash, ok := checksumFromFields(fields, filename, base); ok {
+			return hash, nil
 		}
 		if len(fields) == 1 && isSHA256(fields[0]) {
 			onlyHash = strings.ToLower(fields[0])
@@ -394,6 +389,31 @@ func checksumFor(data []byte, filename string) (string, error) {
 		return onlyHash, nil
 	}
 	return "", fmt.Errorf("checksum for %s not found", filename)
+}
+
+// checksumFromFields locates a sha256 token on a checksum-file line and
+// reports it when the accompanying name matches the wanted filename. It
+// accepts both "hash name" and "name hash" column orders.
+func checksumFromFields(fields []string, filename, base string) (string, bool) {
+	if len(fields) < 2 {
+		return "", false
+	}
+	for _, index := range []int{0, 1} {
+		if index >= len(fields) || !isSHA256(fields[index]) {
+			continue
+		}
+		var candidateName string
+		if index == 0 {
+			candidateName = strings.Join(fields[1:], " ")
+		} else {
+			candidateName = strings.Join(fields[:index], " ")
+		}
+		candidateName = strings.TrimSpace(strings.TrimPrefix(candidateName, "*"))
+		if candidateName == filename || filepath.Base(candidateName) == base {
+			return strings.ToLower(fields[index]), true
+		}
+	}
+	return "", false
 }
 
 func isSHA256(value string) bool {
@@ -424,7 +444,7 @@ func extractTarGz(data []byte, binary string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	tarReader := tar.NewReader(reader)
 	for {
 		header, err := tarReader.Next()
@@ -522,7 +542,7 @@ func (i *Installer) installFile(target string, data []byte) error {
 	if info, err := os.Stat(target); err == nil && info.IsDir() {
 		return errors.New("install target is a directory")
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 		return err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(target), ".ai-launcher-install-*")
@@ -530,17 +550,17 @@ func (i *Installer) installFile(target string, data []byte) error {
 		return err
 	}
 	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
+	defer func() { _ = os.Remove(temporaryName) }()
 	if err := temporary.Chmod(0o755); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Close(); err != nil {
@@ -552,7 +572,7 @@ func (i *Installer) installFile(target string, data []byte) error {
 func (i *Installer) loadState() (state, error) {
 	path := i.statePath()
 	result := state{Installs: map[string]stateEntry{}}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the installer's own state file location derived from configuration
 	if errors.Is(err, os.ErrNotExist) {
 		return result, nil
 	}
@@ -577,7 +597,7 @@ func (i *Installer) saveState(value state) error {
 	if err != nil {
 		return fmt.Errorf("encode install state: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create install state directory: %w", err)
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-state-*")
@@ -585,13 +605,13 @@ func (i *Installer) saveState(value state) error {
 		return fmt.Errorf("create install state: %w", err)
 	}
 	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
+	defer func() { _ = os.Remove(temporaryName) }()
 	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Close(); err != nil {

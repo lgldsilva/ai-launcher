@@ -9,8 +9,12 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
+// LookPath resolves a command name to an executable path; it is a field on
+// Catalog so tests can substitute discovery.
 type LookPath func(string) (string, error)
 
+// AgentStatus is the resolution result for one catalog agent: whether it is
+// installed, where, and which candidate command matched.
 type AgentStatus struct {
 	Agent           config.Agent
 	Path            string
@@ -18,15 +22,19 @@ type AgentStatus struct {
 	Installed       bool
 }
 
+// Catalog resolves the configured agents against the host PATH.
 type Catalog struct {
 	Global   config.Global
 	LookPath LookPath
 }
 
+// New builds a Catalog backed by exec.LookPath.
 func New(global config.Global) Catalog {
 	return Catalog{Global: global, LookPath: exec.LookPath}
 }
 
+// Agents returns the resolution status of every configured agent, probing
+// the configured path first and then command and alias candidates.
 func (c Catalog) Agents() []AgentStatus {
 	result := make([]AgentStatus, 0, len(c.Global.Agents))
 	for _, agent := range c.Global.Agents {
@@ -46,6 +54,8 @@ func (c Catalog) Agents() []AgentStatus {
 	return result
 }
 
+// Resolve finds an agent by command, name, or alias. Unknown commands are
+// returned as a bare AgentStatus together with an error.
 func (c Catalog) Resolve(command string) (AgentStatus, error) {
 	for _, status := range c.Agents() {
 		if status.Agent.Command == command || status.Agent.Name == command || contains(status.Agent.Aliases, command) {
@@ -75,6 +85,7 @@ func candidates(command string, aliases []string, configuredPath string) []strin
 	return result
 }
 
+// Permission returns the catalog permission with the given ID.
 func (c Catalog) Permission(id string) (config.Permission, bool) {
 	for _, permission := range c.Global.Permissions {
 		if permission.ID == id {

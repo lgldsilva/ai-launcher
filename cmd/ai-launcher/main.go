@@ -35,43 +35,106 @@ func main() {
 	}
 }
 
+// cliOptions holds every command-line flag value in one place so run() stays
+// readable and the flag-to-config mapping can be applied as a unit.
+type cliOptions struct {
+	mounts, rwMounts               stringList
+	agent, extraArgs               string
+	globalPath, localPath          string
+	addName, addPath               string
+	addCommand, addDescription     string
+	newWorkstream, workstream      string
+	ssh, gh, docker, gpu           bool
+	noJail, sandbox                bool
+	memory, noMemory               bool
+	yolo, noYolo                   bool
+	dryRun, save, install, upgrade bool
+}
+
+func (o *cliOptions) register(flags *flag.FlagSet) {
+	flags.StringVar(&o.agent, "agent", "", "agent command (claude, codex, opencode, ...)")
+	flags.BoolVar(&o.ssh, "ssh", false, "enable SSH permission")
+	flags.BoolVar(&o.gh, "gh", false, "enable GitHub CLI permission")
+	flags.BoolVar(&o.docker, "docker", false, "enable Docker permission")
+	flags.BoolVar(&o.gpu, "gpu", false, "enable GPU permission")
+	flags.BoolVar(&o.noJail, "no-jail", false, "run without ai-jail")
+	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
+	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
+	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
+	flags.BoolVar(&o.yolo, "yolo", false, "pass --yolo to the agent")
+	flags.BoolVar(&o.noYolo, "no-yolo", false, "do not pass --yolo to the agent")
+	flags.BoolVar(&o.dryRun, "dry-run", false, "print the generated command")
+	flags.BoolVar(&o.save, "save", false, "save local configuration and exit")
+	flags.BoolVar(&o.save, "save-only", false, "alias for --save")
+	flags.BoolVar(&o.install, "install", false, "install missing configured tools from GitHub releases and update stale ones")
+	flags.BoolVar(&o.upgrade, "upgrade", false, "force reinstall of configured tools from the latest GitHub release")
+	flags.StringVar(&o.newWorkstream, "new", "", "start a new ai-memory workstream with this name")
+	flags.StringVar(&o.workstream, "workstream", "", "new workstream name (used with --new)")
+	flags.Var(&o.mounts, "mount", "read-only mount, optionally with :ro or :rw")
+	flags.Var(&o.mounts, "map", "alias for --mount")
+	flags.Var(&o.rwMounts, "rw-map", "read-write mount")
+	flags.StringVar(&o.extraArgs, "extra-args", "", "additional agent arguments")
+	flags.StringVar(&o.extraArgs, "args", "", "alias for --extra-args")
+	flags.StringVar(&o.globalPath, "config", "", "global config path")
+	flags.StringVar(&o.localPath, "local-config", "", "workspace config path")
+	flags.StringVar(&o.addName, "add", "", "add or update an agent in the global catalog")
+	flags.StringVar(&o.addPath, "path", "", "executable path used with --add")
+	flags.StringVar(&o.addCommand, "command", "", "command name used with --add; defaults to the executable basename")
+	flags.StringVar(&o.addDescription, "description", "", "description used with --add")
+}
+
+// applyToLocal folds every explicitly-set flag into the local configuration
+// and returns the effective mount list (flag mounts replace configured ones).
+func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local) ([]config.Mount, error) {
+	if flagsWasSet(flags, "no-jail") {
+		local.Options.Jail = !o.noJail
+	}
+	if flagsWasSet(flags, "sandbox") {
+		local.Options.Jail = o.sandbox
+	}
+	if flagsWasSet(flags, "memory") {
+		local.Options.Memory = o.memory
+	}
+	if flagsWasSet(flags, "no-memory") && o.noMemory {
+		local.Options.Memory = false
+	}
+	if flagsWasSet(flags, "yolo") {
+		local.Options.Yolo = o.yolo
+	}
+	if flagsWasSet(flags, "no-yolo") {
+		local.Options.Yolo = !o.noYolo
+	}
+	if flagsWasSet(flags, "new") || flagsWasSet(flags, "workstream") {
+		local.Options.NewWorkstream = o.newWorkstream
+		if local.Options.NewWorkstream == "" {
+			local.Options.NewWorkstream = o.workstream
+		}
+	}
+	mountConfig := append([]config.Mount(nil), local.Mounts...)
+	if flagsWasSet(flags, "mount") || flagsWasSet(flags, "map") || flagsWasSet(flags, "rw-map") {
+		mountConfig = nil
+		for _, value := range o.mounts {
+			mountConfig = append(mountConfig, parseMount(value, "ro"))
+		}
+		for _, value := range o.rwMounts {
+			mountConfig = append(mountConfig, parseMount(value, "rw"))
+		}
+	}
+	if flagsWasSet(flags, "extra-args") || flagsWasSet(flags, "args") {
+		parsed, err := splitArgs(o.extraArgs)
+		if err != nil {
+			return nil, fmt.Errorf("parse extra arguments: %w", err)
+		}
+		local.Options.ExtraArgs = parsed
+	}
+	return mountConfig, nil
+}
+
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	flags := flag.NewFlagSet("ai-launcher", flag.ContinueOnError)
 	flags.SetOutput(errOut)
-	var mounts, rwMounts stringList
-	var agent, extraArgs, globalPath, localPath string
-	var addName, addPath, addCommand, addDescription string
-	var ssh, gh, docker, gpu, noJail, sandbox, memory, noMemory, yolo, noYolo, dryRun, save, install, upgrade bool
-	var newWorkstream, workstream string
-	flags.StringVar(&agent, "agent", "", "agent command (claude, codex, opencode, ...)")
-	flags.BoolVar(&ssh, "ssh", false, "enable SSH permission")
-	flags.BoolVar(&gh, "gh", false, "enable GitHub CLI permission")
-	flags.BoolVar(&docker, "docker", false, "enable Docker permission")
-	flags.BoolVar(&gpu, "gpu", false, "enable GPU permission")
-	flags.BoolVar(&noJail, "no-jail", false, "run without ai-jail")
-	flags.BoolVar(&sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
-	flags.BoolVar(&memory, "memory", false, "enable ai-memory")
-	flags.BoolVar(&noMemory, "no-memory", false, "disable ai-memory")
-	flags.BoolVar(&yolo, "yolo", false, "pass --yolo to the agent")
-	flags.BoolVar(&noYolo, "no-yolo", false, "do not pass --yolo to the agent")
-	flags.BoolVar(&dryRun, "dry-run", false, "print the generated command")
-	flags.BoolVar(&save, "save", false, "save local configuration and exit")
-	flags.BoolVar(&save, "save-only", false, "alias for --save")
-	flags.BoolVar(&install, "install", false, "install missing configured tools from GitHub releases and update stale ones")
-	flags.BoolVar(&upgrade, "upgrade", false, "force reinstall of configured tools from the latest GitHub release")
-	flags.StringVar(&newWorkstream, "new", "", "start a new ai-memory workstream with this name")
-	flags.StringVar(&workstream, "workstream", "", "new workstream name (used with --new)")
-	flags.Var(&mounts, "mount", "read-only mount, optionally with :ro or :rw")
-	flags.Var(&mounts, "map", "alias for --mount")
-	flags.Var(&rwMounts, "rw-map", "read-write mount")
-	flags.StringVar(&extraArgs, "extra-args", "", "additional agent arguments")
-	flags.StringVar(&extraArgs, "args", "", "alias for --extra-args")
-	flags.StringVar(&globalPath, "config", "", "global config path")
-	flags.StringVar(&localPath, "local-config", "", "workspace config path")
-	flags.StringVar(&addName, "add", "", "add or update an agent in the global catalog")
-	flags.StringVar(&addPath, "path", "", "executable path used with --add")
-	flags.StringVar(&addCommand, "command", "", "command name used with --add; defaults to the executable basename")
-	flags.StringVar(&addDescription, "description", "", "description used with --add")
+	var opts cliOptions
+	opts.register(flags)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -80,28 +143,28 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err != nil {
 		home = ""
 	}
-	if globalPath == "" && home != "" {
-		globalPath = filepath.Join(home, ".config", "ai-launch", "config.yaml")
+	if opts.globalPath == "" && home != "" {
+		opts.globalPath = filepath.Join(home, ".config", "ai-launch", "config.yaml")
 	}
-	if localPath == "" {
-		localPath = filepath.Join(mustGetwd(), ".ai-launch.yaml")
+	if opts.localPath == "" {
+		opts.localPath = filepath.Join(mustGetwd(), ".ai-launch.yaml")
 	}
 	if flagsWasSet(flags, "add") {
-		return addAgent(globalPath, addName, addPath, addCommand, addDescription, out)
+		return addAgent(opts.globalPath, opts.addName, opts.addPath, opts.addCommand, opts.addDescription, out)
 	}
-	global, globalErr := config.LoadGlobal(globalPath)
+	global, globalErr := config.LoadGlobal(opts.globalPath)
 	if globalErr != nil {
-		fmt.Fprintln(errOut, "warning:", globalErr)
+		_, _ = fmt.Fprintln(errOut, "warning:", globalErr)
 	}
-	if install || upgrade {
-		return installConfigured(global, agent, home, upgrade, out, errOut)
+	if opts.install || opts.upgrade {
+		return installConfigured(global, opts.agent, home, opts.upgrade, out, errOut)
 	}
-	local, localErr := config.LoadLocal(localPath)
+	local, localErr := config.LoadLocal(opts.localPath)
 	if localErr != nil {
 		return localErr
 	}
 	if runtime.GOOS == "windows" && local.Options.Jail {
-		fmt.Fprintln(errOut, "warning: ai-jail is not supported on Windows; continuing without sandbox")
+		_, _ = fmt.Fprintln(errOut, "warning: ai-jail is not supported on Windows; continuing without sandbox")
 		local.Options.Jail = false
 	}
 	catalogue := catalog.New(global)
@@ -111,7 +174,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	positionalArgs := append([]string(nil), flags.Args()...)
 
-	selectedAgent := agent
+	selectedAgent := opts.agent
 	if selectedAgent == "" {
 		selectedAgent = local.Agent
 	}
@@ -124,50 +187,13 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		status.Agent.Command = status.ResolvedCommand
 	}
 	permissions := catalogue.NormalizePermissions(local.Permissions)
-	applyBoolFlag(flags, "ssh", permissions, "ssh", ssh)
-	applyBoolFlag(flags, "gh", permissions, "gh", gh)
-	applyBoolFlag(flags, "docker", permissions, "docker", docker)
-	applyBoolFlag(flags, "gpu", permissions, "gpu", gpu)
-	if flagsWasSet(flags, "no-jail") {
-		local.Options.Jail = !noJail
-	}
-	if flagsWasSet(flags, "sandbox") {
-		local.Options.Jail = sandbox
-	}
-	if flagsWasSet(flags, "memory") {
-		local.Options.Memory = memory
-	}
-	if flagsWasSet(flags, "no-memory") && noMemory {
-		local.Options.Memory = false
-	}
-	if flagsWasSet(flags, "yolo") {
-		local.Options.Yolo = yolo
-	}
-	if flagsWasSet(flags, "no-yolo") {
-		local.Options.Yolo = !noYolo
-	}
-	if flagsWasSet(flags, "new") || flagsWasSet(flags, "workstream") {
-		local.Options.NewWorkstream = newWorkstream
-		if local.Options.NewWorkstream == "" {
-			local.Options.NewWorkstream = workstream
-		}
-	}
-	mountConfig := append([]config.Mount(nil), local.Mounts...)
-	if flagsWasSet(flags, "mount") || flagsWasSet(flags, "map") || flagsWasSet(flags, "rw-map") {
-		mountConfig = nil
-		for _, value := range mounts {
-			mountConfig = append(mountConfig, parseMount(value, "ro"))
-		}
-		for _, value := range rwMounts {
-			mountConfig = append(mountConfig, parseMount(value, "rw"))
-		}
-	}
-	if flagsWasSet(flags, "extra-args") || flagsWasSet(flags, "args") {
-		parsed, parseErr := splitArgs(extraArgs)
-		if parseErr != nil {
-			return fmt.Errorf("parse extra arguments: %w", parseErr)
-		}
-		local.Options.ExtraArgs = parsed
+	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
+	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
+	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
+	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
+	mountConfig, err := opts.applyToLocal(flags, &local)
+	if err != nil {
+		return err
 	}
 	if len(positionalArgs) > 0 {
 		local.Options.ExtraArgs = append(local.Options.ExtraArgs, positionalArgs...)
@@ -186,30 +212,37 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		Yolo:            local.Options.Yolo,
 		ExtraArgs:       local.Options.ExtraArgs,
 	}
+	return launch(args, opts, global, local, launchConfig, in, out, errOut)
+}
+
+// launch confirms the configuration (TUI when interactive), optionally saves
+// it, and builds, validates, and executes the resulting argv.
+func launch(args []string, opts cliOptions, global config.Global, local config.Local, launchConfig launcher.LaunchConfig, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		launchConfig, err = tui.RunWithSave(global, launchConfig, func(updated launcher.LaunchConfig) error {
-			return saveIfRequested(true, localPath, local, updated)
+		confirmed, err := tui.RunWithSave(global, launchConfig, func(updated launcher.LaunchConfig) error {
+			return saveIfRequested(true, opts.localPath, local, updated)
 		})
 		if err != nil {
 			return nil
 		}
-	} else if err := saveIfRequested(save, localPath, local, launchConfig); err != nil {
+		launchConfig = confirmed
+	} else if err := saveIfRequested(opts.save, opts.localPath, local, launchConfig); err != nil {
 		return err
-	} else if save {
+	} else if opts.save {
 		return nil
 	}
 	argv, err := launcher.Build(launchConfig)
 	if err != nil {
 		return err
 	}
-	if dryRun || len(args) == 0 {
-		fmt.Fprintln(out, shellJoin(argv))
+	if opts.dryRun || len(args) == 0 {
+		_, _ = fmt.Fprintln(out, shellJoin(argv))
 		return nil
 	}
 	issues := launcher.NewValidator().Validate(launchConfig)
 	if len(issues) > 0 {
 		for _, issue := range issues {
-			fmt.Fprintln(errOut, "warning:", issue)
+			_, _ = fmt.Fprintln(errOut, "warning:", issue)
 		}
 		return errors.New("pre-flight validation failed")
 	}
@@ -241,15 +274,15 @@ func newInstallLog(home string) (*installLog, error) {
 		return &installLog{logger: log.New(io.Discard, "", log.LstdFlags)}, nil
 	}
 	path := filepath.Join(home, ".config", "ai-launch", "install.log")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("create install log directory: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- path is the installer's own log under the user home
 	if err != nil {
 		return nil, fmt.Errorf("open install log: %w", err)
 	}
 	if err := file.Chmod(0o600); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("protect install log: %w", err)
 	}
 	return &installLog{logger: log.New(file, "", log.LstdFlags|log.Lmicroseconds), file: file, path: path}, nil
@@ -271,10 +304,10 @@ func (l *installLog) Close() error {
 func installConfigured(global config.Global, selected string, home string, force bool, out, errOut io.Writer) error {
 	trace, logErr := newInstallLog(home)
 	if logErr != nil {
-		fmt.Fprintln(errOut, "warning:", logErr)
+		_, _ = fmt.Fprintln(errOut, "warning:", logErr)
 		trace = &installLog{logger: log.New(io.Discard, "", log.LstdFlags)}
 	}
-	defer trace.Close()
+	defer func() { _ = trace.Close() }()
 	trace.Printf("install start selected=%q force=%t", selected, force)
 	targets := configuredInstallTargets(global, selected)
 	if len(targets) == 0 {
@@ -289,60 +322,13 @@ func installConfigured(global config.Global, selected string, home string, force
 	var failures []error
 	installedPaths := make(map[string]string, len(targets))
 	for _, target := range targets {
-		trace.Printf("target name=%q command=%q aliases=%v source=%t release=%t", target.Name, target.Command, target.Aliases, target.SourceURL != "", target.Release != nil)
-		if target.Release == nil {
-			if target.SourceURL != "" {
-				result, err := client.InstallSource(context.Background(), target.Name, target.Command, target.Path, target.SourceURL, force)
-				if err != nil {
-					trace.Printf("source install failed name=%q error=%v", target.Name, err)
-					failures = append(failures, err)
-					continue
-				}
-				installedPaths[target.Command] = result.Path
-				trace.Printf("source install result name=%q status=%q path=%q", result.Name, result.Status, result.Path)
-				fmt.Fprintf(out, "%s: %s (%s)\n", result.Name, result.Status, result.Path)
-				continue
-			}
-			if found := executableAvailable(target.Command, target.Aliases, target.Path); found != "" {
-				trace.Printf("existing executable name=%q path=%q", target.Name, found)
-				installedPaths[target.Command] = found
-				fmt.Fprintf(out, "%s: available as %s (no GitHub release recipe)\n", target.Name, found)
-				continue
-			}
-			err := fmt.Errorf("%s: not installed and no GitHub release recipe is configured", target.Name)
-			if selected != "" {
-				trace.Printf("target missing without recipe name=%q", target.Name)
-				failures = append(failures, err)
-			} else {
-				fmt.Fprintln(errOut, "warning:", err)
-			}
-			continue
-		}
-		installPath := target.Path
-		if installPath == "" {
-			// If a variant is already installed (for example kilocode), update
-			// that actual executable instead of creating a second canonical one.
-			installPath = executableAvailable(target.Command, target.Aliases, "")
-		}
-		result, err := client.Install(context.Background(), target.Name, target.Command, installPath, target.Release, force)
-		if err != nil && target.Path == "" && installPath != "" && errors.Is(err, os.ErrPermission) {
-			// A discovered system-wide binary may be readable but not writable by
-			// the current user. Retry in ~/.local/bin instead of requiring sudo.
-			trace.Printf("release install retry name=%q blocked_path=%q fallback=%q error=%v", target.Name, installPath, filepath.Join(home, ".local", "bin", target.Command), err)
-			installPath = ""
-			result, err = client.Install(context.Background(), target.Name, target.Command, installPath, target.Release, force)
-		}
+		path, err := installOne(client, target, selected, force, home, out, errOut, trace)
 		if err != nil {
-			trace.Printf("release install failed name=%q path=%q error=%v", target.Name, installPath, err)
 			failures = append(failures, err)
 			continue
 		}
-		installedPaths[target.Command] = result.Path
-		trace.Printf("release install result name=%q status=%q version=%q path=%q", result.Name, result.Status, result.Version, result.Path)
-		if result.Version != "" {
-			fmt.Fprintf(out, "%s: %s %s (%s)\n", result.Name, result.Status, result.Version, result.Path)
-		} else {
-			fmt.Fprintf(out, "%s: %s\n", result.Name, result.Status)
+		if path != "" {
+			installedPaths[target.Command] = path
 		}
 	}
 
@@ -351,10 +337,85 @@ func installConfigured(global config.Global, selected string, home string, force
 		memoryPath = executableAvailable("ai-memory", nil, "")
 	}
 	trace.Printf("ai-memory path=%q", memoryPath)
+	failures = append(failures, wireMemoryTargets(targets, installedPaths, memoryPath, home, global.MemoryServerURL, out, errOut, trace)...)
+	if len(failures) > 0 {
+		trace.Printf("install finished failures=%d", len(failures))
+		return errors.Join(failures...)
+	}
+	trace.Printf("install finished successfully targets=%d", len(targets))
+	return nil
+}
+
+// installOne installs a single target and returns the resulting executable
+// path. A target without a release recipe is only a failure when it was
+// explicitly selected; otherwise it is reported as a warning.
+func installOne(client *installer.Installer, target installTarget, selected string, force bool, home string, out, errOut io.Writer, trace *installLog) (string, error) {
+	trace.Printf("target name=%q command=%q aliases=%v source=%t release=%t", target.Name, target.Command, target.Aliases, target.SourceURL != "", target.Release != nil)
+	if target.Release == nil {
+		return installWithoutRecipe(client, target, selected, force, out, errOut, trace)
+	}
+	installPath := target.Path
+	if installPath == "" {
+		// If a variant is already installed (for example kilocode), update
+		// that actual executable instead of creating a second canonical one.
+		installPath = executableAvailable(target.Command, target.Aliases, "")
+	}
+	result, err := client.Install(context.Background(), target.Name, target.Command, installPath, target.Release, force)
+	if err != nil && target.Path == "" && installPath != "" && errors.Is(err, os.ErrPermission) {
+		// A discovered system-wide binary may be readable but not writable by
+		// the current user. Retry in ~/.local/bin instead of requiring sudo.
+		trace.Printf("release install retry name=%q blocked_path=%q fallback=%q error=%v", target.Name, installPath, filepath.Join(home, ".local", "bin", target.Command), err)
+		installPath = ""
+		result, err = client.Install(context.Background(), target.Name, target.Command, installPath, target.Release, force)
+	}
+	if err != nil {
+		trace.Printf("release install failed name=%q path=%q error=%v", target.Name, installPath, err)
+		return "", err
+	}
+	trace.Printf("release install result name=%q status=%q version=%q path=%q", result.Name, result.Status, result.Version, result.Path)
+	if result.Version != "" {
+		_, _ = fmt.Fprintf(out, "%s: %s %s (%s)\n", result.Name, result.Status, result.Version, result.Path)
+	} else {
+		_, _ = fmt.Fprintf(out, "%s: %s\n", result.Name, result.Status)
+	}
+	return result.Path, nil
+}
+
+// installWithoutRecipe handles targets with no GitHub release recipe: either
+// a trusted source URL download, or an already-available executable.
+func installWithoutRecipe(client *installer.Installer, target installTarget, selected string, force bool, out, errOut io.Writer, trace *installLog) (string, error) {
+	if target.SourceURL != "" {
+		result, err := client.InstallSource(context.Background(), target.Name, target.Command, target.Path, target.SourceURL, force)
+		if err != nil {
+			trace.Printf("source install failed name=%q error=%v", target.Name, err)
+			return "", err
+		}
+		trace.Printf("source install result name=%q status=%q path=%q", result.Name, result.Status, result.Path)
+		_, _ = fmt.Fprintf(out, "%s: %s (%s)\n", result.Name, result.Status, result.Path)
+		return result.Path, nil
+	}
+	if found := executableAvailable(target.Command, target.Aliases, target.Path); found != "" {
+		trace.Printf("existing executable name=%q path=%q", target.Name, found)
+		_, _ = fmt.Fprintf(out, "%s: available as %s (no GitHub release recipe)\n", target.Name, found)
+		return found, nil
+	}
+	err := fmt.Errorf("%s: not installed and no GitHub release recipe is configured", target.Name)
+	if selected == "" {
+		_, _ = fmt.Fprintln(errOut, "warning:", err)
+		return "", nil
+	}
+	trace.Printf("target missing without recipe name=%q", target.Name)
+	return "", err
+}
+
+// wireMemoryTargets configures ai-memory MCP/hooks for every installed target
+// that declares an integration, collecting all failures.
+func wireMemoryTargets(targets []installTarget, installedPaths map[string]string, memoryPath, home, serverURL string, out, errOut io.Writer, trace *installLog) []error {
+	var failures []error
 	for _, target := range targets {
 		if target.Memory == nil || installedPaths[target.Command] == "" {
 			if target.NeedsMemory && installedPaths[target.Command] != "" && target.Memory == nil {
-				fmt.Fprintf(out, "%s: ai-memory runtime ready (no hooks/MCP adapter configured)\n", target.Name)
+				_, _ = fmt.Fprintf(out, "%s: ai-memory runtime ready (no hooks/MCP adapter configured)\n", target.Name)
 			}
 			continue
 		}
@@ -363,20 +424,15 @@ func installConfigured(global config.Global, selected string, home string, force
 			failures = append(failures, fmt.Errorf("%s: ai-memory is required to install MCP/hooks", target.Name))
 			continue
 		}
-		if err := wireMemory(context.Background(), memoryPath, home, global.MemoryServerURL, target.Memory, out, errOut, trace); err != nil {
+		if err := wireMemory(context.Background(), memoryPath, home, serverURL, target.Memory, out, errOut, trace); err != nil {
 			trace.Printf("memory wiring failed name=%q error=%v", target.Name, err)
 			failures = append(failures, fmt.Errorf("%s: configure ai-memory: %w", target.Name, err))
 			continue
 		}
 		trace.Printf("memory wiring complete name=%q client=%q agent=%q", target.Name, target.Memory.Client, target.Memory.Agent)
-		fmt.Fprintf(out, "%s: ai-memory MCP/hooks configured\n", target.Name)
+		_, _ = fmt.Fprintf(out, "%s: ai-memory MCP/hooks configured\n", target.Name)
 	}
-	if len(failures) > 0 {
-		trace.Printf("install finished failures=%d", len(failures))
-		return errors.Join(failures...)
-	}
-	trace.Printf("install finished successfully targets=%d", len(targets))
-	return nil
+	return failures
 }
 
 func configuredInstallTargets(global config.Global, selected string) []installTarget {
@@ -526,15 +582,15 @@ func prepareMemoryConfigFile(home, configured, target string, hooks bool) (strin
 	if err := os.MkdirAll(filepath.Dir(staging), 0o700); err != nil {
 		return "", nil, err
 	}
-	if data, err := os.ReadFile(logical); err == nil {
-		if err := os.WriteFile(staging, data, 0o600); err != nil {
+	if data, err := os.ReadFile(logical); err == nil { // #nosec G304 -- logical is a well-known agent config path under the user home
+		if err := os.WriteFile(staging, data, 0o600); err != nil { // #nosec G703 -- staging is derived from the user home and the fixed target name, not user input
 			return "", nil, err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, err
 	}
 	finalize := func() error {
-		data, err := os.ReadFile(staging)
+		data, err := os.ReadFile(staging) // #nosec G304 -- staging is derived from the user home and the fixed target name, not user input
 		if err != nil {
 			return err
 		}
@@ -542,7 +598,7 @@ func prepareMemoryConfigFile(home, configured, target string, hooks bool) (strin
 		if info, statErr := os.Stat(resolved); statErr == nil {
 			mode = info.Mode().Perm()
 		}
-		if err := os.WriteFile(resolved, data, mode); err != nil {
+		if err := os.WriteFile(resolved, data, mode); err != nil { // #nosec G703 -- resolved is the symlink-resolved agent config path under the user home
 			return err
 		}
 		return os.Remove(staging)
@@ -583,7 +639,7 @@ func resolveSymlinkParent(path string) string {
 
 func runMemoryCommand(ctx context.Context, memoryPath string, args []string, out, errOut io.Writer, trace *installLog) error {
 	trace.Printf("run memory command path=%q args=%q", memoryPath, args)
-	command := exec.CommandContext(ctx, memoryPath, args...)
+	command := exec.CommandContext(ctx, memoryPath, args...) // #nosec G204 -- memoryPath is the ai-memory executable resolved from the launcher's own install or PATH; running it is the integration's purpose
 	command.Stdin = os.Stdin
 	command.Stdout = out
 	command.Stderr = errOut
