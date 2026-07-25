@@ -115,6 +115,70 @@ func TestModelNavigatesMountBrowser(t *testing.T) {
 	}
 }
 
+func TestMountInputTypesNavigationLettersWhileTyping(t *testing.T) {
+	for _, letter := range []string{"l", "j", "k", "h"} {
+		t.Run(letter, func(t *testing.T) {
+			model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+			model.section = 2
+			model = applyKey(t, model, runeKey("/"))
+			model = applyKey(t, model, runeKey("/ho"))
+			if !model.mountTyped {
+				t.Fatal("typing a path did not set mountTyped")
+			}
+			model = applyKey(t, model, runeKey(letter))
+			if want := "/ho" + letter; model.mountInput != want {
+				t.Fatalf("mount input after typing %q = %q; want %q", letter, model.mountInput, want)
+			}
+		})
+	}
+}
+
+func TestMountInputLetterNavigatesWhenNotTyping(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "project")
+	if err := os.Mkdir(child, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 2
+	model = applyKey(t, model, runeKey("/"))
+	model.mountDir = root
+	model.refreshMountEntries()
+	for index, entry := range model.mountEntries {
+		if entry == "project" {
+			model.mountCursor = index
+		}
+	}
+	model = applyKey(t, model, runeKey("l"))
+	if model.mountDir != child {
+		t.Fatalf("l navigation directory = %q; want %q", model.mountDir, child)
+	}
+	if model.mountInput != "" {
+		t.Fatalf("l while browsing must not type into the input: %q", model.mountInput)
+	}
+}
+
+func TestMountInputArrowRightWhileTypingDoesNotAppendOrNavigate(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "project")
+	if err := os.Mkdir(child, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 2
+	model = applyKey(t, model, runeKey("/"))
+	model.mountDir = root
+	model.refreshMountEntries()
+	model = applyKey(t, model, runeKey("/ho"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyRight})
+	if model.mountInput != "/ho" {
+		t.Fatalf("arrow right while typing changed the input to %q", model.mountInput)
+	}
+	if model.mountDir != root {
+		t.Fatalf("arrow right while typing navigated to %q", model.mountDir)
+	}
+}
+
 func TestModelSaveAndHelpShortcuts(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
 	saved := false
