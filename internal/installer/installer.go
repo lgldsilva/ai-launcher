@@ -195,15 +195,21 @@ func (i *Installer) InstallSource(ctx context.Context, name, command, configured
 }
 
 func (i *Installer) platform() string {
-	osName := i.GOOS
-	if osName == "" {
-		osName = runtime.GOOS
+	return i.goos() + "-" + i.goarch()
+}
+
+func (i *Installer) goos() string {
+	if i.GOOS != "" {
+		return i.GOOS
 	}
-	arch := i.GOARCH
-	if arch == "" {
-		arch = runtime.GOARCH
+	return runtime.GOOS
+}
+
+func (i *Installer) goarch() string {
+	if i.GOARCH != "" {
+		return i.GOARCH
 	}
-	return osName + "-" + arch
+	return runtime.GOARCH
 }
 
 func (i *Installer) latestRelease(ctx context.Context, repository string) (releaseResponse, error) {
@@ -495,7 +501,10 @@ func extractZip(data []byte, binary string) ([]byte, error) {
 }
 
 func archiveNameMatches(path, wanted string) bool {
-	return path == wanted || filepath.Base(path) == filepath.Base(wanted)
+	base := filepath.Base(path)
+	wantedBase := filepath.Base(wanted)
+	// Windows release archives ship the binary with the .exe suffix.
+	return path == wanted || base == wantedBase || base == wantedBase+".exe"
 }
 
 func validateArchivePath(path string) error {
@@ -527,7 +536,12 @@ func (i *Installer) targetPath(configured, command string) (string, error) {
 			return "", err
 		}
 	}
-	return filepath.Clean(target), nil
+	target = filepath.Clean(target)
+	// Windows executables need the .exe suffix to be runnable and discoverable.
+	if i.goos() == "windows" && !strings.HasSuffix(strings.ToLower(target), ".exe") {
+		target += ".exe"
+	}
+	return target, nil
 }
 
 func isExecutable(path string) bool {

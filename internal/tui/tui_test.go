@@ -146,6 +146,7 @@ func TestNewModelInitializesNilPermissions(t *testing.T) {
 func TestModelCanExecuteFromTheAgentSection(t *testing.T) {
 	launch := launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}, Permissions: map[string]bool{}}
 	model := NewModel(config.DefaultGlobal(), launch)
+	model.cursor = 1 // first agent row; row 0 is "continue last session"
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(model.result) == 0 {
 		t.Fatal("Enter on the already-selected agent did not build a command")
@@ -194,7 +195,7 @@ func TestModelEditsDeclaredParamValues(t *testing.T) {
 	for range 3 {
 		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	}
-	if model.cursor != optionToggleCount {
+	if model.cursor != len(model.optionRows()) {
 		t.Fatalf("cursor = %d; want first param row", model.cursor)
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
