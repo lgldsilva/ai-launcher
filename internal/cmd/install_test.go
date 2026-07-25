@@ -1,7 +1,16 @@
 package cmd
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/installer"
 )
 
 func stubWindows(t *testing.T, windows bool) {
@@ -172,4 +182,123 @@ func TestExpandHomePathAndLogicalMemoryConfigFile(t *testing.T) {
 	if got := logicalMemoryConfigFile("/home/tester", "kimi-code", false); got != "" {
 		t.Fatalf("unknown target file = %q; want empty", got)
 	}
+}
+
+func discardTrace() *installLog {
+	return &installLog{logger: log.New(io.Discard, "", 0)}
+}
+
+func TestInstallConfiguredInstallsNativeRunnerOnlyForAIMemory(t *testing.T) {
+	stubWindows(t, false)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ai-memory", "other-tool"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil { // #nosec G306 -- the fixtures must be executable to be discovered in PATH
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var nativeCalls []string
+	original := installNativeRunner
+	installNativeRunner = func(_ *installer.Installer, target installTarget, _ bool, _ *installLog) (installer.Result, error) {
+		nativeCalls = append(nativeCalls, target.Command)
+		return installer.Result{Name: target.Name, Status: "installed", Path: filepath.Join(dir, "managed", target.Command)}, nil
+	}
+	t.Cleanup(func() { installNativeRunner = original })
+	global := config.Global{Tools: []config.Tool{
+		{Name: "ai-memory", Command: "ai-memory"},
+		{Name: "Other", Command: "other-tool"},
+	}}
+	var out, errOut bytes.Buffer
+	if err := InstallConfigured(global, "", filepath.Join(dir, "home"), false, &out, &errOut); err != nil {
+		t.Fatalf("InstallConfigured() error = %v", err)
+	}
+	if !reflect.DeepEqual(nativeCalls, []string{"ai-memory"}) {
+		t.Fatalf("native runner installs = %#v; want only ai-memory", nativeCalls)
+	}
+	if !strings.Contains(out.String(), "native runner") {
+		t.Fatalf("output does not report the native runner install: %q", out.String())
+	}
+}
+
+func TestInstallNativeMemoryRunnerSkipsPlatformsWithoutAsset(t *testing.T) {
+	client := installer.New(t.TempDir())
+	client.GOOS = "plan9"
+	client.GOARCH = "amd64"
+	target := installTarget{Name: "ai-memory", Command: "ai-memory", Release: &config.GitHubRelease{
+		Repository: "acme/ai-memory",
+		Assets:     map[string]string{"linux-amd64": "ai-memory-linux-x86_64.tar.gz"},
+		Binary:     "ai-memory",
+	}}
+	result, err := installNativeRunner(client, target, false, discardTrace())
+	if err != nil || result.Status != "" || result.Path != "" {
+		t.Fatalf("skip result = %#v, err=%v; want an empty result and no error", result, err)
+	}
+}
+
+func TestInstallNativeMemoryRunnerInstallsToManagedPath(t *testing.T) {
+	script := []byte("#!/bin/sh\necho native\n")
+	archive := tarGzFixture(t, "ai-memory", script)
+	digest := sha256.Sum256(archive)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/repos/acme/ai-memory/releases/latest":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"tag_name": "v1.0.0",
+				"assets": []map[string]string{
+					{"name": "ai-memory-linux-x86_64.tar.gz", "browser_download_url": "http://" + request.Host + "/download/archive"},
+					{"name": "ai-memory-linux-x86_64.tar.gz.sha256", "browser_download_url": "http://" + request.Host + "/download/checksum"},
+				},
+			})
+		case "/download/archive":
+			_, _ = response.Write(archive)
+		case "/download/checksum":
+			_, _ = response.Write([]byte(hex.EncodeToString(digest[:]) + "  ai-memory-linux-x86_64.tar.gz\n"))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	home := t.TempDir()
+	client := installer.New(home)
+	client.APIBaseURL = server.URL
+	client.GOOS = "linux"
+	client.GOARCH = "amd64"
+	target := installTarget{Name: "ai-memory", Command: "ai-memory", Release: &config.GitHubRelease{
+		Repository: "acme/ai-memory",
+		Assets:     map[string]string{"linux-amd64": "ai-memory-linux-x86_64.tar.gz"},
+		Binary:     "ai-memory",
+	}}
+	result, err := installNativeRunner(client, target, false, discardTrace())
+	want := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	if err != nil || result.Status != "installed" || result.Path != want {
+		t.Fatalf("native runner result = %#v, err=%v; want installed at %q", result, err, want)
+	}
+	contents, err := os.ReadFile(want) // #nosec G304 -- the path is the managed install created by the test itself
+	if err != nil || !bytes.Equal(contents, script) {
+		t.Fatalf("managed native binary = %q, err=%v", contents, err)
+	}
+}
+
+func tarGzFixture(t *testing.T, name string, contents []byte) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(gzipWriter)
+	if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(contents))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(contents); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
 }

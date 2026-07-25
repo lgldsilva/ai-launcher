@@ -23,6 +23,17 @@ import (
 // can stub platform detection while running on Linux.
 var isWindows = func() bool { return runtime.GOOS == "windows" }
 
+// nativeRunnerManagedPath is the launcher's managed install location for the
+// ai-memory native binary. The launcher exports it as AI_MEMORY_NATIVE_BIN so
+// the ai-memory wrapper uses it directly instead of downloading a runner
+// inside ai-jail. The installer expands ~/ and appends .exe on Windows.
+const nativeRunnerManagedPath = "~/.local/share/ai-launcher/bin/ai-memory"
+
+// installNativeRunner installs the native ai-memory binary next to the
+// wrapper; it is a variable so tests can observe the invocation without
+// network access.
+var installNativeRunner = installNativeMemoryRunner
+
 type installTarget struct {
 	Name        string
 	Command     string
@@ -106,6 +117,16 @@ func InstallConfigured(global config.Global, selected string, home string, force
 		if path != "" {
 			installedPaths[target.Command] = path
 		}
+		if path != "" && target.Command == "ai-memory" {
+			native, nativeErr := installNativeRunner(client, target, force, trace)
+			if nativeErr != nil {
+				failures = append(failures, nativeErr)
+				continue
+			}
+			if native.Path != "" {
+				_, _ = fmt.Fprintf(out, "%s native runner: %s (%s)\n", target.Name, native.Status, native.Path)
+			}
+		}
 	}
 
 	memoryPath := installedPaths["ai-memory"]
@@ -159,6 +180,36 @@ func installOne(client *installer.Installer, target installTarget, selected stri
 		_, _ = fmt.Fprintf(out, "%s: %s\n", result.Name, result.Status)
 	}
 	return result.Path, nil
+}
+
+// installNativeMemoryRunner installs the native ai-memory binary from the
+// target's release assets into the launcher's managed path, reusing the
+// checksum-verified installer machinery. Platforms without a release asset
+// are skipped gracefully: the ai-memory wrapper keeps its own fallback.
+func installNativeMemoryRunner(client *installer.Installer, target installTarget, force bool, trace *installLog) (installer.Result, error) {
+	if target.Release == nil {
+		return installer.Result{}, nil
+	}
+	goos := client.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	goarch := client.GOARCH
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	platform := goos + "-" + goarch
+	if strings.TrimSpace(target.Release.Assets[platform]) == "" {
+		trace.Printf("native runner skipped name=%q platform=%q: no release asset", target.Name, platform)
+		return installer.Result{}, nil
+	}
+	result, err := client.Install(context.Background(), target.Name, target.Command, nativeRunnerManagedPath, target.Release, force)
+	if err != nil {
+		trace.Printf("native runner install failed name=%q error=%v", target.Name, err)
+		return installer.Result{}, fmt.Errorf("%s native runner: %w", target.Name, err)
+	}
+	trace.Printf("native runner install result name=%q status=%q version=%q path=%q", result.Name, result.Status, result.Version, result.Path)
+	return result, nil
 }
 
 // installWithoutRecipe handles targets with no usable GitHub release recipe:

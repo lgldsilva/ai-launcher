@@ -659,6 +659,12 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.addMount(path)
 	case "right", "l", "left", "h", "up", "k", "down", "j":
+		// While a path is being typed, the j/k/l/h letters are input runes,
+		// not navigation keys; arrow keys stay browser-only no-ops.
+		if m.mountTyped && key.Type == tea.KeyRunes {
+			m.mountInput += string(key.Runes)
+			break
+		}
 		m.navigateMountBrowser(key.String())
 	case "tab":
 		if m.mountMode == "ro" {

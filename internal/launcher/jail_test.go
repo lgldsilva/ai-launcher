@@ -3,6 +3,7 @@ package launcher
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -192,6 +193,73 @@ func TestEnvironmentOmitsAuthTokenWhenUnsetOrMemoryOff(t *testing.T) {
 				t.Fatalf("token leaked into environment for %#v: %q", cfg, entry)
 			}
 		}
+	}
+}
+
+func TestEnvironmentSetsNativeBinWhenManagedRunnerExists(t *testing.T) {
+	home := t.TempDir()
+	native := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	if err := os.MkdirAll(filepath.Dir(native), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("native"), 0o755); err != nil { // #nosec G306 -- the fixture must be executable like the real managed binary
+		t.Fatal(err)
+	}
+	env := Environment(LaunchConfig{UseMemory: true, HomeDir: home})
+	count := 0
+	for _, entry := range env {
+		if entry == "AI_MEMORY_NATIVE_BIN="+native {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("AI_MEMORY_NATIVE_BIN entries = %d; want exactly one pointing at %q", count, native)
+	}
+}
+
+func TestEnvironmentOmitsNativeBinWhenManagedRunnerMissingOrMemoryOff(t *testing.T) {
+	home := t.TempDir()
+	native := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	for _, cfg := range []LaunchConfig{
+		{UseMemory: true, HomeDir: home},
+		{UseMemory: false, HomeDir: home},
+	} {
+		for _, entry := range Environment(cfg) {
+			if strings.HasPrefix(entry, "AI_MEMORY_NATIVE_BIN=") {
+				t.Fatalf("AI_MEMORY_NATIVE_BIN set without a managed binary or memory: %q", entry)
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(native), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("native"), 0o755); err != nil { // #nosec G306 -- the fixture must be executable like the real managed binary
+		t.Fatal(err)
+	}
+	for _, entry := range Environment(LaunchConfig{UseMemory: false, HomeDir: home}) {
+		if strings.HasPrefix(entry, "AI_MEMORY_NATIVE_BIN=") {
+			t.Fatalf("AI_MEMORY_NATIVE_BIN set with memory disabled: %q", entry)
+		}
+	}
+}
+
+func TestManagedNativeRunnerPathAppendsExeForWindowsTarget(t *testing.T) {
+	originalWindows := isWindows
+	isWindows = func() bool { return true }
+	t.Cleanup(func() { isWindows = originalWindows })
+	originalHome := userHomeDir
+	home := t.TempDir()
+	userHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { userHomeDir = originalHome })
+
+	path := managedNativeRunnerPath("")
+	if !strings.HasSuffix(path, filepath.Join("ai-launcher", "bin", "ai-memory.exe")) {
+		t.Fatalf("windows managed path = %q; want the ai-memory.exe suffix under ai-launcher/bin", path)
+	}
+	isWindows = func() bool { return false }
+	path = managedNativeRunnerPath("")
+	if strings.HasSuffix(path, ".exe") {
+		t.Fatalf("linux managed path = %q; want no .exe suffix", path)
 	}
 }
 
