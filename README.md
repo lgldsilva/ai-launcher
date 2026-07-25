@@ -232,7 +232,7 @@ O que **NÃO** protege:
 - [x] Instalador com checksum SHA-256 obrigatório
 - [x] Windows como cidadão de primeira classe sem jail
 - [x] Suíte de contrato Gherkin contra drift do ai-jail/ai-memory
-- [ ] Workflow de release automatizado (`release.yml`) — hoje o release é local
+- [x] Workflow de release automatizado (`release.yml`: tag `v*` → binários + SHA256SUMS + SBOM)
 - [ ] Sandbox nativo no Windows (depende de upstream; improvável)
 - [ ] GUI (não planejada; TUI é a interface)
 

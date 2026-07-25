@@ -58,25 +58,24 @@ análise.
 
 ## Release
 
-> [!WARNING]
-> Ainda **não existe** workflow de release automatizado (`release.yml`). O
-> processo abaixo é local e manual; a automação (tag `v*` → 6 binários +
-> SHA256SUMS + SBOM → GitHub Release) está no roadmap.
+O workflow `.github/workflows/release.yml` é disparado por tags `v*` (ou
+manualmente via `workflow_dispatch` informando a tag) e executa:
 
-Hoje um release é feito localmente:
+1. `make release-local` — build dos 6 binários (`dist/`, linux/darwin/windows
+   × amd64/arm64) + geração de `dist/SHA256SUMS` (`release-checksums`);
+2. verificação com `sha256sum -c dist/SHA256SUMS`;
+3. geração do SBOM CycloneDX (`dist/sbom.cdx.json`, após os checksums para não
+   entrar no `SHA256SUMS`);
+4. `gh release create` com os 6 binários + `SHA256SUMS` + SBOM como assets e
+   notas geradas automaticamente. Reruns via `workflow_dispatch` são
+   idempotentes (a release anterior é recriada, a tag é preservada).
 
-```bash
-make build-release   # gera os 6 binários em dist/ (linux/darwin/windows × amd64/arm64)
-```
-
-Para publicar, anexe os artefatos de `dist/` a uma GitHub Release criada a
-partir de uma tag:
+Para cortar um release:
 
 ```bash
 git tag vX.Y.Z
 git push --tags   # somente quando houver remoto configurado
 ```
 
-Quando o `release.yml` for implementado, a tag `v*` deve disparar o build dos
-6 binários, a geração de `SHA256SUMS` e do SBOM, e a publicação da GitHub
-Release — reutilizando os mesmos targets do Makefile.
+O mesmo processo roda localmente com `make release-local` (útil para validar
+antes de taguear); nesse caso a publicação é manual.
