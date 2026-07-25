@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -14,18 +15,52 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
+// userHomeDir and isWindows abstract the platform lookups so tests can
+// exercise the managed ai-memory native runner path for any target platform.
+var userHomeDir = os.UserHomeDir
+var isWindows = func() bool { return runtime.GOOS == "windows" }
+
 // Environment returns the inherited environment with the configured ai-memory
 // server URL and auth token applied to child processes. ai-memory reads these
-// variables for its runtime wrapper and generated integrations. The token is
-// a bearer secret: it is passed through the environment only and must never
-// be written to logs.
+// variables for its runtime wrapper and generated integrations. When the
+// launcher-managed native binary exists, AI_MEMORY_NATIVE_BIN is exported too
+// so the wrapper skips its own download. The token is a bearer secret: it is
+// passed through the environment only and must never be written to logs.
 func Environment(cfg LaunchConfig) []string {
 	env := append([]string(nil), os.Environ()...)
 	if cfg.UseMemory {
 		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", strings.TrimSpace(cfg.MemoryServerURL))
 		env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
+		// The ai-memory wrapper skips its own download/refresh logic (fragile
+		// inside ai-jail) when AI_MEMORY_NATIVE_BIN points at an executable
+		// native binary managed by the launcher's installer.
+		if native := managedNativeRunnerPath(cfg.HomeDir); native != "" {
+			if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() {
+				env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
+			}
+		}
 	}
 	return env
+}
+
+// managedNativeRunnerPath resolves the launcher's managed install location of
+// the ai-memory native binary, honoring the same home-dir convention as the
+// installer (~/.local/share/ai-launcher/bin, with .exe on Windows). It returns
+// "" when no home directory is available.
+func managedNativeRunnerPath(home string) string {
+	home = strings.TrimSpace(home)
+	if home == "" {
+		resolved, err := userHomeDir()
+		if err != nil {
+			return ""
+		}
+		home = resolved
+	}
+	path := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	if isWindows() {
+		path += ".exe"
+	}
+	return path
 }
 
 // upsertEnv replaces or appends a KEY=value entry when value is non-empty,
