@@ -1,75 +1,74 @@
-# Estratégia de testes
+# Test strategy
 
-## Modelo de evidência
+## Evidence model
 
-O launcher tem três contratos separáveis:
+The launcher has three separable contracts:
 
-| Camada | Evidência | Escopo |
+| Layer | Evidence | Scope |
 | --- | --- | --- |
-| Unitária | `internal/config/config_test.go` e demais testes de pacote | defaults, persistência YAML, fallback de erro e regras puras de comando/permissão |
-| Propriedade | `pgregory.net/rapid` nas suítes de `internal/config` e `internal/catalog` | persistência YAML lossless e regras de normalização sob entradas aleatórias |
-| Contrato | `test/features/launcher.feature`, executado por `test/gherkin` | composição do argv visível ao usuário, regras de preflight e defaults seguros do config local |
-| CLI/TUI | `cmd/ai-launcher/main_test.go` e `internal/tui/tui_test.go` | aliases de flags, parsing de argumentos estilo shell, navegação de seções, edição de mounts, ajuda e atalhos de salvar |
+| Unit | `internal/config/config_test.go` and the other package tests | defaults, YAML persistence, error fallback, and pure command/permission rules |
+| Property | `pgregory.net/rapid` in the `internal/config` and `internal/catalog` suites | lossless YAML persistence and normalization rules under random inputs |
+| Contract | `test/features/launcher.feature`, run by `test/gherkin` | user-visible argv composition, preflight rules, and safe local-config defaults |
+| CLI/TUI | `cmd/ai-launcher/main_test.go` and `internal/tui/tui_test.go` | flag aliases, shell-style argument parsing, section navigation, mount editing, help, and save shortcuts |
 
-O builder de comandos é intencionalmente puro, então a suíte de contrato
-verifica o argv sem iniciar terminal, agente, container ou serviço de rede.
-Isso mantém o caminho normal de testes determinístico e seguro para execução
-local e em CI.
+The command builder is intentionally pure, so the contract suite verifies the
+argv without starting a terminal, agent, container, or network service. This
+keeps the normal test path deterministic and safe to run locally and in CI.
 
-## Comandos
+## Commands
 
 ```bash
-make build           # compila bin/ai-launcher a partir do entry point da CLI
-make test            # suíte Go completa e determinística
-make fmt             # formata todos os fontes Go
-make lint            # go vet em todos os pacotes
-make test-unit       # testes dos pacotes de lógica (config, catalog, launcher)
-make test-property   # testes baseados em propriedades (rapid)
-make test-gherkin    # cenários executáveis do contrato do launcher
-make test-race       # suíte completa com -race -shuffle=on
-make test-coverage   # profile de cobertura atômico + gate de 90% na lógica
-make test-mutation   # checagem de mutação opcional; pula explicitamente se ausente
-make test-all        # todas as checagens determinísticas, depois a mutação opcional
+make build           # compiles bin/ai-launcher from the CLI entry point
+make test            # complete and deterministic Go suite
+make fmt             # formats all Go sources
+make lint            # go vet on all packages
+make test-unit       # tests of the logic packages (config, catalog, launcher)
+make test-property   # property-based tests (rapid)
+make test-gherkin    # executable launcher-contract scenarios
+make test-race       # full suite with -race -shuffle=on
+make test-coverage   # atomic coverage profile + 90% gate on the logic
+make test-mutation   # optional mutation check; skips explicitly when absent
+make test-all        # all deterministic checks, then the optional mutation
 ```
 
-`go test ./...` continua sendo o comando determinístico de base. O projeto usa
-um pequeno leitor de Gherkin dentro do repositório em vez de uma dependência
-BDD; os arquivos de feature usam `Feature`, `Scenario`, `Given`, `When`,
-`Then`, `And` e blocos YAML/argv entre aspas triplas.
+`go test ./...` remains the baseline deterministic command. The project uses
+a small in-repo Gherkin reader instead of a BDD dependency; feature files use
+`Feature`, `Scenario`, `Given`, `When`, `Then`, `And`, and YAML/argv blocks
+in triple quotes.
 
-## Cobertura e testes de mutação
+## Coverage and mutation testing
 
-`test-coverage` usa a instrumentação atômica do Go, imprime a cobertura por
-função e impõe um **gate mínimo de 90% de cobertura de linha agregada** nos
-pacotes de lógica: `internal/config`, `internal/catalog` e
-`internal/launcher`. Só sobrescreva `COVERAGE_MIN` para diagnóstico; CI e
-validação de merge usam o gate padrão. A mesma fronteira está em `COVER_PKGS`
-no `.ai-standards.env`, usada pelos hooks de commit.
+`test-coverage` uses Go's atomic instrumentation, prints per-function
+coverage, and enforces a **minimum gate of 90% aggregated line coverage** on
+the logic packages: `internal/config`, `internal/catalog`, and
+`internal/launcher`. Only override `COVERAGE_MIN` for diagnosis; CI and merge
+validation use the default gate. The same boundary is in `COVER_PKGS` in
+`.ai-standards.env`, used by the commit hooks.
 
-Go não expõe cobertura de branch nativa, então a suíte mira explicitamente os
-dois desfechos das decisões de configuração/default; um percentual de branch
-não deve ser inferido do total de linhas. `internal/tui` e a execução PTY
-ficam fora do gate porque dependem de terminal interativo e processos
-spawnados. Eles continuam sujeitos a build, vet, `-race` e checagens de
-fumaça/manuais; o contrato puro de montagem de comandos é coberto pelas
-suítes unitária e Gherkin.
+Go does not expose native branch coverage, so the suite explicitly targets
+both outcomes of the configuration/default decisions; a branch percentage
+must not be inferred from the line total. `internal/tui` and the PTY
+execution stay out of the gate because they depend on an interactive terminal
+and spawned processes. They remain subject to build, vet, `-race`, and
+smoke/manual checks; the pure command-assembly contract is covered by the
+unit and Gherkin suites.
 
-Testes de mutação são deliberadamente opcionais. Se um desenvolvedor ou uma
-imagem dedicada de CI tiver `go-mutesting` instalado, `make test-mutation`
-roda contra `internal/config`; caso contrário, reporta um skip explícito e bem
-sucedido, e nunca baixa ferramentas. Instalação local única sugerida:
+Mutation tests are deliberately optional. If a developer or a dedicated CI
+image has `go-mutesting` installed, `make test-mutation` runs against
+`internal/config`; otherwise it reports an explicit, successful skip and
+never downloads tools. Suggested one-time local install:
 
 ```bash
 go install github.com/zimmski/go-mutesting/cmd/go-mutesting@latest
 ```
 
-Fixe essa ferramenta numa imagem de CI antes de tornar o score de mutação um
-gate de merge. Não faça o `go test ./...` normal depender dela.
+Pin that tool in a CI image before making the mutation score a merge gate. Do
+not make the normal `go test ./...` depend on it.
 
-## Expectativas de regressão conhecidas
+## Known regression expectations
 
-A suíte trata uma chave `options.jail` ou `options.memory` omitida como o
-default seguro (`true`), preservando valores `false` escritos explicitamente.
-Esses são contratos de persistência relevantes para segurança. Se qualquer um
-desses testes de regressão falhar, release ou merge devem ser bloqueados até
-que a implementação da configuração — não o teste — seja corrigida.
+The suite treats an omitted `options.jail` or `options.memory` key as the
+safe default (`true`), preserving explicitly written `false` values. These
+are security-relevant persistence contracts. If any of these regression tests
+fails, release or merge must be blocked until the configuration
+implementation — not the test — is fixed.

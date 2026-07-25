@@ -1,81 +1,101 @@
 # CI/CD
 
-CI roda no GitHub Actions (`.github/workflows/ci.yml`). SonarQube roda **só
-localmente** contra o servidor do homelab — runners hospedados do GitHub não
-alcançam `sonar.raspberrypi.lan`. Jenkins está descomissionado: nunca crie
-Jenkinsfile nem webhooks para Jenkins neste repositório.
+CI runs on GitHub Actions (`.github/workflows/ci.yml`). Sonar analysis runs
+on **SonarCloud** (sonarcloud.io) as a CI job — the old homelab SonarQube CE
+and the vendored `scripts/sonar` were removed; never recreate them. Jenkins
+is decommissioned: never create a Jenkinsfile or Jenkins webhooks in this
+repository. There is no Gitea workflow either — GitHub is the only forge.
 
-## Pipeline de CI (ci.yml)
+## CI pipeline (ci.yml)
 
-Gatilhos: push em `main` e todo pull request. Todos os jobs rodam em
-`ubuntu-latest` com Go definido por `go.mod`.
+Triggers: push to `main` and every pull request. All jobs run on
+`ubuntu-latest` with Go set by `go.mod`.
 
-| Job | O que faz | Falha o build quando |
+| Job | What it does | Fails the build when |
 | --- | --- | --- |
-| `test` | `go build`, `go test -race -shuffle=on ./...`, gate de cobertura | Cobertura filtrada < 90% (`COVERAGE_MIN`) |
-| `lint` | `gofmt -l`, `go vet`, `golangci-lint` v2.12 | Qualquer formatação/lint pendente |
-| `vuln` | `govulncheck` | Vulnerabilidade conhecida alcançável no código |
-| `trivy` | Scan de filesystem, severidade `CRITICAL`, `ignore-unfixed` | Vulnerabilidade CRITICAL com correção disponível |
-| `sbom` | Gera SBOM CycloneDX e publica como artifact | Falha na geração do SBOM |
+| `test` | `go build`, `go test -race -shuffle=on ./...`, coverage gate | Filtered coverage < 90% (`COVERAGE_MIN`) |
+| `lint` | `gofmt -l`, `go vet`, `golangci-lint` v2.12 | Any formatting/lint issue pending |
+| `vuln` | `govulncheck` | Known vulnerability reachable in the code |
+| `trivy` | Filesystem scan, severity `CRITICAL`, `ignore-unfixed` | CRITICAL vulnerability with a fix available |
+| `sbom` | Generates a CycloneDX SBOM and publishes it as an artifact | SBOM generation fails |
+| `sonar` | SonarCloud analysis via `npx sonarqube-scanner`, waits for the quality gate | Quality gate red (`qualitygate.wait=true`) |
 
-O gate de cobertura do job `test` replica `make test-coverage`: mede apenas
-`internal/config`, `internal/catalog` e `internal/launcher`, exclui o executor
-PTY (`executor.go`) e os `replace_*.go` por plataforma, e compara o total
-filtrado com 90%. A fronteira é a mesma do `COVER_PKGS` em `.ai-standards.env`
-— detalhes em [test-strategy.md](test-strategy.md).
+The `test` job's coverage gate replicates `make test-coverage`: it measures
+only `internal/config`, `internal/catalog`, and `internal/launcher`, excludes
+the PTY executor (`executor.go`) and the per-platform `replace_*.go` files,
+and compares the filtered total against 90%. The boundary is the same as
+`COVER_PKGS` in `.ai-standards.env` — details in
+[test-strategy.md](test-strategy.md).
 
-## Actions fixadas por SHA
+The `sonar` job is **gated on the `SONAR_TOKEN` secret**: every step skips
+cleanly while the secret does not exist, so forks and early setup stay green.
+The scanner runs with `-Dsonar.host.url=https://sonarcloud.io` and
+`-Dsonar.qualitygate.wait=true`; `sonar-project.properties` at the repo root
+is host-agnostic (sources, test inclusions, coverage exclusions aligned with
+the 90% gate) and never carries host, org, key, or token — those arrive as
+`-D` flags. The npx scanner was chosen deliberately: no third-party action to
+pin/audit.
 
-Toda action de terceiros é referenciada por **commit SHA**, nunca por tag
-mutável, com a versão em comentário ao lado (ex.:
-`actions/checkout@3d3c42e… # v7.0.1`). A razão é supply-chain: tags de
-`trivy-action` anteriores a 0.35.0 foram force-pushed com malware em março de
-2026 (CVE-2026-33634). Ao atualizar uma action, atualize SHA e comentário
-juntos.
+## Required secrets and variables
 
-## SonarQube CE local (efêmero)
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `SONAR_TOKEN` | secret | SonarCloud token for the `sonar` job |
+| `SONAR_ORGANIZATION` | variable | SonarCloud organization (default `lgldsilva`) |
+| `SONAR_PROJECT_KEY` | variable | SonarCloud project key (default `lgldsilva_ai-launcher`) |
+| `RELEASE_TAG_TOKEN` | secret | PAT with `repo` + `workflow` scope used by `autotag.yml` to push release tags |
 
-Análise Sonar é manual e local, via o script compartilhado
-`scripts/sonar/sonar-ephemeral.sh` + `sonar-project.properties`:
+## SHA-pinned actions
 
-```bash
-SONAR_TOKEN=... PROJECT_KEY=ai-launcher EPHEMERAL=0 \
-  SONAR_HOST_URL=http://sonar.raspberrypi.lan:9000 \
-  COVERAGE_FILE=coverage.out \
-  scripts/sonar/sonar-ephemeral.sh
-```
-
-Pré-requisitos: o servidor do homelab alcançável (`sonar.raspberrypi.lan`) e
-`SONAR_TOKEN` exportado. O padrão do script é `EPHEMERAL=1` (projeto
-temporário, relatórios exportados e projeto deletado — o modo para PRs);
-`EPHEMERAL=0` mantém o projeto permanente (modo main). Rode `make
-test-coverage` antes para gerar `coverage.out`. O script aplica pisos locais
-de qualidade (fail-closed) porque o quality gate do Sonar CE efêmero pode
-voltar vazio. O `sonar.coverage.exclusions` do properties espelha a fronteira
-do gate de 90%: `cmd/**`, `internal/tui/**`, `internal/installer/**`,
-`test/**`, `executor.go` e `replace_*.go` ficam fora da métrica, não da
-análise.
+Every third-party action is referenced by **commit SHA**, never by a mutable
+tag, with the version in a comment next to it (e.g.
+`actions/checkout@3d3c42e… # v7.0.1`). The reason is supply-chain:
+`trivy-action` tags prior to 0.35.0 were force-pushed with malware in March
+2026 (CVE-2026-33634). When bumping an action, update the SHA and the comment
+together.
 
 ## Release
 
-O workflow `.github/workflows/release.yml` é disparado por tags `v*` (ou
-manualmente via `workflow_dispatch` informando a tag) e executa:
+Release is fully automated and two-staged:
 
-1. `make release-local` — build dos 6 binários (`dist/`, linux/darwin/windows
-   × amd64/arm64) + geração de `dist/SHA256SUMS` (`release-checksums`);
-2. verificação com `sha256sum -c dist/SHA256SUMS`;
-3. geração do SBOM CycloneDX (`dist/sbom.cdx.json`, após os checksums para não
-   entrar no `SHA256SUMS`);
-4. `gh release create` com os 6 binários + `SHA256SUMS` + SBOM como assets e
-   notas geradas automaticamente. Reruns via `workflow_dispatch` são
-   idempotentes (a release anterior é recriada, a tag é preservada).
+1. **Auto-tag** (`.github/workflows/autotag.yml`): on every push to `main`
+   (and on manual dispatch), it computes the next semantic version with
+   [svu](https://github.com/caarlos0/svu) from the Conventional Commits since
+   the last tag (`feat` → minor, `fix`/others → patch, `!`/BREAKING CHANGE →
+   major). If nothing bump-worthy landed, it tags nothing. When the version
+   bumps, it creates and pushes the annotated `v*` tag.
+2. **Release** (`.github/workflows/release.yml`): triggered by `v*` tags (or
+   manually via `workflow_dispatch` with a tag input, which is idempotent —
+   the previous release for that tag is dropped and recreated). It runs
+   GoReleaser (`go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --clean`)
+   driven by `.goreleaser.yaml`: six binaries (linux/darwin/windows
+   × amd64/arm64), archives named
+   `ai-launcher_<version>_<os>_<arch>.{tar.gz,zip}` (zip on Windows) with
+   README + LICENSE, a SHA-256 `checksums.txt`, and a grouped changelog
+   (Features / Fixes / Others; `docs:`/`test:`/`ci:`/`chore:` excluded). A
+   CycloneDX SBOM is generated afterwards (so it stays out of
+   `checksums.txt`) and attached to the release with `gh release upload
+   --clobber`.
 
-Para cortar um release:
+**Why `RELEASE_TAG_TOKEN` (a PAT) and not `GITHUB_TOKEN`**: a tag pushed with
+the auto-provided Actions token does **not** trigger another workflow — that
+is GitHub's loop guard — so `release.yml` would never fire for autotagged
+versions. Pushing the tag with a real PAT (`repo` + `workflow` scope) makes
+the tag event fire `release.yml`. Until the secret is provisioned, the
+autotag job skips cleanly and stays green.
+
+GoReleaser injects the binary version via `-ldflags` (`main.version`,
+`main.commit`, `main.date`) — the same variables `make build` injects — which
+is what `ai-launcher --version` prints and what `ai-launcher upgrade`
+compares against the latest release tag.
+
+To validate the release artifacts locally without publishing:
 
 ```bash
-git tag vX.Y.Z
-git push --tags   # somente quando houver remoto configurado
+go run github.com/goreleaser/goreleaser/v2@v2.13.0 check
+go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --snapshot --clean --skip=publish
 ```
 
-O mesmo processo roda localmente com `make release-local` (útil para validar
-antes de taguear); nesse caso a publicação é manual.
+`make release-local` still exists as a minimal local fallback (plain `dist/`
+binaries + `SHA256SUMS`), but the canonical check of what `release.yml`
+publishes is the GoReleaser snapshot above.

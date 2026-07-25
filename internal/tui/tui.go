@@ -97,7 +97,7 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	if isWindows() {
 		model.launch.UseJail = false
 	}
-	model.status = "Tab: seção · Space: alterna · /: adiciona mount · Enter: executa · d: dry-run · q: sai"
+	model.status = "Tab: section · Space: toggle · /: add mount · Enter: run · d: dry-run · q: quit"
 	return model
 }
 
@@ -210,24 +210,24 @@ func (m Model) sectionCount() int {
 // saveLocal persists the current selection to .ai-launch.yaml via the hook.
 func (m *Model) saveLocal() {
 	if m.hooks.Save == nil {
-		m.status = "Salvar não está disponível neste modo"
+		m.status = "Saving is not available in this mode"
 	} else if err := m.hooks.Save(m.launch); err != nil {
-		m.status = "Erro ao salvar: " + err.Error()
+		m.status = "Save failed: " + err.Error()
 	} else {
-		m.status = "Seleção salva em .ai-launch.yaml"
+		m.status = "Selection saved to .ai-launch.yaml"
 	}
 }
 
 // startProfileInput opens the text input that names a new saved profile.
 func (m *Model) startProfileInput() {
 	if m.hooks.SaveProfile == nil {
-		m.status = "Salvar perfil não está disponível neste modo"
+		m.status = "Saving profiles is not available in this mode"
 		return
 	}
 	m.textInputKind = "profile"
 	m.textInputValue = ""
 	m.textInputActive = true
-	m.status = "Nome do perfil · Enter salva · Esc cancela"
+	m.status = "Profile name · Enter saves · Esc cancels"
 }
 
 // optionRow is one fixed toggle row in the options section; catalog-declared
@@ -247,7 +247,7 @@ func (m *Model) optionRows() []optionRow {
 	}
 	return append(rows,
 		optionRow{name: "ai-memory", on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
-		optionRow{name: "Novo workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
+		optionRow{name: "New workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
 		optionRow{name: "--yolo", on: m.launch.Yolo, toggle: func(m *Model) { m.launch.Yolo = !m.launch.Yolo }},
 	)
 }
@@ -276,7 +276,7 @@ func (m Model) View() string {
 	m.profilesView(&b)
 
 	if m.textInputActive {
-		label := "Perfil"
+		label := "Profile"
 		if m.textInputKind == "param" {
 			label = m.paramTarget.Name + " (" + m.paramTarget.Flag + ")"
 		}
@@ -295,7 +295,7 @@ func (m Model) View() string {
 }
 
 func (m Model) agentsView(b *strings.Builder) {
-	b.WriteString("\n\nAgente\n")
+	b.WriteString("\n\nAgent\n")
 	pointer := "  "
 	if m.section == 0 && m.cursor == 0 {
 		pointer = "❯ "
@@ -304,7 +304,7 @@ func (m Model) agentsView(b *strings.Builder) {
 	if m.launch.ContinueSession {
 		mark = "❯ "
 	}
-	fmt.Fprintf(b, "%s%s%-22s (%s)\n", pointer, mark, "Continuar última sessão", "ai-memory run")
+	fmt.Fprintf(b, "%s%s%-22s (%s)\n", pointer, mark, "Continue last session", "ai-memory run")
 	for i, status := range m.agents {
 		pointer := "  "
 		if m.section == 0 && i+1 == m.cursor {
@@ -323,7 +323,7 @@ func (m Model) agentsView(b *strings.Builder) {
 }
 
 func (m Model) permissionsView(b *strings.Builder) {
-	b.WriteString("\nPermissões\n")
+	b.WriteString("\nPermissions\n")
 	for i, id := range m.permissionIDs {
 		permission, _ := m.catalog.Permission(id)
 		pointer := "  "
@@ -344,7 +344,7 @@ func (m Model) permissionsView(b *strings.Builder) {
 func (m Model) mountsView(b *strings.Builder) {
 	b.WriteString("\nMounts\n")
 	if len(m.launch.Mounts) == 0 {
-		b.WriteString("  (nenhum; pressione / para adicionar)\n")
+		b.WriteString("  (none; press / to add)\n")
 	}
 	for i, mount := range m.launch.Mounts {
 		pointer := "  "
@@ -358,10 +358,10 @@ func (m Model) mountsView(b *strings.Builder) {
 		fmt.Fprintf(b, "%s%s [%s]\n", pointer, mount.Path, mode)
 	}
 	if m.inputActive {
-		fmt.Fprintf(b, "  Adicionar mount (%s): %s█\n", m.mountMode, m.mountInput)
-		b.WriteString("  Navegador: " + m.mountDir + "\n")
+		fmt.Fprintf(b, "  Add mount (%s): %s█\n", m.mountMode, m.mountInput)
+		b.WriteString("  Browser: " + m.mountDir + "\n")
 		if len(m.mountEntries) == 0 {
-			b.WriteString("    (sem subdiretórios legíveis; digite um caminho)\n")
+			b.WriteString("    (no readable subdirectories; type a path)\n")
 		} else {
 			for i, entry := range m.mountEntries {
 				pointer := "    "
@@ -375,7 +375,7 @@ func (m Model) mountsView(b *strings.Builder) {
 }
 
 func (m Model) optionsView(b *strings.Builder) {
-	b.WriteString("\nOpções\n")
+	b.WriteString("\nOptions\n")
 	for i, option := range m.optionRows() {
 		pointer := "  "
 		if m.section == 3 && i == m.cursor {
@@ -397,7 +397,7 @@ func (m Model) optionsView(b *strings.Builder) {
 		}
 		value := m.launch.ParamValues[param.Name]
 		if value == "" {
-			value = mutedStyle.Render("(vazio)")
+			value = mutedStyle.Render("(empty)")
 		}
 		fmt.Fprintf(b, "%s%s: %s (%s)\n", pointer, param.Name, value, param.Flag)
 	}
@@ -409,7 +409,7 @@ func (m Model) profilesView(b *strings.Builder) {
 	if len(m.profileNames) == 0 {
 		return
 	}
-	b.WriteString("\nPerfis\n")
+	b.WriteString("\nProfiles\n")
 	for i, name := range m.profileNames {
 		pointer := "  "
 		if m.section == 4 && i == m.cursor {
@@ -453,7 +453,7 @@ func (m *Model) togglePermission() {
 	}
 	m.launch.Permissions[id] = !m.launch.Permissions[id]
 	m.launch.Permissions = m.catalog.NormalizePermissions(m.launch.Permissions)
-	m.status = "Dependências normalizadas automaticamente"
+	m.status = "Dependencies normalized automatically"
 }
 
 func (m *Model) toggleCurrent() {
@@ -467,7 +467,7 @@ func (m *Model) toggleCurrent() {
 			} else {
 				m.launch.Mounts[m.cursor].Mode = "ro"
 			}
-			m.status = "Modo do mount alternado"
+			m.status = "Mount mode toggled"
 		}
 	case 3:
 		m.toggleOption()
@@ -487,7 +487,7 @@ func (m *Model) toggleOption() {
 		return
 	}
 	rows[m.cursor].toggle(m)
-	m.status = "Opção alternada"
+	m.status = "Option toggled"
 }
 
 // startParamInput opens the text input for the param row under the cursor.
@@ -501,7 +501,7 @@ func (m *Model) startParamInput() {
 	m.textInputKind = "param"
 	m.textInputValue = m.launch.ParamValues[m.paramTarget.Name]
 	m.textInputActive = true
-	m.status = "Editando " + m.paramTarget.Name + " (" + m.paramTarget.Flag + ") · Enter confirma · Esc cancela"
+	m.status = "Editing " + m.paramTarget.Name + " (" + m.paramTarget.Flag + ") · Enter confirms · Esc cancels"
 }
 
 // loadProfile replaces the current selection with a saved profile, keeping
@@ -542,7 +542,7 @@ func (m *Model) loadProfile(name string) {
 		m.launch.ExtraArgs = append([]string(nil), profile.Options.ExtraArgs...)
 		m.launch.ParamValues = copyParamValues(profile.Options.ParamValues)
 	}
-	m.status = "Perfil carregado: " + name
+	m.status = "Profile loaded: " + name
 }
 
 func copyParamValues(values map[string]string) map[string]string {
@@ -562,7 +562,7 @@ func (m *Model) updateTextInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		m.textInputActive = false
-		m.status = "Edição cancelada"
+		m.status = "Edit cancelled"
 	case "enter":
 		m.commitTextInput()
 	case "backspace":
@@ -590,25 +590,25 @@ func (m *Model) commitTextInput() {
 	}
 	if value == "" {
 		delete(m.launch.ParamValues, m.paramTarget.Name)
-		m.status = "Parâmetro limpo: " + m.paramTarget.Name
+		m.status = "Parameter cleared: " + m.paramTarget.Name
 		return
 	}
 	if m.launch.ParamValues == nil {
 		m.launch.ParamValues = make(map[string]string)
 	}
 	m.launch.ParamValues[m.paramTarget.Name] = value
-	m.status = "Parâmetro definido: " + m.paramTarget.Name
+	m.status = "Parameter set: " + m.paramTarget.Name
 }
 
 // saveProfileAs persists the current selection as a named profile and adds
 // it to the profiles section.
 func (m *Model) saveProfileAs(name string) {
 	if name == "" {
-		m.status = "O nome do perfil não pode ser vazio"
+		m.status = "Profile name cannot be empty"
 		return
 	}
 	if err := m.hooks.SaveProfile(name, m.launch); err != nil {
-		m.status = "Erro ao salvar perfil: " + err.Error()
+		m.status = "Profile save failed: " + err.Error()
 		return
 	}
 	if m.profiles == nil {
@@ -635,7 +635,7 @@ func (m *Model) saveProfileAs(name string) {
 		m.profileNames = append(m.profileNames, name)
 		sort.Strings(m.profileNames)
 	}
-	m.status = "Perfil salvo: " + name
+	m.status = "Profile saved: " + name
 }
 
 func containsString(values []string, wanted string) bool {
@@ -651,7 +651,7 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		m.inputActive = false
-		m.status = "Adição de mount cancelada"
+		m.status = "Mount addition cancelled"
 	case "enter":
 		path := strings.TrimSpace(m.mountInput)
 		if path == "" && len(m.mountEntries) > 0 {
@@ -672,7 +672,7 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.mountMode = "ro"
 		}
-		m.status = "Modo do mount: " + m.mountMode
+		m.status = "Mount mode: " + m.mountMode
 	case "backspace":
 		if m.mountInput != "" {
 			runes := []rune(m.mountInput)
@@ -705,14 +705,14 @@ func (m *Model) navigateMountBrowser(key string) {
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			m.mountDir = path
 			m.refreshMountEntries()
-			m.status = "Diretório aberto; Enter adiciona, ←/h sobe"
+			m.status = "Directory opened; Enter adds, ←/h goes up"
 		}
 	case "left", "h":
 		parent := filepath.Dir(m.mountDir)
 		if parent != m.mountDir {
 			m.mountDir = parent
 			m.refreshMountEntries()
-			m.status = "Diretório pai aberto"
+			m.status = "Parent directory opened"
 		}
 	case "up", "k":
 		if len(m.mountEntries) > 0 {
@@ -732,7 +732,7 @@ func (m *Model) startMountBrowser() {
 	m.mountMode = "ro"
 	m.mountDir = mustWorkingDirectory()
 	m.refreshMountEntries()
-	m.status = "↑/↓ seleciona · →/l entra · ←/h sobe · Enter adiciona · Tab alterna ro/rw · Esc cancela"
+	m.status = "↑/↓ select · →/l enter · ←/h go up · Enter add · Tab toggle ro/rw · Esc cancel"
 }
 
 func (m *Model) refreshMountEntries() {
@@ -765,20 +765,20 @@ func (m Model) selectedMountPath() string {
 func (m *Model) addMount(path string) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		m.status = "O caminho do mount não pode ser vazio"
+		m.status = "Mount path cannot be empty"
 		return
 	}
 	for _, mount := range m.launch.Mounts {
 		if mount.Path == path {
 			m.inputActive = false
-			m.status = "Path já está na lista de mounts"
+			m.status = "Path is already in the mount list"
 			return
 		}
 	}
 	m.launch.Mounts = append(m.launch.Mounts, config.Mount{Path: path, Mode: m.mountMode})
 	m.cursor = len(m.launch.Mounts) - 1
 	m.inputActive = false
-	m.status = "Mount adicionado"
+	m.status = "Mount added"
 }
 
 func mustWorkingDirectory() string {
@@ -798,25 +798,25 @@ func (m *Model) removeMount() {
 	if m.cursor >= len(m.launch.Mounts) {
 		m.cursor = len(m.launch.Mounts) - 1
 	}
-	m.status = "Mount removido: " + removed
+	m.status = "Mount removed: " + removed
 }
 
 func (m Model) helpView() string {
-	return titleStyle.Render("ai-launcher · ajuda") + "\n\n" +
-		"Tab / Shift+Tab   próxima seção\n" +
-		"1-5               saltar para uma seção\n" +
-		"↑↓ / j k          navegar\n" +
-		"Space             alternar seleção / carregar perfil\n" +
-		"/                 abrir navegador de mounts\n" +
-		"→ / l             entrar no diretório\n" +
-		"← / h             subir para o diretório pai\n" +
-		"Enter             adicionar diretório, editar parâmetro ou executar\n" +
-		"Backspace         remover mount\n" +
+	return titleStyle.Render("ai-launcher · help") + "\n\n" +
+		"Tab / Shift+Tab   next/previous section\n" +
+		"1-5               jump to a section\n" +
+		"↑↓ / j k          navigate\n" +
+		"Space             toggle selection / load profile\n" +
+		"/                 open the mount browser\n" +
+		"→ / l             enter directory\n" +
+		"← / h             go up to the parent directory\n" +
+		"Enter             add directory, edit parameter or run\n" +
+		"Backspace         remove mount\n" +
 		"Ctrl+D / d        dry-run\n" +
-		"Ctrl+S            salvar .ai-launch.yaml\n" +
-		"Ctrl+P            salvar como perfil nomeado\n" +
-		"q / Esc           sair\n\n" +
-		mutedStyle.Render("Pressione qualquer tecla para fechar")
+		"Ctrl+S            save .ai-launch.yaml\n" +
+		"Ctrl+P            save as a named profile\n" +
+		"q / Esc           quit\n\n" +
+		mutedStyle.Render("Press any key to close")
 }
 
 func (m *Model) preview(dryRun bool) bool {
@@ -828,7 +828,7 @@ func (m *Model) preview(dryRun bool) bool {
 				m.launch.ContinueSession = true
 				m.launch.Agent = config.Agent{}
 				m.launch.Executable = ""
-				m.status = "Continuar última sessão selecionado; pressione Enter novamente para executar"
+				m.status = "Continue last session selected; press Enter again to run"
 				return false
 			}
 		} else if m.cursor-1 < len(m.agents) {
@@ -841,14 +841,14 @@ func (m *Model) preview(dryRun bool) bool {
 				m.launch.ContinueSession = false
 				m.launch.Agent = selectedAgent
 				m.launch.Executable = selected.Path
-				m.status = "Agente selecionado; pressione Enter novamente para executar"
+				m.status = "Agent selected; press Enter again to run"
 				return false
 			}
 		}
 	}
 	argv, err := launcher.Build(m.launch)
 	if err != nil {
-		m.status = "Erro: " + err.Error()
+		m.status = "Error: " + err.Error()
 		return false
 	}
 	if dryRun {

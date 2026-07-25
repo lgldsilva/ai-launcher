@@ -35,7 +35,7 @@ func TestModelRendersAndNavigatesAllSections(t *testing.T) {
 	}
 	model := NewModel(config.DefaultGlobal(), launch)
 	view := model.View()
-	for _, want := range []string{"Agente", "Permissões", "Mounts", "Opções", "Preview:"} {
+	for _, want := range []string{"Agent", "Permissions", "Mounts", "Options", "Preview:"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("initial view does not contain %q: %s", want, view)
 		}
@@ -72,7 +72,7 @@ func TestModelAddsAndRejectsDuplicateMounts(t *testing.T) {
 	model = applyKey(t, model, runeKey("/"))
 	model = applyKey(t, model, runeKey("/tmp/data"))
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(model.launch.Mounts) != 1 || !strings.Contains(model.status, "já está") {
+	if len(model.launch.Mounts) != 1 || !strings.Contains(model.status, "already") {
 		t.Fatalf("duplicate mount handling: mounts=%#v status=%q", model.launch.Mounts, model.status)
 	}
 }
@@ -88,7 +88,7 @@ func TestModelNavigatesMountBrowser(t *testing.T) {
 	model = applyKey(t, model, runeKey("/"))
 	model.mountDir = root
 	model.refreshMountEntries()
-	if !strings.Contains(model.View(), "Navegador: "+root) {
+	if !strings.Contains(model.View(), "Browser: "+root) {
 		t.Fatalf("mount browser view = %s", model.View())
 	}
 	for index, entry := range model.mountEntries {
@@ -187,11 +187,11 @@ func TestModelSaveAndHelpShortcuts(t *testing.T) {
 		return nil
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyCtrlS})
-	if !saved || !strings.Contains(model.status, "salva") {
+	if !saved || !strings.Contains(model.status, "saved") {
 		t.Fatalf("ctrl+s result: saved=%t status=%q", saved, model.status)
 	}
 	model = applyKey(t, model, runeKey("?"))
-	if !model.helpOpen || !strings.Contains(model.View(), "ajuda") {
+	if !model.helpOpen || !strings.Contains(model.View(), "help") {
 		t.Fatal("help shortcut did not open help view")
 	}
 	model = applyKey(t, model, runeKey("x"))
@@ -230,7 +230,7 @@ func TestModelLoadsProfileFromTheProfilesSection(t *testing.T) {
 	if model.sectionCount() != 5 {
 		t.Fatalf("sectionCount() = %d; want 5 with profiles", model.sectionCount())
 	}
-	if !strings.Contains(model.View(), "Perfis") {
+	if !strings.Contains(model.View(), "Profiles") {
 		t.Fatal("view does not render the profiles section")
 	}
 	model = applyKey(t, model, runeKey("5"))
@@ -244,7 +244,7 @@ func TestModelLoadsProfileFromTheProfilesSection(t *testing.T) {
 	if len(model.launch.Mounts) != 1 || model.launch.Mounts[0].Path != "/reference" {
 		t.Fatalf("profile mounts = %#v", model.launch.Mounts)
 	}
-	if !strings.Contains(model.status, "Perfil carregado") {
+	if !strings.Contains(model.status, "Profile loaded") {
 		t.Fatalf("status = %q", model.status)
 	}
 }
@@ -297,7 +297,7 @@ func TestModelSavesProfileWithCtrlP(t *testing.T) {
 	}
 	model = applyKey(t, model, runeKey("review"))
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	if savedName != "review" || !strings.Contains(model.status, "Perfil salvo") {
+	if savedName != "review" || !strings.Contains(model.status, "Profile saved") {
 		t.Fatalf("save profile: name=%q status=%q", savedName, model.status)
 	}
 	if len(model.profileNames) != 1 || model.profileNames[0] != "review" || model.sectionCount() != 5 {

@@ -1,241 +1,299 @@
 # ai-launcher
 
-Launcher TUI/CLI que orquestra CLIs de IA (Claude Code, Codex, Kimi, Crush, OpenCode, Gemini etc.) através de sandbox e camada de memória (Go, bubbletea, ai-jail + ai-memory).
+TUI/CLI launcher that orchestrates AI CLIs (Claude Code, Codex, Kimi, Crush, OpenCode, Gemini etc.) through a sandbox and a memory layer (Go, bubbletea, ai-jail + ai-memory).
 
-> O ai-launcher é um "super facilitador": ele não reimplementa nada. Compõe duas
-> ferramentas de terceiros — [`ai-jail`](https://github.com/akitaonrails/ai-jail)
-> (wrapper de sandbox: bubblewrap no Linux, sandbox-exec no macOS) e
-> [`ai-memory`](https://github.com/akitaonrails/ai-memory) (servidor MCP + hooks +
-> workstreams gerenciadas) — e monta o comando canônico de lançamento com
-> permissões, mounts e opções declaradas por você.
+> ai-launcher is a "super facilitator": it reimplements nothing. It composes two
+> third-party tools — [`ai-jail`](https://github.com/akitaonrails/ai-jail)
+> (sandbox wrapper: bubblewrap on Linux, sandbox-exec on macOS) and
+> [`ai-memory`](https://github.com/akitaonrails/ai-memory) (MCP server + hooks +
+> managed workstreams) — and builds the canonical launch command with the
+> permissions, mounts, and options you declare.
 
-## Como funciona
+## How it works
 
 ```
 ┌──────────────┐     ┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌──────────────────┐
-│ usuário      │────►│ ai-launcher │────►│ ai-jail      │────►│ ai-memory run  │────►│ harness          │
-│ (TUI ou CLI) │     │ (orquestra) │     │ (sandbox)    │     │ (memória)      │     │ (claude, codex…) │
+│ user         │────►│ ai-launcher │────►│ ai-jail      │────►│ ai-memory run  │────►│ harness          │
+│ (TUI or CLI) │     │(orchestrate)│     │ (sandbox)    │     │ (memory)       │     │ (claude, codex…) │
 └──────────────┘     └─────────────┘     └──────────────┘     └────────────────┘     └──────────────────┘
                           │                                          │
                           ▼                                          ▼
-              ~/.config/ai-launch/                     servidor ai-memory
+              ~/.config/ai-launch/                     ai-memory server
               config.yaml · profiles                   (AI_MEMORY_SERVER_URL)
 ```
 
-A cadeia canônica de lançamento é sempre:
+The canonical launch chain is always:
 
 ```
-ai-jail [jail flags] ai-memory run [wrapper flags] <harness> [args nativos]
+ai-jail [jail flags] ai-memory run [wrapper flags] <harness> [native args]
 ```
 
-Cada camada é opcional (exceto o harness): sem jail o comando começa em
-`ai-memory run`; sem memória o harness é executado diretamente. No Windows o
-ai-jail não existe — o launcher desativa o sandbox com aviso e executa o resto.
+Every layer is optional (except the harness): without jail the command starts
+at `ai-memory run`; without memory the harness runs directly. On Windows
+ai-jail does not exist — the launcher disables the sandbox with a warning and
+runs the rest.
 
-## Instalação
+When the managed ai-memory native binary exists
+(`~/.local/share/ai-launcher/bin/ai-memory`, provisioned by `--install` /
+`--upgrade` from the verified release assets), the launcher exports
+`AI_MEMORY_NATIVE_BIN` into the launched process so the memory wrapper uses it
+directly — nothing is downloaded inside the jail.
 
-Pré-requisito: Go 1.24+ (definido em `go.mod`).
+## Installation
+
+### Curl installer (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lgldsilva/ai-launcher/main/install.sh | sh
+```
+
+Downloads the right release archive for your OS/arch (Linux/macOS,
+amd64/arm64), verifies its SHA-256 against the release `checksums.txt`
+(mandatory — an unverifiable download is a hard error), and installs to
+`~/.local/bin`. No sudo. Overrides: `--version vX.Y.Z` to pin a release,
+`--bin-dir <dir>` or `AI_LAUNCHER_INSTALL_DIR` to change the destination. On
+Windows, download the `.zip` from the releases page instead.
+
+### Self-update
+
+Once installed, the binary updates itself from the same GitHub releases:
+
+```bash
+ai-launcher upgrade                  # update to the latest release
+ai-launcher upgrade --check          # only report whether an update exists
+ai-launcher upgrade --version v0.2.0 # install a specific release
+```
+
+Checksum verification is strict (a missing or mismatched `checksums.txt` is a
+hard error) and the replacement is atomic. Environment overrides:
+`AI_LAUNCHER_UPDATE_API` (release API base), `AI_LAUNCHER_UPDATE_URL`
+(download base), `AI_LAUNCHER_UPDATE_TOKEN` (GitHub token for private
+releases, sent as a Bearer header and never logged).
 
 ### go install
+
+Prerequisite: Go 1.24+ (declared in `go.mod`).
 
 ```bash
 go install github.com/lgldsilva/ai-launcher/cmd/ai-launcher@latest
 ```
 
-### A partir do código-fonte
+### From source
 
 ```bash
 git clone https://github.com/lgldsilva/ai-launcher.git
 cd ai-launcher
-make build          # gera bin/ai-launcher
-make build-release  # binários Linux/macOS/Windows (amd64/arm64) em dist/
+make build          # produces bin/ai-launcher
+make build-release  # Linux/macOS/Windows binaries (amd64/arm64) in dist/
 ```
 
-### Ferramentas gerenciadas (ai-jail, ai-memory, harnesses)
+### Managed tools (ai-jail, ai-memory, harnesses)
 
-O launcher instala as ferramentas que ele orquestra a partir das releases do
-GitHub, com verificação de checksum SHA-256 obrigatória:
+The launcher installs the tools it orchestrates from GitHub releases, with
+mandatory SHA-256 checksum verification:
 
 ```bash
-ai-launcher --install                     # tudo que tem receita no catálogo
-ai-launcher --install --agent "Kilo Code" # apenas um alvo
-ai-launcher --upgrade                     # força reinstalação pela release mais recente
+ai-launcher --install                     # everything that has a recipe in the catalog
+ai-launcher --install --agent "Kilo Code" # a single target
+ai-launcher --upgrade                     # force reinstall from the latest release
 ```
 
-No Windows o ai-jail é pulado automaticamente e o ai-memory é instalado pelo
-asset nativo `ai-memory-windows-x86_64.zip`. O estado das instalações fica em
-`~/.config/ai-launch/install-state.json` e o log em `install.log` (mesmo
-diretório, sem tokens).
+`--install`/`--upgrade` also provision the ai-memory native runner at
+`~/.local/share/ai-launcher/bin/ai-memory` from the same verified release
+assets. On Windows ai-jail is skipped automatically and ai-memory is installed
+from the native `ai-memory-windows-x86_64.zip` asset. Install state lives in
+`~/.config/ai-launch/install-state.json` and the log in `install.log` (same
+directory, no tokens).
 
-## Uso
+## Usage
 
-Sem argumentos, `ai-launcher` abre a TUI interativa. Com qualquer flag, opera
-em modo CLI e executa de verdade (não é um gerador de comando — use `--dry-run`
-para apenas imprimir o argv).
+With no arguments, `ai-launcher` opens the interactive TUI. With any flag it
+runs in CLI mode and executes for real (it is not a command generator — use
+`--dry-run` to only print the argv).
 
-### Comandos e modos
+### Commands and modes
 
-| Comando | Efeito |
+| Command | Effect |
 | --- | --- |
-| `ai-launcher` | Abre a TUI (agentes, permissões, mounts, opções, perfis) |
-| `ai-launcher --agent claude [flags]` | Monta o argv e executa o harness |
-| `ai-launcher --continue` | Retoma a sessão mais recente do checkout (`ai-memory run` sem harness) |
-| `ai-launcher --install [--agent X]` / `--upgrade` | Instala/atualiza ferramentas via releases do GitHub |
-| `ai-launcher --add Nome --path /caminho [--command cmd] [--description txt]` | Adiciona/atualiza um harness no catálogo global |
-| `ai-launcher --list-profiles` / `--delete-profile N` | Lista ou remove perfis salvos no config global |
-| `ai-launcher --save-profile N [flags]` | Salva a seleção mesclada como perfil e sai sem executar |
-| `ai-launcher --save` (ou `--save-only`) | Grava a seleção em `.ai-launch.yaml` local e sai |
-| `ai-launcher help` | Mostra o uso das flags |
+| `ai-launcher` | Opens the TUI (agents, permissions, mounts, options, profiles) |
+| `ai-launcher --agent claude [flags]` | Builds the argv and executes the harness |
+| `ai-launcher --continue` | Resumes the most recent session of the checkout (`ai-memory run` without a harness) |
+| `ai-launcher upgrade [--check] [--version vX.Y.Z]` | Self-updates the launcher binary from GitHub releases (strict checksum) |
+| `ai-launcher --install [--agent X]` / `--upgrade` | Installs/upgrades the managed tools via GitHub releases |
+| `ai-launcher --add Name --path /path [--command cmd] [--description txt]` | Adds/updates a harness in the global catalog |
+| `ai-launcher --list-profiles` / `--delete-profile N` | Lists or removes profiles saved in the global config |
+| `ai-launcher --save-profile N [flags]` | Saves the merged selection as a profile and exits without launching |
+| `ai-launcher --save` (or `--save-only`) | Writes the selection to the local `.ai-launch.yaml` and exits |
+| `ai-launcher --version` | Prints the binary version (release, commit, build date) and exits |
+| `ai-launcher help` | Shows flag usage |
 
-### Opções
+The positional `upgrade` (self-update of the launcher binary) is unrelated to
+the `--upgrade` flag (reinstall of the third-party tools).
 
-| Flag | Efeito |
+### Options
+
+| Flag | Effect |
 | --- | --- |
-| `--agent <cmd>` | Seleciona o agente (claude, codex, opencode, kimi, …) |
-| `--ssh` / `--gh` / `--docker` / `--gpu` | Habilita permissões dentro do jail (gpu exige docker) |
-| `--no-jail` / `--sandbox` | Desativa / ativa explicitamente o ai-jail |
-| `--memory` / `--no-memory` | Ativa / desativa a camada ai-memory |
-| `--yolo` / `--no-yolo` | Passa (ou não) a flag de modo perigoso do agente |
-| `--new <nome>` / `--workstream <nome>` | Cria / retoma uma workstream do ai-memory |
-| `--workspace <nome>` / `--project <nome>` | Escopo repassado ao `ai-memory run` |
-| `--continue` | Continua a última sessão do ai-memory deste checkout |
-| `--mount <path>[:ro\|:rw]` / `--map` | Mount somente-leitura (padrão ro; `--map` é alias) |
-| `--rw-map <path>` | Mount de leitura e escrita |
-| `--param <nome=valor>` | Define parâmetro declarado no catálogo do agente (repetível) |
-| `--extra-args "<args>"` / `--args` | Argumentos extras repassados ao harness (`--args` é alias) |
-| `--profile <nome>` | Carrega um perfil salvo como base da seleção |
-| `--config <path>` / `--local-config <path>` | Caminhos alternativos do config global / local |
-| `--dry-run` | Imprime o comando gerado sem executar |
-| `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | Ver tabela de comandos acima |
+| `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, …) |
+| `--ssh` / `--gh` / `--docker` / `--gpu` | Enables permissions inside the jail (gpu requires docker) |
+| `--no-jail` / `--sandbox` | Explicitly disables / enables ai-jail |
+| `--memory` / `--no-memory` | Enables / disables the ai-memory layer |
+| `--yolo` / `--no-yolo` | Passes (or not) the agent's dangerous-mode flag |
+| `--new <name>` / `--workstream <name>` | Creates / resumes an ai-memory workstream |
+| `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
+| `--continue` | Continues the last ai-memory session of this checkout |
+| `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
+| `--rw-map <path>` | Read-write mount |
+| `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
+| `--extra-args "<args>"` / `--args` | Extra arguments forwarded to the harness (`--args` is an alias) |
+| `--profile <name>` | Loads a saved profile as the base selection |
+| `--config <path>` / `--local-config <path>` | Alternative paths for the global / local config |
+| `--dry-run` | Prints the generated command without executing |
+| `--version` | Prints the binary version and exits |
+| `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
 
-Precedência da seleção final: **padrões embutidos < `.ai-launch.yaml` local <
-perfil (`--profile`) < flags explícitas**.
+Precedence of the final selection: **built-in defaults < local
+`.ai-launch.yaml` < profile (`--profile`) < explicit flags**.
 
-### Exemplos
+### Examples
 
 ```bash
-# Executa o Claude Code com sandbox e memória (padrões seguros)
+# Run Claude Code with sandbox and memory (safe defaults)
 ai-launcher --agent claude
 
-# Só imprime o comando que seria executado
+# Only print the command that would run
 ai-launcher --agent claude --ssh --docker --dry-run
 
-# Montagens personalizadas e modo perigoso
+# Custom mounts and dangerous mode
 ai-launcher --agent pi --map /host/data --rw-map /workspace --yolo
 
-# Workstream nomeada do ai-memory com escopo de projeto
-ai-launcher --agent claude --new release-check --project meu-app
+# Named ai-memory workstream with project scope
+ai-launcher --agent claude --new release-check --project my-app
 
-# Parâmetro declarado no catálogo (o Kimi declara "query" e "model")
-ai-launcher --agent kimi --param query="refatore o módulo auth" --param model=k2
+# Parameter declared in the catalog (Kimi declares "query" and "model")
+ai-launcher --agent kimi --param query="refactor the auth module" --param model=k2
 
-# Salva a seleção mesclada como perfil reutilizável
+# Save the merged selection as a reusable profile
 ai-launcher --agent claude --ssh --param model=opus --save-profile review
 
-# Depois: carrega o perfil e sobrescreve só o que precisar
+# Later: load the profile and override only what you need
 ai-launcher --profile review --docker
 
-# Adiciona um harness sem recompilar o launcher
-ai-launcher --add "Meu Harness" --path /opt/tools/runner --command runner
+# Add a harness without recompiling the launcher
+ai-launcher --add "My Harness" --path /opt/tools/runner --command runner
 ```
 
 ### TUI
 
-`ai-launcher` sem argumentos abre a TUI com cinco seções: **Agente** (a
-primeira linha é sempre "Continuar última sessão"), **Permissões**, **Mounts**,
-**Opções** (toggles fixos + uma linha por parâmetro declarado pelo agente) e
-**Perfis** (seção 5, visível quando existe ao menos um perfil salvo).
+`ai-launcher` with no arguments opens the TUI with five sections: **Agent**
+(the first row is always "Continue last session"), **Permissions**,
+**Mounts**, **Options** (fixed toggles + one row per parameter declared by
+the agent), and **Profiles** (section 5, visible when at least one profile is
+saved).
 
-| Tecla | Ação |
+| Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab`, `1`–`5` | Alternar / saltar entre seções |
-| `↑/↓` ou `j/k` | Navegar na seção atual |
-| `Space` | Alternar permissão/opção, modo do mount ou carregar perfil |
-| `/` | Abrir o navegador de mounts (`→/l` entra, `←/h` sobe, `Tab` alterna ro/rw) |
-| `Backspace` | Remover o mount selecionado |
-| `Enter` | Selecionar agente, editar parâmetro ou executar |
-| `d` / `Ctrl+D` | Dry-run (mostra o comando sem sair da TUI) |
-| `Ctrl+S` | Salvar a seleção em `.ai-launch.yaml` |
-| `Ctrl+P` | Salvar a seleção como perfil nomeado no config global |
-| `?` | Ajuda |
-| `q` / `Esc` / `Ctrl+C` | Sair |
+| `Tab` / `Shift+Tab`, `1`–`5` | Cycle / jump between sections |
+| `↑/↓` or `j/k` | Move within the current section |
+| `Space` | Toggle permission/option, mount mode, or load profile |
+| `/` | Open the mount browser (`→/l` enters, `←/h` goes up, `Tab` toggles ro/rw) |
+| `Backspace` | Remove the selected mount |
+| `Enter` | Select agent, edit parameter, or execute |
+| `d` / `Ctrl+D` | Dry-run (shows the command without leaving the TUI) |
+| `Ctrl+S` | Save the selection to `.ai-launch.yaml` |
+| `Ctrl+P` | Save the selection as a named profile in the global config |
+| `?` | Help |
+| `q` / `Esc` / `Ctrl+C` | Quit |
 
-No Windows o toggle de Jail e as permissões que dependem dele (ssh, gh,
-docker, gpu) nem aparecem na TUI.
+In the mount browser you can also type a path directly — including paths
+containing the letters `j`/`k`/`l`/`h`: once typing starts, those letters go
+to the input instead of navigating, and the arrow keys stay browser-only
+no-ops until the input is submitted or cancelled.
 
-## Matriz de suporte
+On Windows the Jail toggle and the permissions that depend on it (ssh, gh,
+docker, gpu) do not appear in the TUI at all.
 
-| Plataforma | ai-jail (sandbox) | ai-memory | Harnesses |
+## Support matrix
+
+| Platform | ai-jail (sandbox) | ai-memory | Harnesses |
 | --- | --- | --- | --- |
-| Linux (amd64) | Sim (bubblewrap) | Sim | Sim, sandboxed |
-| Linux (arm64) | Sem asset oficial do ai-jail | Sim | Sim, sandbox depende do ai-jail |
-| macOS (arm64) | Sim (sandbox-exec) | Sim | Sim, sandboxed |
-| macOS (amd64) | Sem asset oficial do ai-jail | Sim | Sim, sandbox depende do ai-jail |
-| Windows | **Não** — o caminho é WSL2 | Sim (`ai-memory-windows-x86_64.zip`) | Sim, **sem sandbox** |
+| Linux (amd64) | Yes (bubblewrap) | Yes | Yes, sandboxed |
+| Linux (arm64) | No official ai-jail asset | Yes | Yes, sandbox depends on ai-jail |
+| macOS (arm64) | Yes (sandbox-exec) | Yes | Yes, sandboxed |
+| macOS (amd64) | No official ai-jail asset | Yes | Yes, sandbox depends on ai-jail |
+| Windows | **No** — the supported path is WSL2 | Yes (`ai-memory-windows-x86_64.zip`) | Yes, **without sandbox** |
 
-O ai-jail não tem suporte a Windows ("probably never", segundo o autor); no
-Windows o launcher desativa o jail com aviso explícito e remove as permissões
-que dependem dele. Para rodar com sandbox a partir do Windows, use WSL2.
+ai-jail has no Windows support ("probably never", per the author); on Windows
+the launcher disables the jail with an explicit warning and removes the
+permissions that depend on it. To run sandboxed from Windows, use WSL2.
 
-## Configuração
+## Configuration
 
-| Arquivo | Escopo | Conteúdo |
+| File | Scope | Contents |
 | --- | --- | --- |
-| `~/.config/ai-launch/config.yaml` | Global (máquina) | Catálogo de `agents`, `tools`, `permissions`, `default_mounts`, `profiles`, `memory_server_url`, `memory_auth_token` |
-| `<projeto>/.ai-launch.yaml` | Workspace | Seleção: `agent`, `permissions`, `mounts`, `options` (inclui `jail_flags`, `param_values`, `extra_args`) |
-| `~/.config/ai-launch/install-state.json` | Global | Tags de release já instaladas |
-| `~/.config/ai-launch/install.log` | Global | Log das instalações (0600, sem tokens) |
+| `~/.config/ai-launch/config.yaml` | Global (machine) | Catalog of `agents`, `tools`, `permissions`, `default_mounts`, `profiles`, `memory_server_url`, `memory_auth_token` |
+| `<project>/.ai-launch.yaml` | Workspace | Selection: `agent`, `permissions`, `mounts`, `options` (includes `jail_flags`, `param_values`, `extra_args`) |
+| `~/.config/ai-launch/install-state.json` | Global | Already-installed release tags |
+| `~/.config/ai-launch/install.log` | Global | Install log (0600, no tokens) |
+| `~/.local/share/ai-launcher/bin/ai-memory` | Global | Managed ai-memory native runner (exported as `AI_MEMORY_NATIVE_BIN`) |
 
-O esquema completo (campos, defaults, `jail_flags` do ai-jail v1.15) está em
+The full schema (fields, defaults, ai-jail v1.15 `jail_flags`) is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Segurança
+## Security
 
-Camadas de defesa:
+Layers of defense:
 
-- Sandbox via ai-jail (bubblewrap no Linux, sandbox-exec no macOS) com mounts
-  somente-leitura por padrão e permissões (ssh, gh, docker, gpu) desligadas por
-  padrão.
-- Instalações sempre verificadas por checksum SHA-256 (`.sha256`,
-  `.sha256sum`, `checksums.txt`, `SHA256SUMS` ou corpo da release);
-  `allow_unverified: true` existe, mas é escolha explícita do operador.
-- `memory_auth_token` só é repassado por variável de ambiente
-  (`AI_MEMORY_AUTH_TOKEN`) ao processo filho e **nunca é escrito no
+- Sandbox via ai-jail (bubblewrap on Linux, sandbox-exec on macOS) with
+  read-only mounts by default and permissions (ssh, gh, docker, gpu) off by
+  default.
+- Every install is SHA-256 checksum-verified (`.sha256`, `.sha256sum`,
+  `checksums.txt`, `SHA256SUMS`, or the release body); `allow_unverified:
+  true` exists, but it is an explicit operator choice.
+- Self-update (`ai-launcher upgrade`) and the `install.sh` curl installer are
+  stricter: the release `checksums.txt` is mandatory and there is no
+  `allow_unverified` escape hatch. The managed ai-memory native runner comes
+  from the same verified assets, so nothing is downloaded inside the jail.
+- `memory_auth_token` is only forwarded via environment variable
+  (`AI_MEMORY_AUTH_TOKEN`) to the child process and is **never written to
   `install.log`**.
-- Configs gravados atomicamente com permissão 0600.
+- Configs are written atomically with 0600 permission.
 
-O que **NÃO** protege:
+What it does **NOT** protect against:
 
-- **Variáveis de ambiente são visíveis dentro do jail** (exceto em modo
-  lockdown do ai-jail). Não confie segredos ao ambiente de uma sessão sandboxed.
-- **Windows roda SEM sandbox** — o harness executa com todos os privilégios do
-  usuário. Para workloads hostis no Windows, use WSL2 ou uma VM descartável.
-- **Sandbox não é VM.** Bubblewrap/sandbox-exec compartilham o kernel do host;
-  workloads hostis ou não confiáveis pedem uma VM descartável, não um jail.
-- Não substitui a higiene de tokens: quem tem acesso ao config global lê
-  `memory_auth_token`.
+- **Environment variables are visible inside the jail** (except in ai-jail
+  lockdown mode). Do not trust secrets to the environment of a sandboxed
+  session.
+- **Windows runs WITHOUT a sandbox** — the harness executes with all the
+  user's privileges. For hostile workloads on Windows, use WSL2 or a
+  disposable VM.
+- **A sandbox is not a VM.** Bubblewrap/sandbox-exec share the host kernel;
+  hostile or untrusted workloads call for a disposable VM, not a jail.
+- It does not replace token hygiene: anyone with access to the global config
+  reads `memory_auth_token`.
 
-## Documentação
+## Documentation
 
-| Documento | Conteúdo |
+| Document | Contents |
 | --- | --- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Forma do sistema: fluxo de dados, mapa de pacotes, estado, invariantes |
-| [docs/design-decisions.md](docs/design-decisions.md) | Decisões temáticas, trade-offs e o que não estamos fazendo |
-| [docs/cicd.md](docs/cicd.md) | Pipeline GitHub Actions, Sonar CE local e processo de release |
-| [docs/test-strategy.md](docs/test-strategy.md) | Pirâmide de testes, gate de cobertura e suíte de contrato Gherkin |
-| [AGENTS.md](AGENTS.md) | Instruções para agentes de IA trabalhando neste repositório |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System shape: data flow, package map, state, invariants |
+| [docs/design-decisions.md](docs/design-decisions.md) | Thematic decisions, trade-offs, and what we are not doing |
+| [docs/cicd.md](docs/cicd.md) | GitHub Actions pipeline, SonarCloud, and the release process |
+| [docs/test-strategy.md](docs/test-strategy.md) | Test pyramid, coverage gate, and the Gherkin contract suite |
+| [AGENTS.md](AGENTS.md) | Instructions for AI agents working in this repository |
 
 ## Roadmap
 
-- [x] TUI interativa com execução real (Enter lança o harness)
-- [x] Perfis nomeados e parâmetros declarados por harness
-- [x] Instalador com checksum SHA-256 obrigatório
-- [x] Windows como cidadão de primeira classe sem jail
-- [x] Suíte de contrato Gherkin contra drift do ai-jail/ai-memory
-- [x] Workflow de release automatizado (`release.yml`: tag `v*` → binários + SHA256SUMS + SBOM)
-- [ ] Sandbox nativo no Windows (depende de upstream; improvável)
-- [ ] GUI (não planejada; TUI é a interface)
+- [x] Interactive TUI with real execution (Enter launches the harness)
+- [x] Named profiles and harness-declared parameters
+- [x] Installer with mandatory SHA-256 checksum
+- [x] Windows as a first-class citizen without jail
+- [x] Gherkin contract suite against ai-jail/ai-memory drift
+- [x] Automated release pipeline (autotag semver + GoReleaser: archives, `checksums.txt`, SBOM)
+- [x] Self-update (`ai-launcher upgrade`) and POSIX curl installer (`install.sh`)
+- [ ] Native sandbox on Windows (depends on upstream; unlikely)
+- [ ] GUI (not planned; the TUI is the interface)
 
-## Licença
+## License
 
-MIT — veja [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
