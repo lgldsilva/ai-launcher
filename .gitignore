@@ -1,0 +1,13 @@
+# Build artifacts
+/ai-launcher
+bin/
+dist/
+coverage.out
+coverage.html
+
+# Local tool session/agent state (machine-specific, never ship)
+.crush/
+.slim/
+.agents/
+.codex/
+.ai-jail
