@@ -161,7 +161,7 @@ func (u *Updater) LatestTag(ctx context.Context) (string, error) {
 }
 
 func (u *Updater) fetchLatestFromEndpoint(ctx context.Context, url string) (string, error) {
-	body, err := u.get(ctx, url)
+	body, err := u.get(ctx, url, "application/vnd.github+json")
 	if err != nil {
 		return "", err
 	}
@@ -176,7 +176,7 @@ func (u *Updater) fetchLatestFromEndpoint(ctx context.Context, url string) (stri
 }
 
 func (u *Updater) fetchLatestFromList(ctx context.Context, url string) (string, error) {
-	body, err := u.get(ctx, url)
+	body, err := u.get(ctx, url, "application/vnd.github+json")
 	if err != nil {
 		return "", err
 	}
@@ -208,15 +208,19 @@ func (u *Updater) fetchLatestFromList(ctx context.Context, url string) (string, 
 
 // DownloadVerifiedBinary downloads the release archive for tag and this
 // platform, verifies its SHA-256 against checksums.txt (strictly), and
-// returns the extracted executable bytes.
+// returns the extracted executable bytes. When the updater carries a token
+// the downloads go through the GitHub assets API (release-by-tag → asset by
+// name → octet-stream GET): on PRIVATE repositories the pretty
+// github.com/.../releases/download/<tag>/<asset> URLs return 404 even with a
+// valid token, while the API asset URL works. Without a token the public
+// download URLs are used directly.
 func (u *Updater) DownloadVerifiedBinary(ctx context.Context, tag string) ([]byte, error) {
 	archive := AssetName(tag, u.goos(), u.goarch())
-	base := u.downloadBase() + "/" + tag
-	data, err := u.get(ctx, base+"/"+archive)
+	data, err := u.downloadAsset(ctx, tag, archive)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", archive, err)
 	}
-	sums, err := u.get(ctx, base+"/"+checksumsAsset)
+	sums, err := u.downloadAsset(ctx, tag, checksumsAsset)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w (checksum verification is mandatory for self-update)", checksumsAsset, err)
 	}
@@ -233,6 +237,42 @@ func (u *Updater) DownloadVerifiedBinary(ctx context.Context, tag string) ([]byt
 		return nil, fmt.Errorf("extract %s: %w", archive, err)
 	}
 	return binary, nil
+}
+
+// downloadAsset fetches one named release file for tag. With a token it goes
+// through the assets API; without one it uses the public download URL.
+func (u *Updater) downloadAsset(ctx context.Context, tag, name string) ([]byte, error) {
+	if u.Token == "" {
+		return u.get(ctx, u.downloadBase()+"/"+tag+"/"+name, "application/octet-stream")
+	}
+	return u.assetBytesViaAPI(ctx, tag, name)
+}
+
+type releaseAsset struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// assetBytesViaAPI resolves the release for tag through the API, finds the
+// named asset, and downloads it from its API URL (which accepts Bearer auth
+// and redirects to a signed URL that the HTTP client follows).
+func (u *Updater) assetBytesViaAPI(ctx context.Context, tag, name string) ([]byte, error) {
+	body, err := u.get(ctx, u.apiBase()+"/releases/tags/"+tag, "application/vnd.github+json")
+	if err != nil {
+		return nil, err
+	}
+	var release struct {
+		Assets []releaseAsset `json:"assets"`
+	}
+	if err := json.Unmarshal(body, &release); err != nil {
+		return nil, fmt.Errorf("parse release %s: %w", tag, err)
+	}
+	for _, asset := range release.Assets {
+		if asset.Name == name && asset.URL != "" {
+			return u.get(ctx, asset.URL, "application/octet-stream")
+		}
+	}
+	return nil, fmt.Errorf("asset %s not found in release %s", name, tag)
 }
 
 // Apply downloads tag and atomically replaces the running executable with it.
@@ -314,12 +354,12 @@ func replaceExecutableWindows(exePath, tmpName string) error {
 // get fetches a URL and returns the body, erroring on non-2xx. When the
 // updater carries a token it is sent as a Bearer header; the token never
 // appears in errors or output.
-func (u *Updater) get(ctx context.Context, url string) ([]byte, error) {
+func (u *Updater) get(ctx context.Context, url, accept string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", "ai-launcher")
 	if u.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+u.Token)

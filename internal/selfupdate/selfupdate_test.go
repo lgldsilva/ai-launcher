@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -303,49 +304,180 @@ func TestDownloadVerifiedBinaryMissingChecksumEntry(t *testing.T) {
 	}
 }
 
-func TestTokenSentAsBearerAndNeverLeaked(t *testing.T) {
-	const token = "secret-token-123"
-	name := "ai-launcher_0.2.0_linux_amd64.tar.gz"
-	archive := tarGzArchive(t, "ai-launcher", testBinaryContents)
-	downloads := map[string][]byte{
-		"/v0.2.0/" + name:       archive,
-		"/v0.2.0/checksums.txt": checksumsBody(name, archive),
+type recordedRequest struct {
+	path   string
+	accept string
+	auth   string
+}
+
+// privateReleaseServer simulates a PRIVATE GitHub repository: the pretty
+// /releases/download-style URLs 404 even with a valid token, while the assets
+// API (release-by-tag → asset URL, Bearer + Accept: application/octet-stream)
+// serves the bytes. files maps asset name → contents.
+func privateReleaseServer(t *testing.T, token, tag string, files map[string][]byte) (*httptest.Server, *[]recordedRequest) {
+	t.Helper()
+	requests := &[]recordedRequest{}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
 	}
-	var sawAuth []string
-	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = append(sawAuth, r.Header.Get("Authorization"))
+	sort.Strings(names)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*requests = append(*requests, recordedRequest{path: r.URL.Path, accept: r.Header.Get("Accept"), auth: r.Header.Get("Authorization")})
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if data, ok := downloads[r.URL.Path]; ok {
-			_, _ = w.Write(data)
+		if r.URL.Path == "/releases/tags/"+tag {
+			var assets []string
+			for id, name := range names {
+				assets = append(assets, fmt.Sprintf(`{"name":%q,"url":"http://%s/assets/%d"}`, name, r.Host, id+1))
+			}
+			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"assets":[%s]}`, tag, strings.Join(assets, ",")) // #nosec G705 -- test fixture JSON served by the local httptest server
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			for id, name := range names {
+				if r.URL.Path == fmt.Sprintf("/assets/%d", id+1) {
+					if r.Header.Get("Accept") != "application/octet-stream" {
+						w.WriteHeader(http.StatusNotAcceptable)
+						return
+					}
+					_, _ = w.Write(files[name])
+					return
+				}
+			}
+		}
+		// Pretty download URLs 404 on private repos, even with a token.
 		http.NotFound(w, r)
 	}))
-	defer authServer.Close()
-	updater := &Updater{
-		DownloadBaseURL: authServer.URL,
-		HTTPClient:      authServer.Client(),
-		GOOS:            "linux",
-		GOARCH:          "amd64",
-		Token:           token,
+	t.Cleanup(server.Close)
+	return server, requests
+}
+
+func privateUpdater(server *httptest.Server, token string) *Updater {
+	return &Updater{
+		APIBaseURL: server.URL,
+		HTTPClient: server.Client(),
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		Token:      token,
 	}
-	if _, err := updater.DownloadVerifiedBinary(context.Background(), "v0.2.0"); err != nil {
+}
+
+func TestDownloadVerifiedBinaryPrivateViaAssetsAPI(t *testing.T) {
+	const token = "secret-token-123"
+	name := "ai-launcher_0.2.0_linux_amd64.tar.gz"
+	archive := tarGzArchive(t, "ai-launcher", testBinaryContents)
+	server, requests := privateReleaseServer(t, token, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": checksumsBody(name, archive),
+	})
+	binary, err := privateUpdater(server, token).DownloadVerifiedBinary(context.Background(), "v0.2.0")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sawAuth) == 0 {
+	if string(binary) != testBinaryContents {
+		t.Fatalf("binary = %q, want %q", binary, testBinaryContents)
+	}
+	var sawReleaseByTag, sawOctetAssets int
+	for _, req := range *requests {
+		if req.auth != "Bearer "+token {
+			t.Fatalf("request %s missing the Bearer token: %q", req.path, req.auth)
+		}
+		switch {
+		case req.path == "/releases/tags/v0.2.0":
+			sawReleaseByTag++
+		case strings.HasPrefix(req.path, "/assets/"):
+			if req.accept != "application/octet-stream" {
+				t.Fatalf("asset request accept = %q, want application/octet-stream", req.accept)
+			}
+			sawOctetAssets++
+		case strings.HasPrefix(req.path, "/v0.2.0/"):
+			t.Fatalf("pretty download URL %s must not be used with a token", req.path)
+		}
+	}
+	if sawReleaseByTag == 0 || sawOctetAssets != 2 {
+		t.Fatalf("requests = %+v, want release-by-tag plus two asset downloads", *requests)
+	}
+}
+
+func TestDownloadVerifiedBinaryPrivateMissingAsset(t *testing.T) {
+	const token = "secret-token-123"
+	server, _ := privateReleaseServer(t, token, "v0.2.0", map[string][]byte{
+		"checksums.txt": []byte("deadbeef  other.tar.gz\n"),
+	})
+	_, err := privateUpdater(server, token).DownloadVerifiedBinary(context.Background(), "v0.2.0")
+	if err == nil || !strings.Contains(err.Error(), "not found in release v0.2.0") {
+		t.Fatalf("err = %v, want a missing-asset error", err)
+	}
+}
+
+func TestDownloadVerifiedBinaryNoTokenKeepsPrettyURL(t *testing.T) {
+	const token = "secret-token-123"
+	server, requests := privateReleaseServer(t, token, "v0.2.0", nil)
+	// Without a token the updater must keep using the pretty download URL
+	// (and fail here, as this fake private repo 404s it without auth).
+	updater := &Updater{DownloadBaseURL: server.URL, HTTPClient: server.Client(), GOOS: "linux", GOARCH: "amd64"}
+	_, err := updater.DownloadVerifiedBinary(context.Background(), "v0.2.0")
+	if err == nil {
+		t.Fatal("expected the unauthenticated pretty-URL download to fail")
+	}
+	if len(*requests) == 0 || !strings.HasPrefix((*requests)[0].path, "/v0.2.0/ai-launcher_") {
+		t.Fatalf("requests = %+v, want the pretty download path", *requests)
+	}
+	for _, req := range *requests {
+		if strings.HasPrefix(req.path, "/releases/tags/") {
+			t.Fatalf("no-token flow must not use the assets API: %s", req.path)
+		}
+	}
+}
+
+func TestApplyPrivateEndToEnd(t *testing.T) {
+	const token = "secret-token-123"
+	name := "ai-launcher_0.2.0_linux_amd64.tar.gz"
+	archive := tarGzArchive(t, "ai-launcher", testBinaryContents)
+	server, _ := privateReleaseServer(t, token, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": checksumsBody(name, archive),
+	})
+	updater := privateUpdater(server, token)
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "ai-launcher")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil { // #nosec G306 -- the fixture must look like an installed executable
+		t.Fatal(err)
+	}
+	updater.ExecutablePath = exe
+	if err := updater.Apply(context.Background(), "v0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(exe); string(data) != testBinaryContents { // #nosec G304 -- exe is the fixture path created by the test itself
+		t.Fatalf("exe = %q, want the new binary", data)
+	}
+}
+
+func TestTokenSentAsBearerAndNeverLeaked(t *testing.T) {
+	const token = "secret-token-123"
+	name := "ai-launcher_0.2.0_linux_amd64.tar.gz"
+	archive := tarGzArchive(t, "ai-launcher", testBinaryContents)
+	server, requests := privateReleaseServer(t, token, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": checksumsBody(name, archive),
+	})
+	if _, err := privateUpdater(server, token).DownloadVerifiedBinary(context.Background(), "v0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*requests) == 0 {
 		t.Fatal("server saw no requests")
 	}
-	for _, header := range sawAuth {
-		if header != "Bearer "+token {
-			t.Fatalf("Authorization = %q, want Bearer token", header)
+	for _, req := range *requests {
+		if req.auth != "Bearer "+token {
+			t.Fatalf("Authorization = %q, want Bearer token", req.auth)
 		}
 	}
 
 	// A failing request must not leak the token into the error text.
-	bad := &Updater{DownloadBaseURL: authServer.URL, HTTPClient: authServer.Client(), GOOS: "linux", GOARCH: "amd64", Token: "wrong"}
+	bad := privateUpdater(server, "wrong")
 	_, err := bad.DownloadVerifiedBinary(context.Background(), "v0.2.0")
 	if err == nil {
 		t.Fatal("expected an error with a wrong token")
