@@ -6,30 +6,43 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 // Environment returns the inherited environment with the configured ai-memory
-// server URL applied to child processes. ai-memory reads this variable for its
-// runtime wrapper and generated integrations.
+// server URL and auth token applied to child processes. ai-memory reads these
+// variables for its runtime wrapper and generated integrations. The token is
+// a bearer secret: it is passed through the environment only and must never
+// be written to logs.
 func Environment(cfg LaunchConfig) []string {
 	env := append([]string(nil), os.Environ()...)
-	if cfg.UseMemory && strings.TrimSpace(cfg.MemoryServerURL) != "" {
-		const key = "AI_MEMORY_SERVER_URL="
-		configured := key + strings.TrimSpace(cfg.MemoryServerURL)
-		filtered := env[:0]
-		for _, entry := range env {
-			if strings.HasPrefix(entry, key) {
-				continue
-			}
-			filtered = append(filtered, entry)
-		}
-		env = append(filtered, configured)
+	if cfg.UseMemory {
+		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", strings.TrimSpace(cfg.MemoryServerURL))
+		env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
 	}
 	return env
+}
+
+// upsertEnv replaces or appends a KEY=value entry when value is non-empty,
+// returning env unchanged otherwise.
+func upsertEnv(env []string, key, value string) []string {
+	if value == "" {
+		return env
+	}
+	prefix := key + "="
+	filtered := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return append(filtered, prefix+value)
 }
 
 // LaunchConfig carries every input needed to build and validate the argv used
@@ -39,9 +52,16 @@ type LaunchConfig struct {
 	Executable      string
 	HomeDir         string
 	MemoryServerURL string
+	MemoryAuthToken string
 	UseJail         bool
 	UseMemory       bool
+	ContinueSession bool
+	JailExec        bool
 	NewWorkstream   string
+	Workstream      string
+	Workspace       string
+	Project         string
+	JailFlags       config.JailFlags
 	Permissions     map[string]bool
 	Mounts          []config.Mount
 	Yolo            bool
@@ -51,7 +71,12 @@ type LaunchConfig struct {
 
 // Build returns argv without executing anything. This is deliberately pure so
 // dry-run, table tests, and future frontends all share the same behavior.
+// The canonical composition is ai-jail outermost, then ai-memory run, then
+// the harness with its native arguments.
 func Build(cfg LaunchConfig) ([]string, error) {
+	if cfg.ContinueSession {
+		return buildContinue(cfg)
+	}
 	command := make([]string, 0, 12+len(cfg.Mounts)+len(cfg.ExtraArgs))
 	if strings.TrimSpace(cfg.Agent.Command) == "" {
 		return nil, errors.New("agent command is required")
@@ -61,8 +86,11 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	}
 	if cfg.UseMemory {
 		command = append(command, "ai-memory", "run")
+		command = appendMemoryScope(command, cfg)
 		if cfg.NewWorkstream != "" {
 			command = append(command, "--new", cfg.NewWorkstream)
+		} else if cfg.Workstream != "" {
+			command = append(command, "--workstream", cfg.Workstream)
 		}
 		command = append(command, cfg.Agent.Command)
 		if cfg.Executable != "" {
@@ -79,6 +107,31 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	command = appendYoloFlag(command, cfg)
 	command = append(command, cfg.ExtraArgs...)
 	return command, nil
+}
+
+// buildContinue composes "ai-memory run" without a harness, which auto-resumes
+// the most recent session of the checkout, jail-wrapped when the jail is on.
+func buildContinue(cfg LaunchConfig) ([]string, error) {
+	if !cfg.UseMemory {
+		return nil, errors.New("continuing a session requires ai-memory")
+	}
+	command := make([]string, 0, 8)
+	if cfg.UseJail {
+		command = appendJailArgs(command, cfg)
+	}
+	command = append(command, "ai-memory", "run")
+	return appendMemoryScope(command, cfg), nil
+}
+
+// appendMemoryScope appends the ai-memory run scoping wrapper flags.
+func appendMemoryScope(command []string, cfg LaunchConfig) []string {
+	if workspace := strings.TrimSpace(cfg.Workspace); workspace != "" {
+		command = append(command, "--workspace", workspace)
+	}
+	if project := strings.TrimSpace(cfg.Project); project != "" {
+		command = append(command, "--project", project)
+	}
+	return command
 }
 
 // appendDeclaredParams appends the catalog-declared harness flags whose names
@@ -132,10 +185,18 @@ func appendYoloFlag(command []string, cfg LaunchConfig) []string {
 	return append(command, flag)
 }
 
-// appendJailArgs prepends the ai-jail wrapper with the flags derived from the
+// appendJailArgs prepends the ai-jail wrapper with the programmatic-mode
+// flag, the declarative jail capability flags, and the flags derived from the
 // enabled permissions and configured mounts.
 func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	command = append(command, "ai-jail")
+	if cfg.JailExec {
+		// --exec is ai-jail's programmatic mode: direct exec without the PTY
+		// proxy or status bar. Interactive TUI launches leave the ai-jail
+		// defaults in charge of the terminal instead.
+		command = append(command, "--exec")
+	}
+	command = appendJailFlags(command, cfg.JailFlags)
 	if cfg.Permissions["ssh"] {
 		command = append(command, "--ssh")
 	}
@@ -166,6 +227,82 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	return command
 }
 
+// jailToggle declares one tri-state ai-jail capability flag. Default-on
+// toggles emit only the --no- form (when explicitly disabled); default-off
+// toggles emit both forms.
+type jailToggle struct {
+	name      string
+	value     *bool
+	defaultOn bool
+}
+
+// jailToggles lists the ai-jail v1.15 capability flags in their stable
+// emission order so the mapping stays declarative instead of a chain of ifs.
+func jailToggles(flags config.JailFlags) []jailToggle {
+	return []jailToggle{
+		{name: "lockdown", value: flags.Lockdown},
+		{name: "private-home", value: flags.PrivateHome},
+		{name: "tailscale", value: flags.Tailscale},
+		{name: "gpu", value: flags.GPU, defaultOn: true},
+		{name: "landlock", value: flags.Landlock, defaultOn: true},
+		{name: "seccomp", value: flags.Seccomp, defaultOn: true},
+		{name: "rlimits", value: flags.Rlimits, defaultOn: true},
+		{name: "status-bar", value: flags.StatusBar, defaultOn: true},
+	}
+}
+
+// appendJailFlags maps the declarative jail options to the exact ai-jail
+// v1.15 CLI flags in a deterministic order: toggles, list flags, browser
+// profile, and claude dir.
+func appendJailFlags(command []string, flags config.JailFlags) []string {
+	for _, toggle := range jailToggles(flags) {
+		command = appendJailToggle(command, toggle)
+	}
+	for _, path := range flags.OverlayMaps {
+		command = appendFlagValue(command, "--overlay-map", path)
+	}
+	for _, path := range flags.Mask {
+		command = appendFlagValue(command, "--mask", path)
+	}
+	for _, path := range flags.DenyPaths {
+		command = appendFlagValue(command, "--deny-path", path)
+	}
+	for _, port := range flags.AllowTCPPorts {
+		command = append(command, "--allow-tcp-port", strconv.Itoa(port))
+	}
+	switch strings.ToLower(strings.TrimSpace(flags.Browser)) {
+	case "hard", "soft":
+		command = append(command, "--browser="+strings.ToLower(strings.TrimSpace(flags.Browser)))
+	case "off":
+		command = append(command, "--no-browser")
+	}
+	return appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+}
+
+// appendJailToggle emits the positive or negative form of one capability
+// flag; an unset (nil) toggle keeps the ai-jail default and emits nothing.
+func appendJailToggle(command []string, toggle jailToggle) []string {
+	if toggle.value == nil {
+		return command
+	}
+	if *toggle.value {
+		if toggle.defaultOn {
+			return command
+		}
+		return append(command, "--"+toggle.name)
+	}
+	return append(command, "--no-"+toggle.name)
+}
+
+// appendFlagValue appends "--flag value" when value is non-blank.
+func appendFlagValue(command []string, flag, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return command
+	}
+	return append(command, flag, value)
+}
+
 func filepathOrEmpty(home, suffix string) string {
 	if home == "" {
 		return suffix
@@ -174,18 +311,51 @@ func filepathOrEmpty(home, suffix string) string {
 }
 
 // Issue is a single validation problem with a stable machine-readable Code.
+// Warning issues are advisory: the launch may proceed after reporting them.
 type Issue struct {
 	Code    string
 	Message string
+	Warning bool
 }
 
 func (i Issue) Error() string { return fmt.Sprintf("%s: %s", i.Code, i.Message) }
+
+// ConstrainToPlatform returns cfg with the integrations unsupported on goos
+// removed, plus an explanatory warning for everything that was dropped. Today
+// the only constrained platform is Windows, where ai-jail does not exist:
+// the jail and every permission that requires it are disabled.
+func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Permission) (LaunchConfig, []Issue) {
+	if goos != "windows" {
+		return cfg, nil
+	}
+	dropped := make([]string, 0, len(cfg.Permissions))
+	dependent := config.JailDependentIDs(permissions)
+	for id, enabled := range cfg.Permissions {
+		if enabled && dependent[id] {
+			cfg.Permissions[id] = false
+			dropped = append(dropped, id)
+		}
+	}
+	if !cfg.UseJail && len(dropped) == 0 {
+		return cfg, nil
+	}
+	cfg.UseJail = false
+	sort.Strings(dropped)
+	message := "ai-jail is not supported on Windows; continuing without sandbox"
+	if len(dropped) > 0 {
+		message += "; disabled jail-only permissions: " + strings.Join(dropped, ", ")
+	}
+	return cfg, []Issue{{Code: "jail-unsupported-windows", Message: message, Warning: true}}
+}
 
 // Validator checks a LaunchConfig against the host (PATH lookups and mount
 // existence) and reports every problem found instead of failing fast.
 type Validator struct {
 	LookPath func(string) (string, error)
 	Stat     func(string) (os.FileInfo, error)
+	// GOOS overrides the platform used by platform-specific checks; empty
+	// means the runtime platform.
+	GOOS string
 }
 
 // NewValidator returns a Validator backed by the real PATH and filesystem.
@@ -205,17 +375,31 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	if stat == nil {
 		stat = os.Stat
 	}
-	agentPath := cfg.Agent.Command
-	if cfg.Executable != "" {
-		agentPath = cfg.Executable
+	goos := v.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
 	}
-	if _, err := lookPath(agentPath); err != nil {
-		issues = append(issues, Issue{Code: "agent-not-found", Message: fmt.Sprintf("%q is not available in PATH", cfg.Agent.Command)})
+	onWindows := goos == "windows"
+	if !cfg.ContinueSession {
+		agentPath := cfg.Agent.Command
+		if cfg.Executable != "" {
+			agentPath = cfg.Executable
+		}
+		if _, err := lookPath(agentPath); err != nil {
+			issues = append(issues, Issue{Code: "agent-not-found", Message: fmt.Sprintf("%q is not available in PATH", cfg.Agent.Command)})
+		}
 	}
 	if cfg.UseJail {
-		if _, err := lookPath("ai-jail"); err != nil {
-			issues = append(issues, Issue{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"})
+		switch {
+		case onWindows:
+			issues = append(issues, Issue{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true})
+		default:
+			if _, err := lookPath("ai-jail"); err != nil {
+				issues = append(issues, Issue{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"})
+			}
 		}
+	} else if !cfg.JailFlags.IsZero() || cfg.JailExec {
+		issues = append(issues, Issue{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true})
 	}
 	if cfg.UseMemory {
 		if _, err := lookPath("ai-memory"); err != nil {
@@ -232,7 +416,12 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	if cfg.Permissions["ssh"] || cfg.Permissions["gh"] || cfg.Permissions["docker"] || cfg.Permissions["gpu"] {
 		if !cfg.UseJail {
-			issues = append(issues, Issue{Code: "permission-without-jail", Message: "ssh, gh, docker, and gpu permissions require ai-jail"})
+			issue := Issue{Code: "permission-without-jail", Message: "ssh, gh, docker, and gpu permissions require ai-jail"}
+			if onWindows {
+				issue.Message = "ssh, gh, docker, and gpu permissions require ai-jail, which is unavailable on Windows; they will be ignored"
+				issue.Warning = true
+			}
+			issues = append(issues, issue)
 		}
 	}
 	if cfg.Permissions["gpu"] && !cfg.Permissions["docker"] {

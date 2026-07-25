@@ -100,12 +100,47 @@ type Mount struct {
 	Mode string `yaml:"mode,omitempty"`
 }
 
+// JailFlags holds the ai-jail v1.15 capability toggles. Pointer booleans are
+// tri-state: nil keeps the ai-jail default (no flag emitted), while true and
+// false emit the positive or --no- form respectively. Default-on capabilities
+// (GPU, Landlock, Seccomp, Rlimits, StatusBar) only emit the --no- form when
+// explicitly disabled. Browser accepts "hard", "soft", or "off".
+type JailFlags struct {
+	Lockdown      *bool    `yaml:"lockdown,omitempty"`
+	PrivateHome   *bool    `yaml:"private_home,omitempty"`
+	Tailscale     *bool    `yaml:"tailscale,omitempty"`
+	GPU           *bool    `yaml:"gpu,omitempty"`
+	Landlock      *bool    `yaml:"landlock,omitempty"`
+	Seccomp       *bool    `yaml:"seccomp,omitempty"`
+	Rlimits       *bool    `yaml:"rlimits,omitempty"`
+	StatusBar     *bool    `yaml:"status_bar,omitempty"`
+	Browser       string   `yaml:"browser,omitempty"`
+	ClaudeDir     string   `yaml:"claude_dir,omitempty"`
+	OverlayMaps   []string `yaml:"overlay_maps,omitempty"`
+	Mask          []string `yaml:"mask,omitempty"`
+	DenyPaths     []string `yaml:"deny_paths,omitempty"`
+	AllowTCPPorts []int    `yaml:"allow_tcp_ports,omitempty"`
+}
+
+// IsZero reports whether no jail flag deviates from the ai-jail defaults.
+func (f JailFlags) IsZero() bool {
+	return f.Lockdown == nil && f.PrivateHome == nil && f.Tailscale == nil &&
+		f.GPU == nil && f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
+		f.StatusBar == nil && f.Browser == "" && f.ClaudeDir == "" &&
+		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
+		len(f.AllowTCPPorts) == 0
+}
+
 // Options holds the per-launch behavior toggles persisted in the local config.
 type Options struct {
 	Jail          bool              `yaml:"jail"`
 	Memory        bool              `yaml:"memory"`
 	Yolo          bool              `yaml:"yolo"`
 	NewWorkstream string            `yaml:"new_workstream,omitempty"`
+	Workstream    string            `yaml:"workstream,omitempty"`
+	Workspace     string            `yaml:"workspace,omitempty"`
+	Project       string            `yaml:"project,omitempty"`
+	JailFlags     JailFlags         `yaml:"jail_flags,omitempty"`
 	ExtraArgs     []string          `yaml:"extra_args,omitempty"`
 	ParamValues   map[string]string `yaml:"param_values,omitempty"`
 }
@@ -127,6 +162,10 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		Memory        bool              `yaml:"memory"`
 		Yolo          bool              `yaml:"yolo"`
 		NewWorkstream string            `yaml:"new_workstream,omitempty"`
+		Workstream    string            `yaml:"workstream,omitempty"`
+		Workspace     string            `yaml:"workspace,omitempty"`
+		Project       string            `yaml:"project,omitempty"`
+		JailFlags     JailFlags         `yaml:"jail_flags,omitempty"`
 		ExtraArgs     string            `yaml:"extra_args,omitempty"`
 		ParamValues   map[string]string `yaml:"param_values,omitempty"`
 	}
@@ -138,6 +177,10 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		Memory:        scalar.Memory,
 		Yolo:          scalar.Yolo,
 		NewWorkstream: scalar.NewWorkstream,
+		Workstream:    scalar.Workstream,
+		Workspace:     scalar.Workspace,
+		Project:       scalar.Project,
+		JailFlags:     scalar.JailFlags,
 		ExtraArgs:     strings.Fields(scalar.ExtraArgs),
 		ParamValues:   scalar.ParamValues,
 	}
@@ -148,6 +191,7 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 type Global struct {
 	Version         string             `yaml:"version"`
 	MemoryServerURL string             `yaml:"memory_server_url,omitempty"`
+	MemoryAuthToken string             `yaml:"memory_auth_token,omitempty"`
 	Agents          []Agent            `yaml:"agents"`
 	Tools           []Tool             `yaml:"tools,omitempty"`
 	Permissions     []Permission       `yaml:"permissions"`
@@ -255,7 +299,7 @@ func DefaultGlobal() Global {
 		Agents: []Agent{
 			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: defaultMemoryIntegration("claude-code", "claude-code")},
 			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: defaultMemoryIntegration("codex", "codex")},
-			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: defaultMemoryIntegration("open-code", "open-code")},
+			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: defaultMemoryIntegration("opencode", "opencode")},
 			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", "kimi-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: defaultMemoryIntegration("kimi-code", "kimi-code")},
 			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
@@ -269,36 +313,56 @@ func DefaultGlobal() Global {
 			}},
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: true, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
 			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", "antigravity-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration("antigravity-cli", "antigravity-cli")},
-			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
-			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush", YoloFlag: "--yolo"},
+			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: defaultMemoryIntegration("pi", "pi")},
+			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: defaultMemoryIntegration("omp", "omp")},
 			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: true, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: defaultMemoryIntegration("cursor", "cursor")},
+			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: false, Description: "Grok CLI", Memory: defaultMemoryIntegration("grok", "grok")},
+			{Name: "Zero", Command: "zero", SupportsMemory: true, SupportsYolo: false, Description: "Zero agent CLI", Memory: defaultMemoryIntegration("zero", "zero")},
+			{Name: "Devin", Command: "devin", SupportsMemory: true, SupportsYolo: false, Description: "Devin CLI", Memory: defaultMemoryIntegration("devin", "devin")},
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector"},
 			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
 			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
 			{Name: "Aider", Command: "aider", SupportsMemory: true, SupportsYolo: true, Description: "Aider CLI"},
 			{Name: "Goose", Command: "goose", SupportsMemory: true, SupportsYolo: false, Description: "Block Goose CLI"},
 			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: true, SupportsYolo: false, Description: "Kiro CLI"},
-			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: true, SupportsYolo: true, Description: "OpenClaw CLI", Memory: defaultMemoryIntegration("openclaw", "openclaw")},
+			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: true, SupportsYolo: true, Description: "OpenClaw CLI", Memory: mcpOnlyMemoryIntegration("openclaw")},
 			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: true, SupportsYolo: false, Description: "Hermes Agent CLI"},
 			{Name: "Cline", Command: "cline", SupportsMemory: true, SupportsYolo: false, Description: "Cline CLI"},
 		},
 		Tools: []Tool{
 			{
-				Name: "ai-jail", Command: "ai-jail", Description: "Sandbox wrapper used by ai-launcher",
+				Name: "ai-jail", Command: "ai-jail", Description: "Sandbox wrapper used by ai-launcher (Linux and macOS only)",
 				Release: &GitHubRelease{
 					Repository: "akitaonrails/ai-jail",
+					// ai-jail v1.15 publishes only these two assets; there are
+					// no linux-arm64, darwin-amd64, or Windows builds.
 					Assets: map[string]string{
 						"linux-amd64":  "ai-jail-linux-x86_64.tar.gz",
-						"linux-arm64":  "ai-jail-linux-aarch64.tar.gz",
-						"darwin-amd64": "ai-jail-macos-x86_64.tar.gz",
 						"darwin-arm64": "ai-jail-macos-aarch64.tar.gz",
 					},
 					Binary:        "ai-jail",
 					ChecksumAsset: "checksums.txt",
 				},
 			},
-			{Name: "ai-memory", Command: "ai-memory", SourceURL: "https://raw.githubusercontent.com/akitaonrails/ai-memory/main/bin/ai-memory", Description: "Memory wrapper; native runner self-updates on first use"},
+			{
+				Name: "ai-memory", Command: "ai-memory", SourceURL: "https://raw.githubusercontent.com/akitaonrails/ai-memory/main/bin/ai-memory",
+				Description: "Memory wrapper; the source_url wrapper stays the primary install path and the native runner self-updates on first use",
+				Release: &GitHubRelease{
+					Repository: "akitaonrails/ai-memory",
+					// Native per-platform runners (used on Windows, where the
+					// shell wrapper does not apply). Each asset has a .sha256
+					// sidecar in the release.
+					Assets: map[string]string{
+						"linux-amd64":   "ai-memory-linux-x86_64.tar.gz",
+						"linux-arm64":   "ai-memory-linux-aarch64.tar.gz",
+						"darwin-amd64":  "ai-memory-macos-x86_64.tar.gz",
+						"darwin-arm64":  "ai-memory-macos-aarch64.tar.gz",
+						"windows-amd64": "ai-memory-windows-x86_64.zip",
+					},
+					Binary: "ai-memory",
+				},
+			},
 		},
 		Permissions: []Permission{
 			{ID: "jail", Name: "Jail / Sandbox", Default: true, Locked: true},
@@ -324,8 +388,31 @@ func modelParam(example string) Param {
 	return Param{Name: "model", Flag: "--model", Description: "Model to run (" + example + ")", TakesValue: true}
 }
 
-func hooksOnlyMemoryIntegration(agent string) *MemoryIntegration {
-	return &MemoryIntegration{Agent: agent, InstallHooks: true}
+func mcpOnlyMemoryIntegration(client string) *MemoryIntegration {
+	return &MemoryIntegration{Client: client, InstallMCP: true}
+}
+
+// JailDependentIDs returns the IDs of permissions that require "jail"
+// directly or transitively (including "jail" itself). Platforms without
+// ai-jail support use it to filter the offered permissions.
+func JailDependentIDs(permissions []Permission) map[string]bool {
+	dependent := map[string]bool{"jail": true}
+	changed := true
+	for changed {
+		changed = false
+		for _, permission := range permissions {
+			if dependent[permission.ID] {
+				continue
+			}
+			for _, required := range permission.Requires {
+				if dependent[required] {
+					dependent[permission.ID] = true
+					changed = true
+				}
+			}
+		}
+	}
+	return dependent
 }
 
 // LoadGlobal reads the global config, falling back to DefaultGlobal for a

@@ -39,7 +39,7 @@ func TestDefaultConfigurationsExposeLauncherContract(t *testing.T) {
 
 func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 	global := DefaultGlobal()
-	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}
+	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "grok", "zero", "devin", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}
 	available := make(map[string]bool, len(global.Agents))
 	for _, agent := range global.Agents {
 		available[agent.Command] = true
@@ -56,8 +56,11 @@ func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 		if agent.Command == "mimo" && !reflect.DeepEqual(agent.Aliases, []string{"mimocode", "mimo-code"}) {
 			t.Fatalf("mimo aliases = %#v", agent.Aliases)
 		}
-		if agent.Command == "pi" && (agent.Memory == nil || agent.Memory.InstallMCP || !agent.Memory.InstallHooks) {
-			t.Fatalf("Pi memory integration = %#v; want hooks-only", agent.Memory)
+		if agent.Command == "pi" && (agent.Memory == nil || !agent.Memory.InstallMCP || !agent.Memory.InstallHooks) {
+			t.Fatalf("Pi memory integration = %#v; want full hooks+MCP", agent.Memory)
+		}
+		if agent.Command == "openclaw" && (agent.Memory == nil || !agent.Memory.InstallMCP || agent.Memory.InstallHooks) {
+			t.Fatalf("OpenClaw memory integration = %#v; want MCP-only", agent.Memory)
 		}
 		if agent.Command == "kimi" && (agent.Memory == nil || agent.Memory.Client != "kimi-code" || agent.Memory.Agent != "kimi-code") {
 			t.Fatalf("Kimi memory integration = %#v", agent.Memory)
