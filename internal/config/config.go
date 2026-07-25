@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/goccy/go-yaml"
@@ -28,8 +29,21 @@ type Agent struct {
 	SupportsMemory bool               `yaml:"supports_memory"`
 	SupportsYolo   bool               `yaml:"supports_yolo"`
 	Description    string             `yaml:"description,omitempty"`
+	YoloFlag       string             `yaml:"yolo_flag,omitempty"`
+	Params         []Param            `yaml:"params,omitempty"`
 	Release        *GitHubRelease     `yaml:"release,omitempty"`
 	Memory         *MemoryIntegration `yaml:"memory,omitempty"`
+}
+
+// Param declares a harness-specific CLI flag in the catalog so new agents or
+// flags do not require a launcher rebuild. Name is the stable key used in
+// param_values maps; Flag is the literal argument passed to the harness.
+// TakesValue reports whether the flag consumes a separate value argument.
+type Param struct {
+	Name        string `yaml:"name"`
+	Flag        string `yaml:"flag"`
+	Description string `yaml:"description,omitempty"`
+	TakesValue  bool   `yaml:"takes_value"`
 }
 
 // GitHubRelease describes how an executable is obtained from the latest
@@ -88,11 +102,12 @@ type Mount struct {
 
 // Options holds the per-launch behavior toggles persisted in the local config.
 type Options struct {
-	Jail          bool     `yaml:"jail"`
-	Memory        bool     `yaml:"memory"`
-	Yolo          bool     `yaml:"yolo"`
-	NewWorkstream string   `yaml:"new_workstream,omitempty"`
-	ExtraArgs     []string `yaml:"extra_args,omitempty"`
+	Jail          bool              `yaml:"jail"`
+	Memory        bool              `yaml:"memory"`
+	Yolo          bool              `yaml:"yolo"`
+	NewWorkstream string            `yaml:"new_workstream,omitempty"`
+	ExtraArgs     []string          `yaml:"extra_args,omitempty"`
+	ParamValues   map[string]string `yaml:"param_values,omitempty"`
 }
 
 // UnmarshalYAML accepts both the current lossless list form and the scalar
@@ -108,11 +123,12 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 	}
 
 	var scalar struct {
-		Jail          bool   `yaml:"jail"`
-		Memory        bool   `yaml:"memory"`
-		Yolo          bool   `yaml:"yolo"`
-		NewWorkstream string `yaml:"new_workstream,omitempty"`
-		ExtraArgs     string `yaml:"extra_args,omitempty"`
+		Jail          bool              `yaml:"jail"`
+		Memory        bool              `yaml:"memory"`
+		Yolo          bool              `yaml:"yolo"`
+		NewWorkstream string            `yaml:"new_workstream,omitempty"`
+		ExtraArgs     string            `yaml:"extra_args,omitempty"`
+		ParamValues   map[string]string `yaml:"param_values,omitempty"`
 	}
 	if err := yaml.Unmarshal(data, &scalar); err != nil {
 		return listErr
@@ -123,18 +139,102 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		Yolo:          scalar.Yolo,
 		NewWorkstream: scalar.NewWorkstream,
 		ExtraArgs:     strings.Fields(scalar.ExtraArgs),
+		ParamValues:   scalar.ParamValues,
 	}
 	return nil
 }
 
 // Global is the machine-wide catalog of agents, tools, and permissions.
 type Global struct {
-	Version         string       `yaml:"version"`
-	MemoryServerURL string       `yaml:"memory_server_url,omitempty"`
-	Agents          []Agent      `yaml:"agents"`
-	Tools           []Tool       `yaml:"tools,omitempty"`
-	Permissions     []Permission `yaml:"permissions"`
-	DefaultMounts   []string     `yaml:"default_mounts,omitempty"`
+	Version         string             `yaml:"version"`
+	MemoryServerURL string             `yaml:"memory_server_url,omitempty"`
+	Agents          []Agent            `yaml:"agents"`
+	Tools           []Tool             `yaml:"tools,omitempty"`
+	Permissions     []Permission       `yaml:"permissions"`
+	DefaultMounts   []string           `yaml:"default_mounts,omitempty"`
+	Profiles        map[string]Profile `yaml:"profiles,omitempty"`
+}
+
+// Profile is a named, reusable selection snapshot stored in the global
+// config. It mirrors the workspace-local selection shape (agent, permissions,
+// mounts, options). A nil Options pointer means the profile does not override
+// the option toggles, so the loader's safe defaults remain in effect.
+type Profile struct {
+	Agent       string          `yaml:"agent"`
+	Permissions map[string]bool `yaml:"permissions,omitempty"`
+	Mounts      []Mount         `yaml:"mounts,omitempty"`
+	Options     *Options        `yaml:"options,omitempty"`
+}
+
+// SetProfile validates and stores a named profile in the global config,
+// creating the profiles map on first use.
+func SetProfile(global *Global, name string, profile Profile) error {
+	if global == nil {
+		return errors.New("global config is nil")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("profile name is required")
+	}
+	profile.Agent = strings.TrimSpace(profile.Agent)
+	if profile.Agent == "" {
+		return errors.New("profile agent is required")
+	}
+	if global.Profiles == nil {
+		global.Profiles = make(map[string]Profile)
+	}
+	global.Profiles[name] = profile
+	return nil
+}
+
+// DeleteProfile removes a named profile, reporting whether it existed.
+func DeleteProfile(global *Global, name string) bool {
+	if global == nil {
+		return false
+	}
+	if _, ok := global.Profiles[name]; !ok {
+		return false
+	}
+	delete(global.Profiles, name)
+	return true
+}
+
+// ProfileNames returns the saved profile names in sorted order.
+func ProfileNames(global Global) []string {
+	names := make([]string, 0, len(global.Profiles))
+	for name := range global.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ProfileSummary returns a compact, human-readable description of a profile
+// for --list-profiles and the TUI profiles section.
+func ProfileSummary(profile Profile) string {
+	var parts []string
+	if profile.Options != nil {
+		var toggles []string
+		if profile.Options.Jail {
+			toggles = append(toggles, "jail")
+		}
+		if profile.Options.Memory {
+			toggles = append(toggles, "memory")
+		}
+		if profile.Options.Yolo {
+			toggles = append(toggles, "yolo")
+		}
+		if len(toggles) > 0 {
+			parts = append(parts, strings.Join(toggles, ","))
+		}
+		if len(profile.Options.ParamValues) > 0 {
+			parts = append(parts, fmt.Sprintf("params=%d", len(profile.Options.ParamValues)))
+		}
+	}
+	if len(profile.Mounts) > 0 {
+		parts = append(parts, fmt.Sprintf("mounts=%d", len(profile.Mounts)))
+	}
+	return strings.Join(parts, " ")
 }
 
 // Local is the per-workspace launcher configuration.
@@ -153,10 +253,10 @@ func DefaultGlobal() Global {
 		Version:         CurrentVersion,
 		MemoryServerURL: DefaultMemoryServerURL,
 		Agents: []Agent{
-			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", Memory: defaultMemoryIntegration("claude-code", "claude-code")},
-			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", Memory: defaultMemoryIntegration("codex", "codex")},
-			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", Memory: defaultMemoryIntegration("open-code", "open-code")},
-			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", "kimi-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", Memory: defaultMemoryIntegration("kimi-code", "kimi-code")},
+			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: defaultMemoryIntegration("claude-code", "claude-code")},
+			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: defaultMemoryIntegration("codex", "codex")},
+			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: defaultMemoryIntegration("open-code", "open-code")},
+			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", "kimi-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: defaultMemoryIntegration("kimi-code", "kimi-code")},
 			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
 				Assets: map[string]string{
@@ -169,12 +269,12 @@ func DefaultGlobal() Global {
 			}},
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: true, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
 			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", "antigravity-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration("antigravity-cli", "antigravity-cli")},
-			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", Memory: hooksOnlyMemoryIntegration("pi")},
-			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush"},
+			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
+			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush", YoloFlag: "--yolo"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: defaultMemoryIntegration("omp", "omp")},
 			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: true, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: defaultMemoryIntegration("cursor", "cursor")},
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector"},
-			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Google Gemini CLI", Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
+			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
 			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
 			{Name: "Aider", Command: "aider", SupportsMemory: true, SupportsYolo: true, Description: "Aider CLI"},
 			{Name: "Goose", Command: "goose", SupportsMemory: true, SupportsYolo: false, Description: "Block Goose CLI"},
@@ -218,6 +318,10 @@ func DefaultLocal() Local {
 
 func defaultMemoryIntegration(client, agent string) *MemoryIntegration {
 	return &MemoryIntegration{Client: client, Agent: agent, InstallMCP: true, InstallHooks: true}
+}
+
+func modelParam(example string) Param {
+	return Param{Name: "model", Flag: "--model", Description: "Model to run (" + example + ")", TakesValue: true}
 }
 
 func hooksOnlyMemoryIntegration(agent string) *MemoryIntegration {
