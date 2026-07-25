@@ -86,6 +86,29 @@ func TestFilepathOrEmptySupportsMissingHome(t *testing.T) {
 	}
 }
 
+func TestValidatorWarnsOnUndeclaredParamsInSortedOrder(t *testing.T) {
+	v := Validator{
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+	}
+	agent := config.Agent{Command: "kimi", Params: []config.Param{{Name: "model", Flag: "--model", TakesValue: true}}}
+	issues := v.Validate(LaunchConfig{
+		Agent:       agent,
+		ParamValues: map[string]string{"zeta": "1", "model": "k2", "alpha": "2"},
+	})
+	if len(issues) != 2 {
+		t.Fatalf("issues = %#v; want two param-not-declared warnings", issues)
+	}
+	for _, issue := range issues {
+		if issue.Code != "param-not-declared" {
+			t.Fatalf("issue code = %q; want param-not-declared", issue.Code)
+		}
+	}
+	if !strings.Contains(issues[0].Message, `"alpha"`) || !strings.Contains(issues[1].Message, `"zeta"`) {
+		t.Fatalf("undeclared params not sorted: %#v", issues)
+	}
+}
+
 func TestPTYExecutorRunsCommand(t *testing.T) {
 	var output bytes.Buffer
 	err := (PTYExecutor{}).Run(context.Background(), []string{"sh", "-c", "printf hi"}, strings.NewReader(""), &output, nil)

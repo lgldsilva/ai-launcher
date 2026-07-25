@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -45,6 +46,7 @@ type LaunchConfig struct {
 	Mounts          []config.Mount
 	Yolo            bool
 	ExtraArgs       []string
+	ParamValues     map[string]string
 }
 
 // Build returns argv without executing anything. This is deliberately pure so
@@ -73,11 +75,61 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		}
 		command = append(command, executable)
 	}
-	if cfg.Yolo {
-		command = append(command, "--yolo")
-	}
+	command = appendDeclaredParams(command, cfg)
+	command = appendYoloFlag(command, cfg)
 	command = append(command, cfg.ExtraArgs...)
 	return command, nil
+}
+
+// appendDeclaredParams appends the catalog-declared harness flags whose names
+// have a value in cfg.ParamValues, in declaration order. Undeclared names are
+// ignored here and reported by the validator instead.
+func appendDeclaredParams(command []string, cfg LaunchConfig) []string {
+	for _, param := range cfg.Agent.Params {
+		value, ok := cfg.ParamValues[param.Name]
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if !param.TakesValue {
+			if flagEnabled(value) {
+				command = append(command, param.Flag)
+			}
+			continue
+		}
+		command = append(command, param.Flag, value)
+	}
+	return command
+}
+
+// flagEnabled reports whether a param value enables a boolean-style flag
+// (any non-empty value except the usual negative spellings).
+func flagEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "false", "0", "no", "off":
+		return false
+	}
+	return true
+}
+
+// appendYoloFlag appends the resolved dangerous-mode flag. When ai-memory
+// wraps the harness, --yolo is passed to the ai-memory run invocation, which
+// does its own per-harness translation; otherwise the agent's declared
+// yolo_flag is used, falling back to --yolo. A flag already present in
+// extra_args is never duplicated.
+func appendYoloFlag(command []string, cfg LaunchConfig) []string {
+	if !cfg.Yolo {
+		return command
+	}
+	flag := cfg.Agent.YoloFlag
+	if cfg.UseMemory || strings.TrimSpace(flag) == "" {
+		flag = "--yolo"
+	}
+	for _, arg := range cfg.ExtraArgs {
+		if arg == flag {
+			return command
+		}
+	}
+	return append(command, flag)
 }
 
 // appendJailArgs prepends the ai-jail wrapper with the flags derived from the
@@ -185,6 +237,28 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	if cfg.Permissions["gpu"] && !cfg.Permissions["docker"] {
 		issues = append(issues, Issue{Code: "gpu-without-docker", Message: "gpu permission requires docker"})
+	}
+	issues = append(issues, undeclaredParamIssues(cfg)...)
+	return issues
+}
+
+// undeclaredParamIssues reports param_values whose names are not declared in
+// the resolved agent's params block, in sorted order for stable output.
+func undeclaredParamIssues(cfg LaunchConfig) []Issue {
+	declared := make(map[string]bool, len(cfg.Agent.Params))
+	for _, param := range cfg.Agent.Params {
+		declared[param.Name] = true
+	}
+	undeclared := make([]string, 0, len(cfg.ParamValues))
+	for name := range cfg.ParamValues {
+		if !declared[name] {
+			undeclared = append(undeclared, name)
+		}
+	}
+	sort.Strings(undeclared)
+	issues := make([]Issue, 0, len(undeclared))
+	for _, name := range undeclared {
+		issues = append(issues, Issue{Code: "param-not-declared", Message: fmt.Sprintf("param %q is not declared by agent %q and will be ignored", name, cfg.Agent.Command)})
 	}
 	return issues
 }
