@@ -39,16 +39,20 @@ func main() {
 // readable and the flag-to-config mapping can be applied as a unit.
 type cliOptions struct {
 	mounts, rwMounts               stringList
+	params                         stringList
 	agent, extraArgs               string
 	globalPath, localPath          string
 	addName, addPath               string
 	addCommand, addDescription     string
 	newWorkstream, workstream      string
+	profile, saveProfile           string
+	deleteProfile                  string
 	ssh, gh, docker, gpu           bool
 	noJail, sandbox                bool
 	memory, noMemory               bool
 	yolo, noYolo                   bool
 	dryRun, save, install, upgrade bool
+	listProfiles                   bool
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
@@ -61,8 +65,8 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
 	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
-	flags.BoolVar(&o.yolo, "yolo", false, "pass --yolo to the agent")
-	flags.BoolVar(&o.noYolo, "no-yolo", false, "do not pass --yolo to the agent")
+	flags.BoolVar(&o.yolo, "yolo", false, "pass the dangerous-mode flag to the agent")
+	flags.BoolVar(&o.noYolo, "no-yolo", false, "do not pass the dangerous-mode flag to the agent")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "print the generated command")
 	flags.BoolVar(&o.save, "save", false, "save local configuration and exit")
 	flags.BoolVar(&o.save, "save-only", false, "alias for --save")
@@ -73,6 +77,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.Var(&o.mounts, "mount", "read-only mount, optionally with :ro or :rw")
 	flags.Var(&o.mounts, "map", "alias for --mount")
 	flags.Var(&o.rwMounts, "rw-map", "read-write mount")
+	flags.Var(&o.params, "param", "set a harness parameter declared in the agent catalog (name=value, repeatable)")
 	flags.StringVar(&o.extraArgs, "extra-args", "", "additional agent arguments")
 	flags.StringVar(&o.extraArgs, "args", "", "alias for --extra-args")
 	flags.StringVar(&o.globalPath, "config", "", "global config path")
@@ -81,6 +86,10 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.addPath, "path", "", "executable path used with --add")
 	flags.StringVar(&o.addCommand, "command", "", "command name used with --add; defaults to the executable basename")
 	flags.StringVar(&o.addDescription, "description", "", "description used with --add")
+	flags.StringVar(&o.profile, "profile", "", "load the named profile from the global config as the base selection (precedence: built-in defaults < local .ai-launch.yaml < profile < explicit flags)")
+	flags.StringVar(&o.saveProfile, "save-profile", "", "save the fully merged selection as the named profile in the global config and exit without launching")
+	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
+	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
 }
 
 // applyToLocal folds every explicitly-set flag into the local configuration
@@ -127,7 +136,29 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local) ([]c
 		}
 		local.Options.ExtraArgs = parsed
 	}
+	if flagsWasSet(flags, "param") {
+		if err := o.applyParamFlags(local); err != nil {
+			return nil, err
+		}
+	}
 	return mountConfig, nil
+}
+
+// applyParamFlags folds repeatable --param name=value flags into the option
+// param_values map, creating it on first use.
+func (o *cliOptions) applyParamFlags(local *config.Local) error {
+	for _, entry := range o.params {
+		name, value, found := strings.Cut(entry, "=")
+		name = strings.TrimSpace(name)
+		if !found || name == "" {
+			return fmt.Errorf("invalid --param %q (expected name=value)", entry)
+		}
+		if local.Options.ParamValues == nil {
+			local.Options.ParamValues = make(map[string]string)
+		}
+		local.Options.ParamValues[name] = value
+	}
+	return nil
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
@@ -159,6 +190,13 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if opts.install || opts.upgrade {
 		return installConfigured(global, opts.agent, home, opts.upgrade, out, errOut)
 	}
+	if opts.listProfiles {
+		listProfiles(global, out)
+		return nil
+	}
+	if opts.deleteProfile != "" {
+		return deleteProfile(opts.globalPath, global, opts.deleteProfile, out)
+	}
 	local, localErr := config.LoadLocal(opts.localPath)
 	if localErr != nil {
 		return localErr
@@ -166,6 +204,13 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if runtime.GOOS == "windows" && local.Options.Jail {
 		_, _ = fmt.Fprintln(errOut, "warning: ai-jail is not supported on Windows; continuing without sandbox")
 		local.Options.Jail = false
+	}
+	if opts.profile != "" {
+		profile, ok := global.Profiles[opts.profile]
+		if !ok {
+			return fmt.Errorf("profile %q not found in %s", opts.profile, opts.globalPath)
+		}
+		applyProfile(&local, profile)
 	}
 	catalogue := catalog.New(global)
 	if flags.NArg() > 0 && flags.Arg(0) == "help" {
@@ -211,8 +256,89 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		Mounts:          mountConfig,
 		Yolo:            local.Options.Yolo,
 		ExtraArgs:       local.Options.ExtraArgs,
+		ParamValues:     local.Options.ParamValues,
+	}
+	if opts.saveProfile != "" {
+		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
 	}
 	return launch(args, opts, global, local, launchConfig, in, out, errOut)
+}
+
+// applyProfile layers a named profile over the local configuration. Only the
+// fields the profile defines are replaced, so omitted blocks keep the local
+// (or built-in default) values and explicit CLI flags still win afterwards.
+func applyProfile(local *config.Local, profile config.Profile) {
+	if strings.TrimSpace(profile.Agent) != "" {
+		local.Agent = profile.Agent
+	}
+	if profile.Permissions != nil {
+		local.Permissions = profile.Permissions
+	}
+	if profile.Mounts != nil {
+		local.Mounts = profile.Mounts
+	}
+	if profile.Options != nil {
+		local.Options = *profile.Options
+	}
+}
+
+// listProfiles prints the saved profiles with agent and a compact summary.
+func listProfiles(global config.Global, out io.Writer) {
+	names := config.ProfileNames(global)
+	if len(names) == 0 {
+		_, _ = fmt.Fprintln(out, "no profiles saved")
+		return
+	}
+	for _, name := range names {
+		profile := global.Profiles[name]
+		summary := config.ProfileSummary(profile)
+		if summary != "" {
+			summary = "\n  " + summary
+		}
+		_, _ = fmt.Fprintf(out, "%s\n  agent: %s%s\n", name, profile.Agent, summary)
+	}
+}
+
+// deleteProfile removes a named profile and persists the global config.
+func deleteProfile(globalPath string, global config.Global, name string, out io.Writer) error {
+	if !config.DeleteProfile(&global, name) {
+		return fmt.Errorf("profile %q not found in %s", name, globalPath)
+	}
+	if err := config.SaveGlobal(globalPath, global); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(out, "profile %q deleted from %s\n", name, globalPath)
+	return err
+}
+
+// saveProfileCommand persists the fully merged selection as a named profile
+// in the global config without launching anything.
+func saveProfileCommand(globalPath string, global config.Global, name string, launch launcher.LaunchConfig, out io.Writer) error {
+	if err := config.SetProfile(&global, name, profileFromLaunch(launch)); err != nil {
+		return err
+	}
+	if err := config.SaveGlobal(globalPath, global); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(out, "profile %q saved to %s\n", name, globalPath)
+	return err
+}
+
+// profileFromLaunch converts a fully merged launch selection into a profile.
+func profileFromLaunch(launch launcher.LaunchConfig) config.Profile {
+	return config.Profile{
+		Agent:       launch.Agent.Command,
+		Permissions: launch.Permissions,
+		Mounts:      launch.Mounts,
+		Options: &config.Options{
+			Jail:          launch.UseJail,
+			Memory:        launch.UseMemory,
+			Yolo:          launch.Yolo,
+			NewWorkstream: launch.NewWorkstream,
+			ExtraArgs:     launch.ExtraArgs,
+			ParamValues:   launch.ParamValues,
+		},
+	}
 }
 
 // launch confirms the configuration (TUI when interactive), optionally saves
@@ -723,6 +849,7 @@ func saveIfRequested(save bool, path string, local config.Local, launch launcher
 	local.Options.Yolo = launch.Yolo
 	local.Options.NewWorkstream = launch.NewWorkstream
 	local.Options.ExtraArgs = launch.ExtraArgs
+	local.Options.ParamValues = launch.ParamValues
 	return config.SaveLocal(path, local)
 }
 
