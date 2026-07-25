@@ -1,0 +1,190 @@
+name: CI (homelab)
+
+# This pipeline runs on the homelab Gitea mirror of ai-launcher
+# (gitea.raspberrypi.lan) on a self-hosted act_runner. GitHub remains the
+# source of truth (.github/workflows/ci.yml); this file exists mainly for the
+# SonarQube quality gate: the act_runner can reach https://sonar.raspberrypi.lan
+# and GitHub-hosted runners cannot. The other jobs mirror the GitHub gates so
+# the mirror stays a trustworthy signal.
+#
+# Portable across Gitea Actions and GitHub Actions: lint and the security
+# scanners run as plain `go run` steps, so no GitHub-specific marketplace
+# action is required beyond checkout/setup-go (which Gitea Actions provides).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual trigger: lets the main-only Sonar gate be re-run on demand.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel stale runs of the same PR; never cancel main or dispatch runs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  COVERAGE_MIN: "90"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false # act_runner artifactcache is unreliable on the homelab runner; re-download is reliable
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -race -shuffle=on ./...
+      # Same logic as `make test-coverage`: cover only config/catalog/launcher,
+      # drop the PTY executor and platform-specific replace_*.go files, and
+      # fail when the filtered total is below 90%.
+      - name: Coverage gate (90% on logic packages)
+        run: |
+          go test -covermode=atomic \
+            -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher \
+            -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher
+          logic_profile=$(mktemp)
+          trap 'rm -f "$logic_profile"' EXIT
+          awk 'NR == 1 || $1 !~ /internal\/launcher\/(executor|replace_.*)\.go:/' coverage.out > "$logic_profile"
+          go tool cover -func="$logic_profile"
+          coverage=$(go tool cover -func="$logic_profile" | awk '/^total:/{gsub("%", "", $3); print $3}')
+          awk -v coverage="$coverage" -v minimum="$COVERAGE_MIN" 'BEGIN { if (coverage + 0 < minimum + 0) { printf "FAIL: logic coverage %.1f%% is below %.1f%%\n", coverage, minimum; exit 1 } printf "PASS: logic coverage %.1f%% meets %.1f%% gate\n", coverage, minimum }'
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false # act_runner artifactcache is unreliable on the homelab runner; re-download is reliable
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            printf 'gofmt needed:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      # Pinned version: a floating @latest could require a newer Go toolchain
+      # than go.mod, which the runner's GOTOOLCHAIN=local blocks.
+      - run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --timeout 5m ./...
+
+  # Secret-scan gate over full history. Portable (plain `go run`).
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go run github.com/zricethezav/gitleaks/v8@latest detect --source . --no-banner --redact --exit-code 1
+
+  # Supply-chain gate: fail on known CVEs in dependencies or the Go stdlib that
+  # actually reach our code paths. Portable (plain `go run`), no infra needed.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  # SAST gate: static security analysis. Pinned (a floating @latest could
+  # require a newer Go toolchain than go.mod, which the runner's
+  # GOTOOLCHAIN=local blocks). Documented exceptions carry inline
+  # `#nosec RULE -- reason` justifications.
+  gosec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go run github.com/securego/gosec/v2/cmd/gosec@v2.27.1 -quiet ./...
+
+  # Filesystem vulnerability scan. ai-launcher ships binaries, not images, so
+  # there is no docker build/socket here — an fs scan over the repo is the
+  # right scope. Uses the same pinned trivy-action SHA as the GitHub pipeline
+  # (tags < 0.35.0 were force-pushed to malware in March 2026, CVE-2026-33634;
+  # always pin the commit SHA, never a mutable tag).
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # SonarQube quality gate — MAIN ONLY. The homelab Sonar is Community edition,
+  # which analyses a single branch (no PR/branch analysis), so this runs only
+  # on push to main / manual dispatch: a post-merge gate that tracks main's
+  # health. What predicts mergeability on a PR is the rest of this file.
+  # Skips without SONAR_TOKEN so secret-less runs (forks) stay green.
+  sonar:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # Repo-level variable (Gitea → repo → Settings → Actions → Variables):
+      # the Sonar endpoint the act_runner can reach, e.g.
+      # https://sonar.raspberrypi.lan. The vendored script defaults to that
+      # host when the var is unset.
+      SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        if: ${{ env.SONAR_TOKEN != '' }}
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Coverage
+        if: ${{ env.SONAR_TOKEN != '' }}
+        run: go test -coverprofile=coverage.out ./...
+      - name: SonarQube analysis + gate (main)
+        if: ${{ env.SONAR_TOKEN != '' }}
+        env:
+          USE_PROJECT_PROPERTIES: "1" # sources/tests/exclusions from sonar-project.properties
+          PROJECT_KEY: ai-launcher
+          EPHEMERAL: "0" # permanent project on main (CE has no branch analysis)
+          COVERAGE_FILE: coverage.out
+          # OPTIONAL (homelab TLS): uncomment if the scanner cannot verify the
+          # internal CA. The homelab Sonar's cert is signed by the internal
+          # "Development CA"; git/curl trust it (it is in the runner image's OS
+          # store), but Node ships its own CA bundle. The vendored script also
+          # auto-exports this path when the file exists.
+          # NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/gitea-ca.crt
+          # OPTIONAL: /etc/hosts entry (repo var SONAR_HOSTS), only needed when
+          # SONAR_HOST_URL is a hostname the runner cannot resolve.
+          # SONAR_HOSTS_ENTRY: ${{ vars.SONAR_HOSTS }}
+        run: |
+          set -eu
+          if [ -n "${SONAR_HOSTS_ENTRY:-}" ]; then
+            echo "$SONAR_HOSTS_ENTRY" | sudo tee -a /etc/hosts >/dev/null
+          fi
+          # Analysis config lives in sonar-project.properties; the script
+          # enforces the server quality gate plus local fail-closed floors and
+          # writes durable reports under sonar-out/.
+          scripts/sonar/sonar-ephemeral.sh
+      - name: Sonar skipped
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: echo "SONAR_TOKEN not set — skipping SonarQube analysis."
