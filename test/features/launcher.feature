@@ -223,3 +223,160 @@ Feature: Launcher command contract
     And profile "review" option "memory" is true
     And profile "review" option "yolo" is true
     And profile "review" param "model" is "sonnet"
+
+  Scenario: Composes the canonical chain with jail flags in ai-jail order
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      jail_exec: true
+      memory: true
+      workspace: acme
+      project: billing
+      jail_flags:
+        lockdown: true
+        mask: [/etc/secrets, /home/tester/.gnupg]
+        browser: hard
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --exec
+      --lockdown
+      --mask
+      /etc/secrets
+      --mask
+      /home/tester/.gnupg
+      --browser=hard
+      ai-memory
+      run
+      --workspace
+      acme
+      --project
+      billing
+      claude
+      """
+
+  Scenario: Emits negative forms for disabled default-on jail toggles
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        landlock: false
+        seccomp: false
+        rlimits: false
+        status_bar: false
+        gpu: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-gpu
+      --no-landlock
+      --no-seccomp
+      --no-rlimits
+      --no-status-bar
+      claude
+      """
+
+  Scenario: Resumes a named workstream through ai-memory run
+    Given a launch configuration
+      """
+      agent: codex
+      jail: false
+      memory: true
+      workstream: release-1
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      release-1
+      codex
+      """
+
+  Scenario: Continues the most recent session without naming a harness
+    Given a launch configuration
+      """
+      continue: true
+      jail: true
+      jail_exec: true
+      memory: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --exec
+      ai-memory
+      run
+      """
+
+  Scenario: Drops the jail and jail-only permissions on Windows
+    Given a launch configuration
+      """
+      agent: codex
+      goos: windows
+      jail: true
+      memory: true
+      permissions:
+        ssh: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      codex
+      """
+
+  Scenario: Warns instead of failing when Windows requests the jail
+    Given a validation configuration
+      """
+      agent: codex
+      goos: windows
+      jail: true
+      memory: false
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-unsupported-windows
+      """
+
+  Scenario: Warns when jail options are set with the jail disabled
+    Given a validation configuration
+      """
+      agent: codex
+      jail: false
+      memory: false
+      jail_flags:
+        lockdown: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-options-without-jail
+      """
+
+  Scenario: Ships only the published upstream release assets
+    Given the built-in global defaults
+    Then tool "ai-jail" assets equal
+      """
+      darwin-arm64
+      linux-amd64
+      """
+    And tool "ai-memory" assets equal
+      """
+      darwin-amd64
+      darwin-arm64
+      linux-amd64
+      linux-arm64
+      windows-amd64
+      """

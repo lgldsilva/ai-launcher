@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -19,6 +20,10 @@ import (
 
 // ErrCancelled is returned when the user quits the TUI without launching.
 var ErrCancelled = errors.New("launcher cancelled")
+
+// isWindows reports whether the host is Windows; it is a variable so tests
+// can stub platform detection while running on Linux.
+var isWindows = func() bool { return runtime.GOOS == "windows" }
 
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#b4befe"))
@@ -80,8 +85,17 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 		profileNames:  config.ProfileNames(global),
 		mountMode:     "ro",
 	}
+	// ai-jail has no Windows build: the jail permission and everything that
+	// requires it are not offered there.
+	jailDependent := config.JailDependentIDs(global.Permissions)
 	for _, permission := range global.Permissions {
+		if isWindows() && jailDependent[permission.ID] {
+			continue
+		}
 		model.permissionIDs = append(model.permissionIDs, permission.ID)
+	}
+	if isWindows() {
+		model.launch.UseJail = false
 	}
 	model.status = "Tab: seção · Space: alterna · /: adiciona mount · Enter: executa · d: dry-run · q: sai"
 	return model
@@ -173,7 +187,7 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.section == 2 && len(m.launch.Mounts) == 0 {
 			m.startMountBrowser()
-		} else if m.section == 3 && m.cursor >= optionToggleCount {
+		} else if m.section == 3 && m.cursor >= len(m.optionRows()) {
 			m.startParamInput()
 		} else if m.section == 4 && m.cursor < len(m.profileNames) {
 			m.loadProfile(m.profileNames[m.cursor])
@@ -216,9 +230,37 @@ func (m *Model) startProfileInput() {
 	m.status = "Nome do perfil · Enter salva · Esc cancela"
 }
 
-// optionToggleCount is the number of fixed toggle rows in the options
-// section; catalog-declared param rows follow them.
-const optionToggleCount = 4
+// optionRow is one fixed toggle row in the options section; catalog-declared
+// param rows follow them.
+type optionRow struct {
+	name   string
+	on     bool
+	toggle func(m *Model)
+}
+
+// optionRows returns the fixed option toggles in display order. The jail
+// toggle is hidden on Windows, where ai-jail is unavailable.
+func (m *Model) optionRows() []optionRow {
+	rows := make([]optionRow, 0, 4)
+	if !isWindows() {
+		rows = append(rows, optionRow{name: "Jail / Sandbox", on: m.launch.UseJail, toggle: func(m *Model) { m.launch.UseJail = !m.launch.UseJail }})
+	}
+	return append(rows,
+		optionRow{name: "ai-memory", on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
+		optionRow{name: "Novo workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
+		optionRow{name: "--yolo", on: m.launch.Yolo, toggle: func(m *Model) { m.launch.Yolo = !m.launch.Yolo }},
+	)
+}
+
+// toggleWorkstreamOption flips the new-workstream toggle, seeding a default
+// name when enabling it.
+func toggleWorkstreamOption(m *Model) {
+	if m.launch.NewWorkstream == "" {
+		m.launch.NewWorkstream = "new-workstream"
+	} else {
+		m.launch.NewWorkstream = ""
+	}
+}
 
 // View implements tea.Model and renders the whole screen.
 func (m Model) View() string {
@@ -254,9 +296,18 @@ func (m Model) View() string {
 
 func (m Model) agentsView(b *strings.Builder) {
 	b.WriteString("\n\nAgente\n")
+	pointer := "  "
+	if m.section == 0 && m.cursor == 0 {
+		pointer = "❯ "
+	}
+	mark := "  "
+	if m.launch.ContinueSession {
+		mark = "❯ "
+	}
+	fmt.Fprintf(b, "%s%s%-22s (%s)\n", pointer, mark, "Continuar última sessão", "ai-memory run")
 	for i, status := range m.agents {
 		pointer := "  "
-		if m.section == 0 && i == m.cursor {
+		if m.section == 0 && i+1 == m.cursor {
 			pointer = "❯ "
 		}
 		state := badStyle.Render("[not found]")
@@ -325,16 +376,7 @@ func (m Model) mountsView(b *strings.Builder) {
 
 func (m Model) optionsView(b *strings.Builder) {
 	b.WriteString("\nOpções\n")
-	options := []struct {
-		name string
-		on   bool
-	}{
-		{name: "Jail / Sandbox", on: m.launch.UseJail},
-		{name: "ai-memory", on: m.launch.UseMemory},
-		{name: "Novo workstream", on: m.launch.NewWorkstream != ""},
-		{name: "--yolo", on: m.launch.Yolo},
-	}
-	for i, option := range options {
+	for i, option := range m.optionRows() {
 		pointer := "  "
 		if m.section == 3 && i == m.cursor {
 			pointer = "❯ "
@@ -350,7 +392,7 @@ func (m Model) optionsView(b *strings.Builder) {
 	}
 	for i, param := range m.launch.Agent.Params {
 		pointer := "  "
-		if m.section == 3 && m.cursor == optionToggleCount+i {
+		if m.section == 3 && m.cursor == len(m.optionRows())+i {
 			pointer = "❯ "
 		}
 		value := m.launch.ParamValues[param.Name]
@@ -383,14 +425,14 @@ func (m Model) profilesView(b *strings.Builder) {
 }
 
 func (m *Model) moveCursor(delta int) {
-	limit := len(m.agents)
+	limit := len(m.agents) + 1 // +1 for the "continue last session" row
 	switch m.section {
 	case 1:
 		limit = len(m.permissionIDs)
 	case 2:
 		limit = len(m.launch.Mounts)
 	case 3:
-		limit = optionToggleCount + len(m.launch.Agent.Params)
+		limit = len(m.optionRows()) + len(m.launch.Agent.Params)
 	case 4:
 		limit = len(m.profileNames)
 	}
@@ -439,30 +481,18 @@ func (m *Model) toggleCurrent() {
 // toggleOption flips one of the fixed option toggles, or opens the text
 // input when the cursor is on a catalog-declared param row.
 func (m *Model) toggleOption() {
-	if m.cursor >= optionToggleCount {
+	rows := m.optionRows()
+	if m.cursor >= len(rows) {
 		m.startParamInput()
 		return
 	}
-	switch m.cursor {
-	case 0:
-		m.launch.UseJail = !m.launch.UseJail
-	case 1:
-		m.launch.UseMemory = !m.launch.UseMemory
-	case 2:
-		if m.launch.NewWorkstream == "" {
-			m.launch.NewWorkstream = "new-workstream"
-		} else {
-			m.launch.NewWorkstream = ""
-		}
-	case 3:
-		m.launch.Yolo = !m.launch.Yolo
-	}
+	rows[m.cursor].toggle(m)
 	m.status = "Opção alternada"
 }
 
 // startParamInput opens the text input for the param row under the cursor.
 func (m *Model) startParamInput() {
-	index := m.cursor - optionToggleCount
+	index := m.cursor - len(m.optionRows())
 	params := m.launch.Agent.Params
 	if index < 0 || index >= len(params) {
 		return
@@ -501,10 +531,14 @@ func (m *Model) loadProfile(name string) {
 		m.launch.Mounts = append([]config.Mount(nil), profile.Mounts...)
 	}
 	if profile.Options != nil {
-		m.launch.UseJail = profile.Options.Jail
+		m.launch.UseJail = profile.Options.Jail && !isWindows()
 		m.launch.UseMemory = profile.Options.Memory
 		m.launch.Yolo = profile.Options.Yolo
 		m.launch.NewWorkstream = profile.Options.NewWorkstream
+		m.launch.Workstream = profile.Options.Workstream
+		m.launch.Workspace = profile.Options.Workspace
+		m.launch.Project = profile.Options.Project
+		m.launch.JailFlags = profile.Options.JailFlags
 		m.launch.ExtraArgs = append([]string(nil), profile.Options.ExtraArgs...)
 		m.launch.ParamValues = copyParamValues(profile.Options.ParamValues)
 	}
@@ -589,6 +623,10 @@ func (m *Model) saveProfileAs(name string) {
 			Memory:        m.launch.UseMemory,
 			Yolo:          m.launch.Yolo,
 			NewWorkstream: m.launch.NewWorkstream,
+			Workstream:    m.launch.Workstream,
+			Workspace:     m.launch.Workspace,
+			Project:       m.launch.Project,
+			JailFlags:     m.launch.JailFlags,
 			ExtraArgs:     m.launch.ExtraArgs,
 			ParamValues:   m.launch.ParamValues,
 		},
@@ -776,17 +814,30 @@ func (m Model) helpView() string {
 }
 
 func (m *Model) preview(dryRun bool) bool {
-	if m.section == 0 && m.cursor < len(m.agents) {
-		selected := m.agents[m.cursor]
-		selectedAgent := selected.Agent
-		if selected.ResolvedCommand != "" {
-			selectedAgent.Command = selected.ResolvedCommand
-		}
-		if m.launch.Agent.Command != selectedAgent.Command {
-			m.launch.Agent = selectedAgent
-			m.launch.Executable = selected.Path
-			m.status = "Agente selecionado; pressione Enter novamente para executar"
-			return false
+	if m.section == 0 {
+		if m.cursor == 0 {
+			// The first row continues the most recent ai-memory session of the
+			// checkout ("ai-memory run" without a harness).
+			if !m.launch.ContinueSession {
+				m.launch.ContinueSession = true
+				m.launch.Agent = config.Agent{}
+				m.launch.Executable = ""
+				m.status = "Continuar última sessão selecionado; pressione Enter novamente para executar"
+				return false
+			}
+		} else if m.cursor-1 < len(m.agents) {
+			selected := m.agents[m.cursor-1]
+			selectedAgent := selected.Agent
+			if selected.ResolvedCommand != "" {
+				selectedAgent.Command = selected.ResolvedCommand
+			}
+			if m.launch.ContinueSession || m.launch.Agent.Command != selectedAgent.Command {
+				m.launch.ContinueSession = false
+				m.launch.Agent = selectedAgent
+				m.launch.Executable = selected.Path
+				m.status = "Agente selecionado; pressione Enter novamente para executar"
+				return false
+			}
 		}
 	}
 	argv, err := launcher.Build(m.launch)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -31,9 +32,16 @@ type launchSpec struct {
 	Executable    string            `yaml:"executable"`
 	Home          string            `yaml:"home"`
 	ClearHome     bool              `yaml:"clear_home"`
+	GOOS          string            `yaml:"goos"`
 	Jail          bool              `yaml:"jail"`
+	JailExec      bool              `yaml:"jail_exec"`
+	JailFlags     config.JailFlags  `yaml:"jail_flags"`
 	Memory        bool              `yaml:"memory"`
+	Continue      bool              `yaml:"continue"`
 	NewWorkstream string            `yaml:"new_workstream"`
+	Workstream    string            `yaml:"workstream"`
+	Workspace     string            `yaml:"workspace"`
+	Project       string            `yaml:"project"`
 	Permissions   map[string]bool   `yaml:"permissions"`
 	Mounts        []config.Mount    `yaml:"mounts"`
 	Yolo          bool              `yaml:"yolo"`
@@ -68,6 +76,9 @@ func runScenario(t *testing.T, scenario featureScenario) {
 	if runGlobalConfigScenario(t, scenario) {
 		return
 	}
+	if runDefaultsScenario(t, scenario) {
+		return
+	}
 	runLocalConfigScenario(t, scenario)
 }
 
@@ -88,6 +99,7 @@ func runValidationScenario(t *testing.T, scenario featureScenario) bool {
 		missing[command] = true
 	}
 	validator := launcher.NewValidator()
+	validator.GOOS = spec.GOOS
 	validator.LookPath = func(command string) (string, error) {
 		if missing[command] {
 			return "", errors.New("not found")
@@ -120,7 +132,13 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 	if spec.ClearHome {
 		t.Setenv("HOME", "")
 	}
-	argv, err := launcher.Build(toLaunchConfig(spec))
+	launch := toLaunchConfig(spec)
+	if spec.GOOS != "" {
+		// Platform constraints (for example no ai-jail on Windows) are applied
+		// before building, exactly like the CLI dispatch does.
+		launch, _ = launcher.ConstrainToPlatform(launch, spec.GOOS, config.DefaultGlobal().Permissions)
+	}
+	argv, err := launcher.Build(launch)
 	if failure, expected := scenario.failureExpectation(); expected {
 		if err == nil || !strings.Contains(err.Error(), failure) {
 			t.Fatalf("Build() error = %v; want containing %q", err, failure)
@@ -175,17 +193,23 @@ func runLocalConfigScenario(t *testing.T, scenario featureScenario) {
 
 func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 	return launcher.LaunchConfig{
-		Agent:         config.Agent{Command: spec.Agent, YoloFlag: spec.YoloFlag, Params: spec.Params},
-		Executable:    spec.Executable,
-		HomeDir:       spec.Home,
-		UseJail:       spec.Jail,
-		UseMemory:     spec.Memory,
-		NewWorkstream: spec.NewWorkstream,
-		Permissions:   spec.Permissions,
-		Mounts:        spec.Mounts,
-		Yolo:          spec.Yolo,
-		ExtraArgs:     spec.Args,
-		ParamValues:   spec.ParamValues,
+		Agent:           config.Agent{Command: spec.Agent, YoloFlag: spec.YoloFlag, Params: spec.Params},
+		Executable:      spec.Executable,
+		HomeDir:         spec.Home,
+		UseJail:         spec.Jail,
+		JailExec:        spec.JailExec,
+		JailFlags:       spec.JailFlags,
+		UseMemory:       spec.Memory,
+		ContinueSession: spec.Continue,
+		NewWorkstream:   spec.NewWorkstream,
+		Workstream:      spec.Workstream,
+		Workspace:       spec.Workspace,
+		Project:         spec.Project,
+		Permissions:     spec.Permissions,
+		Mounts:          spec.Mounts,
+		Yolo:            spec.Yolo,
+		ExtraArgs:       spec.Args,
+		ParamValues:     spec.ParamValues,
 	}
 }
 
@@ -273,6 +297,56 @@ func checkProfileExpectation(t *testing.T, global config.Global, text string) in
 		return 1
 	}
 	return 0
+}
+
+var toolAssetsExpectation = regexp.MustCompile(`^(?:Then|And) tool "([^"]+)" assets equal$`)
+
+// runDefaultsScenario handles "Given the built-in global defaults" scenarios,
+// pinning the release recipes shipped in DefaultGlobal against upstream
+// drift (for example an ai-jail asset that no longer exists). It reports
+// whether the scenario matched.
+func runDefaultsScenario(t *testing.T, scenario featureScenario) bool {
+	t.Helper()
+	if _, ok := scenario.step("Given the built-in global defaults"); !ok {
+		return false
+	}
+	checked := 0
+	for _, step := range scenario.steps {
+		match := toolAssetsExpectation.FindStringSubmatch(step.text)
+		if len(match) != 2 {
+			continue
+		}
+		checked++
+		assertToolAssets(t, config.DefaultGlobal(), match[1], nonEmptyLines(step.doc))
+	}
+	if checked == 0 {
+		t.Fatal("defaults scenario has no supported expectation")
+	}
+	return true
+}
+
+// assertToolAssets compares the sorted platform keys of a tool's release
+// recipe with the expected list.
+func assertToolAssets(t *testing.T, global config.Global, name string, want []string) {
+	t.Helper()
+	for _, tool := range global.Tools {
+		if tool.Name != name {
+			continue
+		}
+		if tool.Release == nil {
+			t.Fatalf("tool %q has no release recipe", name)
+		}
+		keys := make([]string, 0, len(tool.Release.Assets))
+		for key := range tool.Release.Assets {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if !reflect.DeepEqual(keys, want) {
+			t.Fatalf("tool %q assets = %#v; want %#v", name, keys, want)
+		}
+		return
+	}
+	t.Fatalf("tool %q not found in the default catalog", name)
 }
 
 func (s featureScenario) step(text string) (featureStep, bool) {
