@@ -43,9 +43,13 @@ jobs:
       # Cross-platform binaries, archives, checksums.txt, grouped changelog
       # and the GitHub Release itself — all driven by .goreleaser.yaml.
       # GoReleaser auto-detects GitHub from GITHUB_TOKEN + the git remote.
+      # GOTOOLCHAIN=auto: the hosted runner image pins GOTOOLCHAIN=local in
+      # the go env file, which would block `go run` from fetching the newer
+      # toolchain that goreleaser/v2 requires.
       - name: GoReleaser release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOTOOLCHAIN: auto
         run: go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --clean
 
       # SBOM is generated after GoReleaser so it does not end up inside
