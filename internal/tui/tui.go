@@ -302,18 +302,22 @@ type optionRow struct {
 }
 
 // optionRows returns the fixed option toggles in display order. The jail
-// toggle is hidden on Windows, where ai-jail is unavailable.
+// toggle is hidden on Windows, where ai-jail is unavailable, and --fresh is
+// hidden with the memory layer off, where it would toggle a no-op.
 func (m *Model) optionRows() []optionRow {
 	rows := make([]optionRow, 0, 4)
 	if !isWindows() {
 		rows = append(rows, optionRow{name: "Jail / Sandbox", on: m.launch.UseJail, toggle: func(m *Model) { m.launch.UseJail = !m.launch.UseJail }})
 	}
-	return append(rows,
+	rows = append(rows,
 		optionRow{name: "ai-memory", on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
 		optionRow{name: "New workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
 		optionRow{name: "--yolo", on: m.launch.Yolo, toggle: func(m *Model) { m.launch.Yolo = !m.launch.Yolo }},
-		optionRow{name: "--fresh", on: m.launch.Fresh, toggle: func(m *Model) { m.launch.Fresh = !m.launch.Fresh }},
 	)
+	if m.launch.UseMemory {
+		rows = append(rows, optionRow{name: "--fresh", on: m.launch.Fresh, toggle: func(m *Model) { m.launch.Fresh = !m.launch.Fresh }})
+	}
+	return rows
 }
 
 // toggleWorkstreamOption flips the new-workstream toggle, seeding a default
