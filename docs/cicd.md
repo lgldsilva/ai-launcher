@@ -15,6 +15,7 @@ Triggers: push to `main` and every pull request. All jobs run on
 | --- | --- | --- |
 | `test` | `go build`, `go test -race -shuffle=on ./...`, coverage gate | Filtered coverage < 90% (`COVERAGE_MIN`) |
 | `lint` | `gofmt -l`, `go vet`, `golangci-lint` v2.12 | Any formatting/lint issue pending |
+| `dist` | `make lint-dist`: ShellCheck + `shfmt -i 2 -ci -d` on `install.sh`, `goreleaser check` | Any issue in the install script or the release config |
 | `vuln` | `govulncheck` | Known vulnerability reachable in the code |
 | `trivy` | Filesystem scan, severity `CRITICAL`, `ignore-unfixed` | CRITICAL vulnerability with a fix available |
 | `sbom` | Generates a CycloneDX SBOM and publishes it as an artifact | SBOM generation fails |

@@ -17,6 +17,7 @@ canonical chain is `ai-jail [jail flags] ai-memory run [wrapper flags]
 | `make test-coverage` | 90% line gate on the logic packages |
 | `make test-gherkin` | Contract suite (`test/features/launcher.feature`) |
 | `make lint` / `make lint-full` | `go vet` / golangci-lint |
+| `make lint-dist` | ShellCheck + shfmt on `install.sh`, `goreleaser check` |
 
 **Coverage gate**: measures only `internal/config`, `internal/catalog`, and
 `internal/launcher` (excluding `executor.go` and `replace_*.go`); the minimum

@@ -54,6 +54,23 @@ jobs:
         with:
           version: v2.12
 
+  # Gate for the distribution surface: install.sh is what users curl-pipe and
+  # .goreleaser.yaml is what ships the binaries, so both are checked on every
+  # push instead of failing at install or tag time.
+  dist:
+    name: install.sh + goreleaser config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: ShellCheck + shfmt + goreleaser check
+        run: |
+          command -v shellcheck >/dev/null 2>&1 || sudo apt-get install -y shellcheck
+          make lint-dist
+
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest

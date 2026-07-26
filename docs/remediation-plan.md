@@ -142,7 +142,7 @@ see **Progress** below for what each closed item shipped.
 | I8 | `COVER_PKGS` does not exist; three divergent exclusion lists | medium | 3 | done |
 | F2 | Unmapped ai-jail v1.15 flags | medium | 3 | done |
 | F1 | `--fresh` is not exposed | low | 3 | done |
-| F4 | `install.sh` and `.goreleaser.yaml` have no CI gate | medium | 3 | open |
+| F4 | `install.sh` and `.goreleaser.yaml` have no CI gate | medium | 3 | done |
 | F5 | `--executable` points at a host path not mounted in the jail | medium | 3 | done |
 | S7 | Hardening and cleanup cluster (12 sub-items) | low | 3 | partial |
 
@@ -175,6 +175,7 @@ in `--dry-run`). **Phases 1 and 2 are complete**; what remains is Phase 3.
 | F1 | `--fresh` is a CLI flag, an `Options` field, a TUI toggle, and a wrapper flag emitted before the harness token. Pre-flight rejects `--fresh` combined with `--continue` (`fresh-with-continue`). Covered by unit tests, a build scenario and a validation scenario in the contract, and the README options table | nothing |
 | F5 | With the jail enabled, the launcher maps the directory holding the resolved harness binary read-only (`--map <dir>`) unless a configured mount already covers it — the manual `/opt/homebrew` workaround in this repo's `.ai-jail` is the exact gap this closes. Documented as ARCHITECTURE invariant 10 | nothing |
 | F3 | The contract now covers `--executable` (with the F5 auto-mount), the `run_harness` remap, `private_home` / `overlay_maps` / `deny_paths` / `allow_tcp_ports` / `claude_dir`, `browser: soft` and `browser: off`, continue-with-workstream (I2), rejected harness (I1, already present), and a zero-issue `--no-jail` run (I7). Filesystem- and env-dependent behaviors (home-symlink auto-mounts and their denylist, automatic `--no-hide-config`, `AI_MEMORY_NATIVE_BIN`) are explicitly listed as out of contract scope in `AGENTS.md` | the relative `.config/gh` scenario at `launcher.feature:64-81` still locks in the empty-`$HOME` fallback; deciding code-vs-scenario is S7.k |
+| F4 | A `dist` CI job runs `make lint-dist`: ShellCheck and `shfmt -i 2 -ci -d` on `install.sh`, plus `goreleaser check` on the release config. The dead Windows branch (a `.zip` extracted with `tar -xzf`, unreachable because `detect_os` already aborts) is gone — the archive name now hardcodes `tar.gz` with a comment explaining why. The mandatory-checksum flow is untouched | nothing |
 
 Two defects found only after the fact are worth recording, because both came
 from modelling upstream from the CLI `--help` instead of the documented
