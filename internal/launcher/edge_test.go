@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
@@ -138,6 +139,26 @@ func TestPTYExecutorRunsCommand(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "hi") {
 		t.Fatalf("PTY output = %q; want hi", output.String())
+	}
+}
+
+func TestPTYExecutorDrainsOutputWhenWriterIsNil(t *testing.T) {
+	// A nil out must not deadlock: nothing drains the PTY, the child blocks
+	// on a full pipe buffer, and cmd.Wait never returns. Write well past the
+	// PTY buffer size to prove it.
+	done := make(chan error, 1)
+	go func() {
+		done <- (PTYExecutor{}).Run(context.Background(),
+			[]string{"sh", "-c", "head -c 1048576 /dev/zero | tr '\\000' x"},
+			strings.NewReader(""), nil, nil)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("PTYExecutor.Run() error = %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run blocked on a full PTY buffer with out == nil")
 	}
 }
 
