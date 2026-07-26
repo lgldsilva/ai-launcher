@@ -47,30 +47,38 @@ func TestDefaultConfigurationsExposeLauncherContract(t *testing.T) {
 func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 	global := DefaultGlobal()
 	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "grok", "zero", "devin", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}
-	available := make(map[string]bool, len(global.Agents))
+	available := make(map[string]Agent, len(global.Agents))
 	for _, agent := range global.Agents {
-		available[agent.Command] = true
+		available[agent.Command] = agent
 	}
 	for _, command := range wanted {
-		if !available[command] {
+		if _, ok := available[command]; !ok {
 			t.Errorf("default catalog does not include %q", command)
 		}
 	}
-	for _, agent := range global.Agents {
-		if agent.Command == "kilo" && !reflect.DeepEqual(agent.Aliases, []string{"kilocode", "kilo-code"}) {
-			t.Fatalf("kilo aliases = %#v", agent.Aliases)
+	aliasChecks := map[string][]string{
+		"kilo": {"kilocode", "kilo-code"},
+		"mimo": {"mimocode", "mimo-code"},
+	}
+	for command, want := range aliasChecks {
+		if got := available[command].Aliases; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s aliases = %#v; want %#v", command, got, want)
 		}
-		if agent.Command == "mimo" && !reflect.DeepEqual(agent.Aliases, []string{"mimocode", "mimo-code"}) {
-			t.Fatalf("mimo aliases = %#v", agent.Aliases)
-		}
-		if agent.Command == "pi" && (agent.Memory == nil || agent.Memory.InstallMCP || !agent.Memory.InstallHooks) {
-			t.Fatalf("Pi memory integration = %#v; want hooks-only", agent.Memory)
-		}
-		if agent.Command == "openclaw" && (agent.Memory == nil || !agent.Memory.InstallMCP || agent.Memory.InstallHooks) {
-			t.Fatalf("OpenClaw memory integration = %#v; want MCP-only", agent.Memory)
-		}
-		if agent.Command == "kimi" && (agent.Memory == nil || agent.Memory.Client != "kimi-code" || agent.Memory.Agent != "kimi-code") {
-			t.Fatalf("Kimi memory integration = %#v", agent.Memory)
+	}
+	memoryChecks := []struct {
+		command string
+		want    string
+		matches func(*MemoryIntegration) bool
+	}{
+		{"pi", "hooks-only", func(m *MemoryIntegration) bool { return m != nil && !m.InstallMCP && m.InstallHooks }},
+		{"openclaw", "MCP-only", func(m *MemoryIntegration) bool { return m != nil && m.InstallMCP && !m.InstallHooks }},
+		{"kimi", "kimi-code client/agent", func(m *MemoryIntegration) bool {
+			return m != nil && m.Client == "kimi-code" && m.Agent == "kimi-code"
+		}},
+	}
+	for _, tc := range memoryChecks {
+		if got := available[tc.command].Memory; !tc.matches(got) {
+			t.Fatalf("%s memory integration = %#v; want %s", tc.command, got, tc.want)
 		}
 	}
 }
@@ -141,15 +149,7 @@ func TestLoadGlobalMigratesLegacyMemoryServerURL(t *testing.T) {
 func TestSaveGlobalRoundTripsConfiguredAgentPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
 	want := DefaultGlobal()
-	want.Agents = append(want.Agents, Agent{
-		Name: "Xpto", Command: "xpto", Aliases: []string{"xpto-cli"}, Path: "/opt/xpto/bin/xpto", SupportsMemory: true,
-		Memory: &MemoryIntegration{Client: "xpto", Agent: "xpto", InstallMCP: true, InstallHooks: true},
-		Release: &GitHubRelease{
-			Repository: "acme/xpto",
-			Assets:     map[string]string{"linux-amd64": "xpto-linux-amd64.tar.gz"},
-			Binary:     "xpto", ChecksumAsset: "checksums.txt",
-		},
-	})
+	want.Agents = append(want.Agents, configuredRoundTripAgent())
 	want.Tools = append(want.Tools, Tool{Name: "helper", Command: "helper", Release: &GitHubRelease{Repository: "acme/helper", Assets: map[string]string{"darwin-arm64": "helper.zip"}, Binary: "helper"}})
 	if err := SaveGlobal(path, want); err != nil {
 		t.Fatalf("SaveGlobal() error = %v", err)
@@ -158,24 +158,7 @@ func TestSaveGlobalRoundTripsConfiguredAgentPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
-	var found bool
-	for _, agent := range got.Agents {
-		if agent.Name == "Xpto" {
-			found = true
-			if agent.Command != "xpto" || agent.Path != "/opt/xpto/bin/xpto" || !reflect.DeepEqual(agent.Aliases, []string{"xpto-cli"}) {
-				t.Fatalf("saved agent = %#v", agent)
-			}
-			if agent.Release == nil || agent.Release.Repository != "acme/xpto" || agent.Release.ChecksumAsset != "checksums.txt" {
-				t.Fatalf("saved release = %#v", agent.Release)
-			}
-			if agent.Memory == nil || agent.Memory.Client != "xpto" || !agent.Memory.InstallHooks {
-				t.Fatalf("saved memory integration = %#v", agent.Memory)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("saved agent was not found")
-	}
+	requireSavedConfiguredAgent(t, got.Agents)
 	if len(got.Tools) != len(want.Tools) || got.Tools[len(got.Tools)-1].Release == nil {
 		t.Fatalf("saved tools = %#v", got.Tools)
 	}
@@ -185,6 +168,41 @@ func TestSaveGlobalRoundTripsConfiguredAgentPath(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("global config mode = %04o; want 0600", info.Mode().Perm())
+	}
+}
+
+func configuredRoundTripAgent() Agent {
+	return Agent{
+		Name: "Xpto", Command: "xpto", Aliases: []string{"xpto-cli"}, Path: "/opt/xpto/bin/xpto", SupportsMemory: true,
+		Memory: &MemoryIntegration{Client: "xpto", Agent: "xpto", InstallMCP: true, InstallHooks: true},
+		Release: &GitHubRelease{
+			Repository: "acme/xpto",
+			Assets:     map[string]string{"linux-amd64": "xpto-linux-amd64.tar.gz"},
+			Binary:     "xpto", ChecksumAsset: "checksums.txt",
+		},
+	}
+}
+
+func requireSavedConfiguredAgent(t *testing.T, agents []Agent) {
+	t.Helper()
+	var saved *Agent
+	for i := range agents {
+		if agents[i].Name == "Xpto" {
+			saved = &agents[i]
+		}
+	}
+	if saved == nil {
+		t.Fatal("saved agent was not found")
+	}
+	agent := *saved
+	if agent.Command != "xpto" || agent.Path != "/opt/xpto/bin/xpto" || !reflect.DeepEqual(agent.Aliases, []string{"xpto-cli"}) {
+		t.Fatalf("saved agent = %#v", agent)
+	}
+	if agent.Release == nil || agent.Release.Repository != "acme/xpto" || agent.Release.ChecksumAsset != "checksums.txt" {
+		t.Fatalf("saved release = %#v", agent.Release)
+	}
+	if agent.Memory == nil || agent.Memory.Client != "xpto" || !agent.Memory.InstallHooks {
+		t.Fatalf("saved memory integration = %#v", agent.Memory)
 	}
 }
 
@@ -562,38 +580,8 @@ func TestProfileSummaryDescribesSelection(t *testing.T) {
 // profiles through the global config, checking every field survives.
 func TestPropertyProfileRoundTripPreservesAllFields(t *testing.T) {
 	token := rapid.StringMatching(`[a-z0-9\-_]{1,12}`)
-	boolMap := rapid.MapOf(token, rapid.Bool())
-	textMap := rapid.MapOf(token, token)
 	rapid.Check(t, func(rt *rapid.T) {
-		permissions := boolMap.Draw(rt, "permissions")
-		if len(permissions) == 0 {
-			permissions = nil
-		}
-		paramValues := textMap.Draw(rt, "paramValues")
-		if len(paramValues) == 0 {
-			paramValues = nil
-		}
-		var mounts []Mount
-		if rapid.Bool().Draw(rt, "hasMount") {
-			mounts = []Mount{{Path: "/workspace/" + token.Draw(rt, "mount"), Mode: "rw"}}
-		}
-		var extraArgs []string
-		if rapid.Bool().Draw(rt, "hasExtraArg") {
-			extraArgs = []string{"--" + token.Draw(rt, "extraArg")}
-		}
-		want := Profile{
-			Agent:       "agent-" + token.Draw(rt, "agent"),
-			Permissions: permissions,
-			Mounts:      mounts,
-			Options: &Options{
-				Jail:          rapid.Bool().Draw(rt, "jail"),
-				Memory:        rapid.Bool().Draw(rt, "memory"),
-				Yolo:          rapid.Bool().Draw(rt, "yolo"),
-				NewWorkstream: token.Draw(rt, "workstream"),
-				ExtraArgs:     extraArgs,
-				ParamValues:   paramValues,
-			},
-		}
+		want := drawGeneratedProfile(rt, token)
 		global := DefaultGlobal()
 		if err := SetProfile(&global, "generated", want); err != nil {
 			rt.Fatalf("SetProfile() error = %v", err)
@@ -610,6 +598,40 @@ func TestPropertyProfileRoundTripPreservesAllFields(t *testing.T) {
 			rt.Fatalf("profile round-trip mismatch: got %#v; want %#v", got, want)
 		}
 	})
+}
+
+// drawGeneratedProfile produces a profile with randomized fields; the draw
+// order and labels are part of the rapid shrink contract and must not change.
+func drawGeneratedProfile(rt *rapid.T, token *rapid.Generator[string]) Profile {
+	permissions := rapid.MapOf(token, rapid.Bool()).Draw(rt, "permissions")
+	if len(permissions) == 0 {
+		permissions = nil
+	}
+	paramValues := rapid.MapOf(token, token).Draw(rt, "paramValues")
+	if len(paramValues) == 0 {
+		paramValues = nil
+	}
+	var mounts []Mount
+	if rapid.Bool().Draw(rt, "hasMount") {
+		mounts = []Mount{{Path: "/workspace/" + token.Draw(rt, "mount"), Mode: "rw"}}
+	}
+	var extraArgs []string
+	if rapid.Bool().Draw(rt, "hasExtraArg") {
+		extraArgs = []string{"--" + token.Draw(rt, "extraArg")}
+	}
+	return Profile{
+		Agent:       "agent-" + token.Draw(rt, "agent"),
+		Permissions: permissions,
+		Mounts:      mounts,
+		Options: &Options{
+			Jail:          rapid.Bool().Draw(rt, "jail"),
+			Memory:        rapid.Bool().Draw(rt, "memory"),
+			Yolo:          rapid.Bool().Draw(rt, "yolo"),
+			NewWorkstream: token.Draw(rt, "workstream"),
+			ExtraArgs:     extraArgs,
+			ParamValues:   paramValues,
+		},
+	}
 }
 
 func TestTouchRecentAgentOrdersAndDedupes(t *testing.T) {

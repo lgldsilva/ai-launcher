@@ -12,3 +12,4 @@ coverage.html
 .codex/
 .ai-jail
 internal/**/testdata/rapid/
+.scannerwork/

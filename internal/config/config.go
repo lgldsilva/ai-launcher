@@ -63,6 +63,23 @@ const (
 	MinAIMemoryVersion = "1.19.0"
 )
 
+// Platform keys shared by the GitHubRelease.Assets maps of the built-in
+// catalog entries (see GitHubRelease).
+const (
+	platformLinuxAMD64  = "linux-amd64"
+	platformDarwinARM64 = "darwin-arm64"
+)
+
+// Catalog identifiers repeated within a single built-in entry (name, command,
+// binary) or across an entry and its memory integration.
+const (
+	aiJailTool   = "ai-jail"
+	aiMemoryTool = "ai-memory"
+	kimiCodeID   = "kimi-code"
+	antigravID   = "antigravity-cli"
+	geminiCLIID  = "gemini-cli"
+)
+
 // legacyMemoryServerURL is the pre-DNS-migration default. Existing
 // config.yaml files that still pin this host get rewritten on load so TLS
 // stops failing with "certificate not valid for name aimemory.raspberrypi.lan".
@@ -432,19 +449,19 @@ func DefaultGlobal() Global {
 			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: defaultMemoryIntegration("claude-code", "claude-code")},
 			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: defaultMemoryIntegration("codex", "codex")},
 			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: defaultMemoryIntegration("opencode", "opencode")},
-			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", "kimi-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: defaultMemoryIntegration("kimi-code", "kimi-code")},
+			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: defaultMemoryIntegration(kimiCodeID, kimiCodeID)},
 			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
 				Assets: map[string]string{
-					"linux-amd64":  "kilo-linux-x64.tar.gz",
-					"linux-arm64":  "kilo-linux-arm64.tar.gz",
-					"darwin-amd64": "kilo-darwin-x64.zip",
-					"darwin-arm64": "kilo-darwin-arm64.zip",
+					platformLinuxAMD64:  "kilo-linux-x64.tar.gz",
+					"linux-arm64":       "kilo-linux-arm64.tar.gz",
+					"darwin-amd64":      "kilo-darwin-x64.zip",
+					platformDarwinARM64: "kilo-darwin-arm64.zip",
 				},
 				Binary: "kilo",
 			}},
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
-			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", "antigravity-cli"}, SupportsMemory: false, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration("antigravity-cli", "antigravity-cli")},
+			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: false, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration(antigravID, antigravID)},
 			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
 			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: defaultMemoryIntegration("omp", "omp")},
@@ -455,7 +472,7 @@ func DefaultGlobal() Global {
 			// oc is a local preset TUI that ends up launching opencode; ai-memory
 			// only knows the harness name "opencode", so RunHarness remaps it.
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: &MemoryIntegration{Client: "opencode", Agent: "opencode", RunHarness: "opencode", InstallMCP: true, InstallHooks: true}},
-			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: false, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
+			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration(geminiCLIID, geminiCLIID)},
 			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
 			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI"},
 			{Name: "Goose", Command: "goose", SupportsMemory: false, SupportsYolo: false, Description: "Block Goose CLI"},
@@ -466,21 +483,21 @@ func DefaultGlobal() Global {
 		},
 		Tools: []Tool{
 			{
-				Name: "ai-jail", Command: "ai-jail", Description: "Sandbox wrapper used by ai-launcher (Linux and macOS only)",
+				Name: aiJailTool, Command: aiJailTool, Description: "Sandbox wrapper used by ai-launcher (Linux and macOS only)",
 				Release: &GitHubRelease{
 					Repository: "akitaonrails/ai-jail",
 					// ai-jail v1.15 publishes only these two assets; there are
 					// no linux-arm64, darwin-amd64, or Windows builds.
 					Assets: map[string]string{
-						"linux-amd64":  "ai-jail-linux-x86_64.tar.gz",
-						"darwin-arm64": "ai-jail-macos-aarch64.tar.gz",
+						platformLinuxAMD64:  "ai-jail-linux-x86_64.tar.gz",
+						platformDarwinARM64: "ai-jail-macos-aarch64.tar.gz",
 					},
-					Binary:        "ai-jail",
+					Binary:        aiJailTool,
 					ChecksumAsset: "checksums.txt",
 				},
 			},
 			{
-				Name: "ai-memory", Command: "ai-memory",
+				Name: aiMemoryTool, Command: aiMemoryTool,
 				Description: "Memory wrapper; installed from the checksum-verified release assets and the native runner self-updates on first use",
 				Release: &GitHubRelease{
 					Repository: "akitaonrails/ai-memory",
@@ -488,13 +505,13 @@ func DefaultGlobal() Global {
 					// shell wrapper does not apply). Each asset has a .sha256
 					// sidecar in the release.
 					Assets: map[string]string{
-						"linux-amd64":   "ai-memory-linux-x86_64.tar.gz",
-						"linux-arm64":   "ai-memory-linux-aarch64.tar.gz",
-						"darwin-amd64":  "ai-memory-macos-x86_64.tar.gz",
-						"darwin-arm64":  "ai-memory-macos-aarch64.tar.gz",
-						"windows-amd64": "ai-memory-windows-x86_64.zip",
+						platformLinuxAMD64:  "ai-memory-linux-x86_64.tar.gz",
+						"linux-arm64":       "ai-memory-linux-aarch64.tar.gz",
+						"darwin-amd64":      "ai-memory-macos-x86_64.tar.gz",
+						platformDarwinARM64: "ai-memory-macos-aarch64.tar.gz",
+						"windows-amd64":     "ai-memory-windows-x86_64.zip",
 					},
-					Binary: "ai-memory",
+					Binary: aiMemoryTool,
 				},
 			},
 		},
@@ -722,28 +739,11 @@ func RecordTrustedLocalConfig(globalPath, localPath string) error {
 	if err != nil {
 		return fmt.Errorf("hash local config: %w", err)
 	}
-	document := make(map[string]any)
-	b, err := os.ReadFile(globalPath) // #nosec G304 -- path is the user's config location by design
-	switch {
-	case err == nil:
-		if err := yaml.Unmarshal(b, &document); err != nil {
-			return fmt.Errorf("parse global config %s: %w", globalPath, err)
-		}
-		if document == nil {
-			document = make(map[string]any)
-		}
-	case !errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("read global config: %w", err)
+	document, err := readGlobalDocument(globalPath)
+	if err != nil {
+		return err
 	}
-	var hashes []string
-	if existing, ok := document["trusted_local_configs"].([]any); ok {
-		for _, entry := range existing {
-			if value, ok := entry.(string); ok && value != hash {
-				hashes = append(hashes, value)
-			}
-		}
-	}
-	hashes = append(hashes, hash)
+	hashes := append(trustedHashesExcluding(document, hash), hash)
 	if len(hashes) > trustedLocalConfigsMax {
 		hashes = hashes[len(hashes)-trustedLocalConfigsMax:]
 	}
@@ -754,6 +754,43 @@ func RecordTrustedLocalConfig(globalPath, localPath string) error {
 		return fmt.Errorf("encode global config: %w", err)
 	}
 	return writeGlobalAtomically(globalPath, encoded)
+}
+
+// readGlobalDocument loads the global config as a plain YAML document so a
+// single key can be updated without rewriting the merged catalog. A missing
+// file yields an empty document.
+func readGlobalDocument(globalPath string) (map[string]any, error) {
+	document := make(map[string]any)
+	b, err := os.ReadFile(globalPath) // #nosec G304 -- path is the user's config location by design
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(b, &document); err != nil {
+			return nil, fmt.Errorf("parse global config %s: %w", globalPath, err)
+		}
+		if document == nil {
+			document = make(map[string]any)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("read global config: %w", err)
+	}
+	return document, nil
+}
+
+// trustedHashesExcluding returns the document's recorded trusted-config
+// hashes in order, dropping non-string entries and any entry equal to hash
+// (the caller re-appends hash at the tail as the newest entry).
+func trustedHashesExcluding(document map[string]any, hash string) []string {
+	existing, ok := document["trusted_local_configs"].([]any)
+	if !ok {
+		return nil
+	}
+	hashes := make([]string, 0, len(existing))
+	for _, entry := range existing {
+		if value, ok := entry.(string); ok && value != hash {
+			hashes = append(hashes, value)
+		}
+	}
+	return hashes
 }
 
 // writeGlobalAtomically writes the global config through a temporary file with

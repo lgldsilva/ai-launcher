@@ -43,26 +43,41 @@ func HomeSymlinkMounts(home string) ([]config.Mount, []RefusedMount) {
 		if !strings.HasPrefix(name, ".") {
 			continue
 		}
-		info, err := os.Lstat(filepath.Join(home, name))
-		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			continue
-		}
-		target, err := filepath.EvalSymlinks(filepath.Join(home, name))
-		if err != nil || !filepath.IsAbs(target) {
-			// Broken or relative-only symlink: nothing mountable.
-			continue
-		}
-		if target == canonicalHome || strings.HasPrefix(target, canonicalHome+string(os.PathSeparator)) {
-			continue
-		}
-		if reason, denied := deniedAutoMount(target); denied {
+		target, reason, ok := symlinkMountTarget(home, canonicalHome, name)
+		switch {
+		case reason != "":
 			refused = append(refused, RefusedMount{Link: filepath.Join(home, name), Target: target, Reason: reason})
-			continue
+		case ok:
+			targets = append(targets, target)
 		}
-		targets = append(targets, target)
 	}
 	sort.Slice(refused, func(i, j int) bool { return refused[i].Link < refused[j].Link })
 	return nestedFreeMounts(targets), refused
+}
+
+// symlinkMountTarget classifies one hidden home entry: it returns the
+// resolved mount target when the entry is a symlink escaping the home tree,
+// or the denylist reason when that target is a denied tree. ok is false for
+// everything else (non-symlinks, broken links, links resolving back inside
+// the home tree).
+func symlinkMountTarget(home, canonicalHome, name string) (target, reason string, ok bool) {
+	link := filepath.Join(home, name)
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", "", false
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil || !filepath.IsAbs(resolved) {
+		// Broken or relative-only symlink: nothing mountable.
+		return "", "", false
+	}
+	if resolved == canonicalHome || strings.HasPrefix(resolved, canonicalHome+string(os.PathSeparator)) {
+		return "", "", false
+	}
+	if reason, denied := deniedAutoMount(resolved); denied {
+		return resolved, reason, false
+	}
+	return resolved, "", true
 }
 
 // RefusedMount is an auto-mount candidate the denylist rejected. It is reported

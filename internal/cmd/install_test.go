@@ -133,12 +133,7 @@ func TestAddAgentUpsertsIntoGlobalCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	countCustom := 0
-	for _, agent := range global.Agents {
-		if agent.Command == "custom-cli" {
-			countCustom++
-		}
-	}
+	countCustom := countCatalogEntries(t, global, "custom-cli")
 	if countCustom != 1 {
 		t.Fatalf("custom-cli entries = %d; want exactly one", countCustom)
 	}
@@ -146,23 +141,32 @@ func TestAddAgentUpsertsIntoGlobalCatalog(t *testing.T) {
 		t.Fatalf("repeat AddAgent() error = %v", err)
 	}
 	global, _ = config.LoadGlobal(globalPath)
-	countCustom = 0
-	for _, agent := range global.Agents {
-		if agent.Command == "custom-cli" {
-			countCustom++
-		}
-	}
+	countCustom = countCatalogEntries(t, global, "custom-cli")
 	if countCustom != 1 {
 		t.Fatalf("repeat --add duplicated the agent: %d entries", countCustom)
 	}
-	if err := AddAgent(globalPath, "", executable, "", "", &out); err == nil {
-		t.Fatal("AddAgent without a name should fail")
+	expectAddAgentError(t, AddAgent(globalPath, "", executable, "", "", &out), "AddAgent without a name should fail")
+	expectAddAgentError(t, AddAgent(globalPath, "Custom", filepath.Join(dir, "missing"), "", "", &out), "AddAgent with a missing path should fail")
+	expectAddAgentError(t, AddAgent(globalPath, "Custom", dir, "", "", &out), "AddAgent with a directory path should fail")
+}
+
+// countCatalogEntries counts how many agents in the catalog use the command.
+func countCatalogEntries(t *testing.T, global config.Global, command string) int {
+	t.Helper()
+	count := 0
+	for _, agent := range global.Agents {
+		if agent.Command == command {
+			count++
+		}
 	}
-	if err := AddAgent(globalPath, "Custom", filepath.Join(dir, "missing"), "", "", &out); err == nil {
-		t.Fatal("AddAgent with a missing path should fail")
-	}
-	if err := AddAgent(globalPath, "Custom", dir, "", "", &out); err == nil {
-		t.Fatal("AddAgent with a directory path should fail")
+	return count
+}
+
+// expectAddAgentError asserts that an AddAgent call rejected the input.
+func expectAddAgentError(t *testing.T, err error, message string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal(message)
 	}
 }
 

@@ -15,6 +15,12 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
+// aiMemoryCommand is the upstream memory CLI invoked as the wrapper layer of
+// the composed argv (`ai-memory run <harness>`) and probed on PATH by the
+// validator. The literal is locked byte-for-byte by the Gherkin contract
+// suite, so every emission shares this single constant.
+const aiMemoryCommand = "ai-memory"
+
 // userHomeDir and isWindows abstract the platform lookups so tests can
 // exercise the managed ai-memory native runner path for any target platform.
 var userHomeDir = os.UserHomeDir
@@ -62,7 +68,7 @@ func managedNativeRunnerPath(home string) string {
 		}
 		home = resolved
 	}
-	path := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	path := filepath.Join(home, ".local", "share", "ai-launcher", "bin", aiMemoryCommand)
 	if isWindows() {
 		path += ".exe"
 	}
@@ -133,7 +139,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		command = appendJailArgs(command, cfg)
 	}
 	if cfg.UseMemory {
-		command = append(command, "ai-memory", "run")
+		command = append(command, aiMemoryCommand, "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
 		if cfg.Fresh {
@@ -185,7 +191,7 @@ func buildContinue(cfg LaunchConfig) ([]string, error) {
 	if cfg.UseJail {
 		command = appendJailArgs(command, cfg)
 	}
-	command = append(command, "ai-memory", "run")
+	command = append(command, aiMemoryCommand, "run")
 	command = appendMemoryScope(command, cfg)
 	command = appendWorkstreamSelection(command, cfg)
 	return appendYoloFlag(command, cfg), nil
@@ -601,7 +607,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		issues = append(issues, jailMemoryVolumeIssues(cfg, v.Getwd, goos)...)
 	}
 	if cfg.UseMemory {
-		if _, err := lookPath("ai-memory"); err != nil {
+		if _, err := lookPath(aiMemoryCommand); err != nil {
 			issues = append(issues, Issue{Code: "memory-not-found", Message: "ai-memory is required when memory integration is enabled"})
 		}
 		issues = append(issues, memoryHarnessIssues(cfg)...)

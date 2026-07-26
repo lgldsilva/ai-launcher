@@ -28,6 +28,17 @@ var (
 	date    = "unknown"
 )
 
+const (
+	// flagNoJail is the CLI flag name for opting out of the sandbox; it is
+	// looked up by name after parsing to tell "unset" apart from "false".
+	flagNoJail = "no-jail"
+	// permissionSystemdUser is the catalog permission id behind the
+	// --systemd-user flag.
+	permissionSystemdUser = "systemd-user"
+	// warningLabel prefixes non-fatal diagnostics on stderr.
+	warningLabel = "warning:"
+)
+
 type stringList []string
 
 func (s *stringList) String() string { return strings.Join(*s, ",") }
@@ -79,10 +90,10 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.display, "display", false, "force X11/Wayland display passthrough in the jail (Linux only)")
 	flags.BoolVar(&o.pictures, "pictures", false, "map the Pictures folder into the jail (Linux/macOS)")
 	flags.BoolVar(&o.tailscale, "tailscale", false, "expose the Tailscale socket in the jail (Linux/macOS)")
-	flags.BoolVar(&o.systemdUser, "systemd-user", false, "expose the systemd user bus in the jail (Linux only)")
+	flags.BoolVar(&o.systemdUser, permissionSystemdUser, false, "expose the systemd user bus in the jail (Linux only)")
 	flags.BoolVar(&o.mise, "mise", false, "enable the ai-jail mise integration")
 	flags.BoolVar(&o.worktree, "worktree", false, "enable Git worktree passthrough in the jail")
-	flags.BoolVar(&o.noJail, "no-jail", false, "run without ai-jail")
+	flags.BoolVar(&o.noJail, flagNoJail, false, "run without ai-jail")
 	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
 	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
@@ -125,7 +136,28 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 // global default_mounts are suggested (read-write by default, with the same
 // optional :ro/:rw suffix as --mount).
 func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defaultMounts []string) ([]config.Mount, error) {
-	if flagsWasSet(flags, "no-jail") {
+	o.applyOptionFlags(flags, local)
+	mountConfig, err := o.buildMountConfig(flags, local.Mounts, defaultMounts)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.applyExtraArgsFlag(flags, local); err != nil {
+		return nil, err
+	}
+	if flagsWasSet(flags, "param") {
+		if err := o.applyParamFlags(local); err != nil {
+			return nil, err
+		}
+	}
+	return mountConfig, nil
+}
+
+// applyOptionFlags folds every explicitly-set option flag into the local
+// configuration. --no-jail, --no-memory, and --no-yolo invert the value they
+// store. Special-casing --no-memory to "only ever disable" made
+// --no-memory=false silently inert.
+func (o *cliOptions) applyOptionFlags(flags *flag.FlagSet, local *config.Local) {
+	if flagsWasSet(flags, flagNoJail) {
 		local.Options.Jail = !o.noJail
 	}
 	if flagsWasSet(flags, "sandbox") {
@@ -134,8 +166,6 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 	if flagsWasSet(flags, "memory") {
 		local.Options.Memory = o.memory
 	}
-	// Same semantic as --no-jail and --no-yolo: the flag inverts. Special-casing
-	// this one to "only ever disable" made --no-memory=false silently inert.
 	if flagsWasSet(flags, "no-memory") {
 		local.Options.Memory = !o.noMemory
 	}
@@ -160,23 +190,19 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 	if flagsWasSet(flags, "project") {
 		local.Options.Project = o.project
 	}
-	mountConfig, err := o.buildMountConfig(flags, local.Mounts, defaultMounts)
+}
+
+// applyExtraArgsFlag parses --extra-args/--args into the local configuration.
+func (o *cliOptions) applyExtraArgsFlag(flags *flag.FlagSet, local *config.Local) error {
+	if !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
+		return nil
+	}
+	parsed, err := splitArgs(o.extraArgs)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("parse extra arguments: %w", err)
 	}
-	if flagsWasSet(flags, "extra-args") || flagsWasSet(flags, "args") {
-		parsed, err := splitArgs(o.extraArgs)
-		if err != nil {
-			return nil, fmt.Errorf("parse extra arguments: %w", err)
-		}
-		local.Options.ExtraArgs = parsed
-	}
-	if flagsWasSet(flags, "param") {
-		if err := o.applyParamFlags(local); err != nil {
-			return nil, err
-		}
-	}
-	return mountConfig, nil
+	local.Options.ExtraArgs = parsed
+	return nil
 }
 
 // applyParamFlags folds repeatable --param name=value flags into the option
@@ -260,7 +286,7 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 			trust.agent, trust.agent)
 	}
 	if globalRequiresJail(global) && !trust.jail &&
-		!flagsWasSet(flags, "no-jail") && !flagsWasSet(flags, "sandbox") {
+		!flagsWasSet(flags, flagNoJail) && !flagsWasSet(flags, "sandbox") {
 		return errors.New("local config disables the sandbox (options.jail: false) " +
 			"while the global catalog defaults it on; pass --no-jail to accept that explicitly")
 	}
@@ -298,7 +324,7 @@ func reportPreflight(errOut io.Writer, issues []launcher.Issue) bool {
 	for _, issue := range issues {
 		label := "error:"
 		if issue.Warning {
-			label = "warning:"
+			label = warningLabel
 		}
 		_, _ = fmt.Fprintln(errOut, label, issue)
 		if !issue.Warning {
@@ -356,58 +382,30 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "upgrade" {
 		return runUpgrade(args[1:], out, errOut)
 	}
-	flags := flag.NewFlagSet("ai-launcher", flag.ContinueOnError)
-	flags.SetOutput(errOut)
-	var opts cliOptions
-	opts.register(flags)
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if handled, err := reportInfoFlags(opts, out); handled {
+	flags, opts, handled, err := parseCommandLine(args, out, errOut)
+	if handled || err != nil {
 		return err
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
-	}
-	if opts.globalPath == "" && home != "" {
-		opts.globalPath = filepath.Join(home, ".config", "ai-launch", "config.yaml")
-	}
-	if opts.localPath == "" {
-		opts.localPath = filepath.Join(mustGetwd(), ".ai-launch.yaml")
-	}
+	home := userHome()
+	resolveConfigPaths(&opts, home)
 	if flagsWasSet(flags, "add") {
 		return launchcmd.AddAgent(opts.globalPath, opts.addName, opts.addPath, opts.addCommand, opts.addDescription, out)
 	}
 	global, globalErr := config.LoadGlobal(opts.globalPath)
 	if globalErr != nil {
-		_, _ = fmt.Fprintln(errOut, "warning:", globalErr)
+		_, _ = fmt.Fprintln(errOut, warningLabel, globalErr)
 	}
-	if opts.install || opts.upgrade {
-		return launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, out, errOut)
-	}
-	if opts.listProfiles {
-		listProfiles(global, out)
-		return nil
-	}
-	if opts.deleteProfile != "" {
-		return deleteProfile(opts.globalPath, global, opts.deleteProfile, out)
+	if handled, err := runGlobalCommands(&opts, global, home, out, errOut); handled {
+		return err
 	}
 	// A corrupt local config degrades exactly like a corrupt global one:
 	// warn and continue with safe defaults. LoadLocal already returns
 	// DefaultLocal() on error, so blocking every launch on a broken
 	// .ai-launch.yaml was pure asymmetry, not extra safety.
-	local, localErr := config.LoadLocal(opts.localPath)
-	if localErr != nil {
-		_, _ = fmt.Fprintln(errOut, "warning:", localErr)
-	}
-	if opts.profile != "" {
-		profile, ok := global.Profiles[opts.profile]
-		if !ok {
-			return fmt.Errorf("profile %q not found in %s", opts.profile, opts.globalPath)
-		}
-		applyProfile(&local, profile)
+	local, err := loadLocalSelection(&opts, global, errOut)
+	if err != nil {
+		return err
 	}
 	catalogue := catalog.New(global)
 	if flags.NArg() > 0 && flags.Arg(0) == "help" {
@@ -417,23 +415,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	positionalArgs := append([]string(nil), flags.Args()...)
 
 	status, trust := resolveAgentSelection(catalogue, opts.agent, local)
-	// Normalization resolves permission dependencies (gpu requires docker) and
-	// drops ids the catalog does not declare. It has to run *after* every input
-	// is merged: normalizing first left a dependency pulled in by a CLI flag
-	// unresolved, so --gpu produced an argv without --docker while the TUI,
-	// which re-normalizes on each toggle, produced the right one.
-	permissions := copyPermissions(local.Permissions)
-	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
-	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
-	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
-	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
-	applyBoolFlag(flags, "display", permissions, "display", opts.display)
-	applyBoolFlag(flags, "pictures", permissions, "pictures", opts.pictures)
-	applyBoolFlag(flags, "tailscale", permissions, "tailscale", opts.tailscale)
-	applyBoolFlag(flags, "systemd-user", permissions, "systemd-user", opts.systemdUser)
-	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
-	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
-	permissions = catalogue.NormalizePermissions(permissions)
+	permissions := resolvePermissions(flags, &opts, local, catalogue)
 	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
 		return err
 	}
@@ -467,20 +449,126 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		ExtraArgs:       local.Options.ExtraArgs,
 		ParamValues:     local.Options.ParamValues,
 	}
-	// Drop integrations the host cannot run (ai-jail on Windows) with an
-	// explanatory warning. macOS keeps the jail — sandbox-exec is supported.
-	var platformIssues []launcher.Issue
-	launchConfig, platformIssues = launcher.ConstrainToPlatform(launchConfig, runtime.GOOS, global.Permissions)
+	launchConfig = finalizeLaunchConfig(launchConfig, global, home, errOut)
+	if opts.saveProfile != "" {
+		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
+	}
+	return launch(launchRequest{
+		args:         args,
+		opts:         opts,
+		global:       global,
+		local:        local,
+		launchConfig: launchConfig,
+		in:           in,
+		out:          out,
+		errOut:       errOut,
+	})
+}
+
+// parseCommandLine builds the flag set, parses args, and runs the flags that
+// only print information and exit. handled is true when one of them ran.
+func parseCommandLine(args []string, out, errOut io.Writer) (*flag.FlagSet, cliOptions, bool, error) {
+	flags := flag.NewFlagSet("ai-launcher", flag.ContinueOnError)
+	flags.SetOutput(errOut)
+	var opts cliOptions
+	opts.register(flags)
+	if err := flags.Parse(args); err != nil {
+		return nil, opts, false, err
+	}
+	handled, err := reportInfoFlags(opts, out)
+	return flags, opts, handled, err
+}
+
+// userHome returns the operator's home directory, or "" when it cannot be
+// determined.
+func userHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// resolveConfigPaths fills in the default config paths for the flags the
+// operator left unset.
+func resolveConfigPaths(opts *cliOptions, home string) {
+	if opts.globalPath == "" && home != "" {
+		opts.globalPath = filepath.Join(home, ".config", "ai-launch", "config.yaml")
+	}
+	if opts.localPath == "" {
+		opts.localPath = filepath.Join(mustGetwd(), ".ai-launch.yaml")
+	}
+}
+
+// runGlobalCommands handles the commands that only need the trusted global
+// config. handled is true when one of them ran.
+func runGlobalCommands(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) (bool, error) {
+	if opts.install || opts.upgrade {
+		return true, launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, out, errOut)
+	}
+	if opts.listProfiles {
+		listProfiles(global, out)
+		return true, nil
+	}
+	if opts.deleteProfile != "" {
+		return true, deleteProfile(opts.globalPath, global, opts.deleteProfile, out)
+	}
+	return false, nil
+}
+
+// loadLocalSelection loads the workspace config and layers the requested
+// profile over it.
+func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer) (config.Local, error) {
+	local, localErr := config.LoadLocal(opts.localPath)
+	if localErr != nil {
+		_, _ = fmt.Fprintln(errOut, warningLabel, localErr)
+	}
+	if opts.profile == "" {
+		return local, nil
+	}
+	profile, ok := global.Profiles[opts.profile]
+	if !ok {
+		return local, fmt.Errorf("profile %q not found in %s", opts.profile, opts.globalPath)
+	}
+	applyProfile(&local, profile)
+	return local, nil
+}
+
+// resolvePermissions merges the configured permissions with the CLI flag
+// overrides and normalizes the result. Normalization resolves permission
+// dependencies (gpu requires docker) and drops ids the catalog does not
+// declare. It has to run *after* every input is merged: normalizing first
+// left a dependency pulled in by a CLI flag unresolved, so --gpu produced an
+// argv without --docker while the TUI, which re-normalizes on each toggle,
+// produced the right one.
+func resolvePermissions(flags *flag.FlagSet, opts *cliOptions, local config.Local, catalogue catalog.Catalog) map[string]bool {
+	permissions := copyPermissions(local.Permissions)
+	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
+	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
+	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
+	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
+	applyBoolFlag(flags, "display", permissions, "display", opts.display)
+	applyBoolFlag(flags, "pictures", permissions, "pictures", opts.pictures)
+	applyBoolFlag(flags, "tailscale", permissions, "tailscale", opts.tailscale)
+	applyBoolFlag(flags, permissionSystemdUser, permissions, permissionSystemdUser, opts.systemdUser)
+	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
+	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
+	return catalogue.NormalizePermissions(permissions)
+}
+
+// finalizeLaunchConfig drops the integrations the host cannot run (ai-jail on
+// Windows) with an explanatory warning, then adds the mounts and flags the
+// launcher infers from the host. macOS keeps the jail — sandbox-exec is
+// supported.
+func finalizeLaunchConfig(launchConfig launcher.LaunchConfig, global config.Global, home string, errOut io.Writer) launcher.LaunchConfig {
+	launchConfig, platformIssues := launcher.ConstrainToPlatform(launchConfig, runtime.GOOS, global.Permissions)
 	for _, issue := range platformIssues {
-		_, _ = fmt.Fprintln(errOut, "warning:", issue)
+		_, _ = fmt.Fprintln(errOut, warningLabel, issue)
 	}
 	if launchConfig.UseJail {
 		launchConfig = applyJailAutoDetection(launchConfig, home, errOut)
 	}
-	if opts.saveProfile != "" {
-		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
-	}
-	return launch(args, opts, global, local, launchConfig, in, out, errOut)
+	return launchConfig
 }
 
 // upgradeResolveTag and upgradeApply are seams: tests stub them to exercise
@@ -676,44 +764,39 @@ func decideLaunchAction(dryRun bool) launchAction {
 	return actionExecute
 }
 
+// launchRequest bundles everything launch needs to confirm, validate, and
+// execute a selection, keeping the flow readable without a long parameter
+// list.
+type launchRequest struct {
+	args         []string
+	opts         cliOptions
+	global       config.Global
+	local        config.Local
+	launchConfig launcher.LaunchConfig
+	in           io.Reader
+	out          io.Writer
+	errOut       io.Writer
+}
+
 // launch confirms the configuration (TUI when interactive), optionally saves
 // it, and builds, validates, and executes the resulting argv.
-func launch(args []string, opts cliOptions, global config.Global, local config.Local, launchConfig launcher.LaunchConfig, in io.Reader, out, errOut io.Writer) error {
-	fromTUI := len(args) == 0
-	if fromTUI {
-		confirmed, err := tui.RunWithHooks(global, launchConfig, tui.Hooks{
-			Save: func(updated launcher.LaunchConfig) error {
-				return saveLocalSelection(opts.globalPath, true, opts.localPath, local, updated)
-			},
-			SaveProfile: func(name string, updated launcher.LaunchConfig) error {
-				if err := config.SetProfile(&global, name, profileFromLaunch(updated)); err != nil {
-					return err
-				}
-				return config.SaveGlobal(opts.globalPath, global)
-			},
-		})
-		if err != nil {
-			// A cancellation is a quiet exit; any other failure is reported.
-			return classifyTUIError(err)
-		}
-		launchConfig = confirmed
-	} else if err := saveLocalSelection(opts.globalPath, opts.save, opts.localPath, local, launchConfig); err != nil {
+func launch(req launchRequest) error {
+	proceed, err := req.confirmSelection()
+	if err != nil || !proceed {
 		return err
-	} else if opts.save {
-		return nil
 	}
-	argv, err := launcher.Build(launchConfig)
+	argv, err := launcher.Build(req.launchConfig)
 	if err != nil {
 		return err
 	}
 	// Validate before printing: --dry-run is the advertised diagnostic surface,
 	// so it must not present a command pre-flight would reject. The argv is
 	// still printed when there are issues — seeing what would run is the point.
-	printOnly := decideLaunchAction(opts.dryRun) == actionPrint
-	issues := launcher.NewValidator().WithPermissions(global.Permissions).Validate(launchConfig)
-	fatal := reportPreflight(errOut, issues)
+	printOnly := decideLaunchAction(req.opts.dryRun) == actionPrint
+	issues := launcher.NewValidator().WithPermissions(req.global.Permissions).Validate(req.launchConfig)
+	fatal := reportPreflight(req.errOut, issues)
 	if printOnly {
-		_, _ = fmt.Fprintln(out, shellJoin(argv))
+		_, _ = fmt.Fprintln(req.out, shellJoin(argv))
 	}
 	if fatal {
 		return errors.New("pre-flight validation failed")
@@ -721,36 +804,75 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 	if printOnly {
 		return nil
 	}
-	// Remember the harness for the TUI MRU list (best-effort; never block
-	// launch). Only the MRU list is persisted: writing the whole merged catalog
-	// on every launch froze that release's built-ins into the user's config.
-	if !launchConfig.ContinueSession {
-		if cmd := strings.TrimSpace(launchConfig.Agent.Command); cmd != "" {
-			config.TouchRecentAgent(&global, cmd)
-			_ = config.SaveRecentAgents(opts.globalPath, global.RecentAgents)
+	req.rememberRecentAgent()
+	return req.execute(argv)
+}
+
+// confirmSelection runs the interactive TUI when the launch came from one, or
+// persists the selection for a CLI invocation. proceed is false when the flow
+// ends here (a --save run, a TUI cancellation, or a TUI error).
+func (r *launchRequest) confirmSelection() (bool, error) {
+	if len(r.args) > 0 {
+		if err := saveLocalSelection(r.opts.globalPath, r.opts.save, r.opts.localPath, r.local, r.launchConfig); err != nil {
+			return false, err
 		}
+		return !r.opts.save, nil
 	}
-	label := launchConfig.Agent.Command
-	if launchConfig.ContinueSession {
+	confirmed, err := tui.RunWithHooks(r.global, r.launchConfig, tui.Hooks{
+		Save: func(updated launcher.LaunchConfig) error {
+			return saveLocalSelection(r.opts.globalPath, true, r.opts.localPath, r.local, updated)
+		},
+		SaveProfile: func(name string, updated launcher.LaunchConfig) error {
+			if err := config.SetProfile(&r.global, name, profileFromLaunch(updated)); err != nil {
+				return err
+			}
+			return config.SaveGlobal(r.opts.globalPath, r.global)
+		},
+	})
+	if err != nil {
+		// A cancellation is a quiet exit; any other failure is reported.
+		return false, classifyTUIError(err)
+	}
+	r.launchConfig = confirmed
+	return true, nil
+}
+
+// rememberRecentAgent records the harness for the TUI MRU list (best-effort;
+// never block launch). Only the MRU list is persisted: writing the whole
+// merged catalog on every launch froze that release's built-ins into the
+// user's config.
+func (r *launchRequest) rememberRecentAgent() {
+	if r.launchConfig.ContinueSession {
+		return
+	}
+	if cmd := strings.TrimSpace(r.launchConfig.Agent.Command); cmd != "" {
+		config.TouchRecentAgent(&r.global, cmd)
+		_ = config.SaveRecentAgents(r.opts.globalPath, r.global.RecentAgents)
+	}
+}
+
+// execute runs the composed argv. After the interactive TUI, ai-launcher stays
+// the parent (PTY) so a child that exits immediately (ai-memory TLS, jail cwd,
+// etc.) is reported as our error instead of looking like the UI just vanished.
+// CLI non-TUI launches still Replace into the child for a thin process tree.
+func (r *launchRequest) execute(argv []string) error {
+	label := r.launchConfig.Agent.Command
+	if r.launchConfig.ContinueSession {
 		label = "continue session"
 	}
 	cmdLine := shellJoin(argv)
 	// Always announce what is about to run so a TUI close is never silent.
-	_, _ = fmt.Fprintf(errOut, "ai-launcher: starting %s\n", label)
-	_, _ = fmt.Fprintf(errOut, "ai-launcher: %s\n", cmdLine)
+	_, _ = fmt.Fprintf(r.errOut, "ai-launcher: starting %s\n", label)
+	_, _ = fmt.Fprintf(r.errOut, "ai-launcher: %s\n", cmdLine)
 
-	// After the interactive TUI, keep ai-launcher as the parent (PTY) so a
-	// child that exits immediately (ai-memory TLS, jail cwd, etc.) is reported
-	// as our error instead of looking like the UI just vanished.
-	// CLI non-TUI launches still Replace into the child for a thin process tree.
-	useReplace := !fromTUI && in == os.Stdin && out == os.Stdout && errOut == os.Stderr
+	useReplace := len(r.args) > 0 && r.in == os.Stdin && r.out == os.Stdout && r.errOut == os.Stderr
 	if useReplace {
-		if err := launcher.ReplaceWithEnv(argv, launcher.Environment(launchConfig)); err != nil {
+		if err := launcher.ReplaceWithEnv(argv, launcher.Environment(r.launchConfig)); err != nil {
 			return fmt.Errorf("failed to start %s: %w\ncommand: %s", label, err, cmdLine)
 		}
 		return nil
 	}
-	execErr := (launcher.PTYExecutor{}).RunWithEnv(context.Background(), argv, launcher.Environment(launchConfig), in, out, errOut)
+	execErr := (launcher.PTYExecutor{}).RunWithEnv(context.Background(), argv, launcher.Environment(r.launchConfig), r.in, r.out, r.errOut)
 	if execErr != nil {
 		return fmt.Errorf("failed to start %s: %w\ncommand: %s\n%s", label, execErr, cmdLine, launchFailureHint(execErr.Error()))
 	}
@@ -965,61 +1087,91 @@ func shellQuote(value string) string {
 }
 
 func splitArgs(input string) ([]string, error) {
-	var result []string
-	var current strings.Builder
-	var quote rune
-	escaped := false
-	haveValue := false
-	flush := func() {
-		if haveValue {
-			result = append(result, current.String())
-			current.Reset()
-			haveValue = false
-		}
-	}
+	parser := &argParser{}
 	for _, r := range input {
-		if escaped {
-			current.WriteRune(r)
-			escaped = false
-			haveValue = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else if quote == '\'' {
-				current.WriteRune(r)
-				haveValue = true
-			} else if r == '\\' {
-				escaped = true
-			} else {
-				current.WriteRune(r)
-				haveValue = true
-			}
-			continue
-		}
-		switch r {
-		case '\'', '"':
-			quote = r
-			haveValue = true
-		case '\\':
-			escaped = true
-			haveValue = true
-		case ' ', '\t', '\n', '\r':
-			flush()
-		default:
-			current.WriteRune(r)
-			haveValue = true
-		}
+		parser.feed(r)
 	}
-	if escaped {
+	return parser.finish()
+}
+
+// argParser holds the state of a splitArgs scan: the accumulated words, the
+// word being built, and the quoting/escaping mode.
+type argParser struct {
+	result    []string
+	current   strings.Builder
+	quote     rune
+	escaped   bool
+	haveValue bool
+}
+
+// feed consumes one rune in the current scanning mode.
+func (p *argParser) feed(r rune) {
+	if p.escaped {
+		p.write(r)
+		p.escaped = false
+		return
+	}
+	if p.quote != 0 {
+		p.feedQuoted(r)
+		return
+	}
+	p.feedBare(r)
+}
+
+// feedQuoted consumes one rune inside a quoted section. A backslash only
+// escapes inside double quotes; inside single quotes it is literal.
+func (p *argParser) feedQuoted(r rune) {
+	switch {
+	case r == p.quote:
+		p.quote = 0
+	case p.quote != '\'' && r == '\\':
+		p.escaped = true
+	default:
+		p.write(r)
+	}
+}
+
+// feedBare consumes one rune outside any quoting.
+func (p *argParser) feedBare(r rune) {
+	switch r {
+	case '\'', '"':
+		p.quote = r
+		p.haveValue = true
+	case '\\':
+		p.escaped = true
+		p.haveValue = true
+	case ' ', '\t', '\n', '\r':
+		p.flush()
+	default:
+		p.write(r)
+	}
+}
+
+// write appends a rune to the word being built.
+func (p *argParser) write(r rune) {
+	p.current.WriteRune(r)
+	p.haveValue = true
+}
+
+// flush closes the word being built, if any.
+func (p *argParser) flush() {
+	if p.haveValue {
+		p.result = append(p.result, p.current.String())
+		p.current.Reset()
+		p.haveValue = false
+	}
+}
+
+// finish validates the end state and returns the accumulated words.
+func (p *argParser) finish() ([]string, error) {
+	if p.escaped {
 		return nil, errors.New("trailing escape")
 	}
-	if quote != 0 {
+	if p.quote != 0 {
 		return nil, errors.New("unterminated quote")
 	}
-	flush()
-	return result, nil
+	p.flush()
+	return p.result, nil
 }
 
 func mustGetwd() string {

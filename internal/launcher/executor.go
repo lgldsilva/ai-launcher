@@ -81,7 +81,11 @@ func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Rea
 // prepareHostTTY puts a real terminal stdin into raw mode and mirrors window
 // size into the PTY. Non-terminal readers (tests, pipes) are left alone.
 func prepareHostTTY(in io.Reader, ptmx *os.File) (restore func()) {
-	restore = func() {}
+	restore = func() {
+		// Intentionally empty: default restore when the host TTY was never
+		// touched (non-terminal input or MakeRaw failed), so the deferred
+		// restore() call in RunWithEnv is always safe.
+	}
 	f, ok := in.(*os.File)
 	if !ok || f == nil {
 		return restore

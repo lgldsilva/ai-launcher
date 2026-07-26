@@ -98,6 +98,15 @@ func (c Catalog) Permission(id string) (config.Permission, bool) {
 // NormalizePermissions enables dependencies for enabled permissions and removes
 // dependents when a parent is disabled. Locked defaults are always retained.
 func (c Catalog) NormalizePermissions(selected map[string]bool) map[string]bool {
+	result := c.seedPermissions(selected)
+	c.propagateRequirements(result)
+	c.disableOrphanDependents(result)
+	return result
+}
+
+// seedPermissions starts from the configured defaults, applies the valid
+// selections, and forces locked permissions on.
+func (c Catalog) seedPermissions(selected map[string]bool) map[string]bool {
 	result := make(map[string]bool, len(c.Global.Permissions))
 	for _, permission := range c.Global.Permissions {
 		result[permission.ID] = permission.Default
@@ -112,6 +121,12 @@ func (c Catalog) NormalizePermissions(selected map[string]bool) map[string]bool 
 			result[permission.ID] = true
 		}
 	}
+	return result
+}
+
+// propagateRequirements enables every transitive dependency of an enabled
+// permission until a fixed point is reached.
+func (c Catalog) propagateRequirements(result map[string]bool) {
 	changed := true
 	for changed {
 		changed = false
@@ -127,6 +142,10 @@ func (c Catalog) NormalizePermissions(selected map[string]bool) map[string]bool 
 			}
 		}
 	}
+}
+
+// disableOrphanDependents turns off permissions that require a disabled one.
+func (c Catalog) disableOrphanDependents(result map[string]bool) {
 	for _, permission := range c.Global.Permissions {
 		if result[permission.ID] {
 			continue
@@ -137,7 +156,6 @@ func (c Catalog) NormalizePermissions(selected map[string]bool) map[string]bool 
 			}
 		}
 	}
-	return result
 }
 
 func (c Catalog) lookPath(command string) (string, error) {

@@ -275,38 +275,69 @@ func runGlobalConfigScenario(t *testing.T, scenario featureScenario) bool {
 // global config, returning 1 when the step was a recognized profile check.
 func checkProfileExpectation(t *testing.T, global config.Global, text string) int {
 	t.Helper()
-	if match := profileAgentExpectation.FindStringSubmatch(text); len(match) == 3 {
-		profile, ok := global.Profiles[match[1]]
-		if !ok || profile.Agent != match[2] {
-			t.Fatalf("profile %q agent = %q; want %q", match[1], profile.Agent, match[2])
-		}
-		return 1
-	}
-	if match := profileOptionExpectation.FindStringSubmatch(text); len(match) == 4 {
-		profile, ok := global.Profiles[match[1]]
-		if !ok || profile.Options == nil {
-			t.Fatalf("profile %q has no options block", match[1])
-		}
-		got, known := localOption(*profile.Options, match[2])
-		if !known {
-			t.Fatalf("unknown option in feature: %q", match[2])
-		}
-		if want := match[3] == "true"; got != want {
-			t.Fatalf("profile %q option %q = %t; want %t", match[1], match[2], got, want)
-		}
-		return 1
-	}
-	if match := profileParamExpectation.FindStringSubmatch(text); len(match) == 4 {
-		profile, ok := global.Profiles[match[1]]
-		if !ok || profile.Options == nil {
-			t.Fatalf("profile %q has no options block", match[1])
-		}
-		if got := profile.Options.ParamValues[match[2]]; got != match[3] {
-			t.Fatalf("profile %q param %q = %q; want %q", match[1], match[2], got, match[3])
-		}
+	if checkProfileAgent(t, global, text) ||
+		checkProfileOption(t, global, text) ||
+		checkProfileParam(t, global, text) {
 		return 1
 	}
 	return 0
+}
+
+// checkProfileAgent handles `profile "<name>" has agent "<agent>"` steps.
+func checkProfileAgent(t *testing.T, global config.Global, text string) bool {
+	t.Helper()
+	match := profileAgentExpectation.FindStringSubmatch(text)
+	if len(match) != 3 {
+		return false
+	}
+	profile, ok := global.Profiles[match[1]]
+	if !ok || profile.Agent != match[2] {
+		t.Fatalf("profile %q agent = %q; want %q", match[1], profile.Agent, match[2])
+	}
+	return true
+}
+
+// checkProfileOption handles `profile "<name>" option "<option>" is <bool>` steps.
+func checkProfileOption(t *testing.T, global config.Global, text string) bool {
+	t.Helper()
+	match := profileOptionExpectation.FindStringSubmatch(text)
+	if len(match) != 4 {
+		return false
+	}
+	options := profileOptionsFor(t, global, match[1])
+	got, known := localOption(*options, match[2])
+	if !known {
+		t.Fatalf("unknown option in feature: %q", match[2])
+	}
+	if want := match[3] == "true"; got != want {
+		t.Fatalf("profile %q option %q = %t; want %t", match[1], match[2], got, want)
+	}
+	return true
+}
+
+// checkProfileParam handles `profile "<name>" param "<param>" is "<value>"` steps.
+func checkProfileParam(t *testing.T, global config.Global, text string) bool {
+	t.Helper()
+	match := profileParamExpectation.FindStringSubmatch(text)
+	if len(match) != 4 {
+		return false
+	}
+	options := profileOptionsFor(t, global, match[1])
+	if got := options.ParamValues[match[2]]; got != match[3] {
+		t.Fatalf("profile %q param %q = %q; want %q", match[1], match[2], got, match[3])
+	}
+	return true
+}
+
+// profileOptionsFor returns the options block of a profile, failing the test
+// when the profile is missing or declares no options.
+func profileOptionsFor(t *testing.T, global config.Global, name string) *config.Options {
+	t.Helper()
+	profile, ok := global.Profiles[name]
+	if !ok || profile.Options == nil {
+		t.Fatalf("profile %q has no options block", name)
+	}
+	return profile.Options
 }
 
 var toolAssetsExpectation = regexp.MustCompile(`^(?:Then|And) tool "([^"]+)" assets equal$`)
@@ -398,45 +429,69 @@ func parseFeature(t *testing.T, path string) []featureScenario {
 	}
 	defer func() { _ = file.Close() }()
 
-	var scenarios []featureScenario
-	var current *featureScenario
-	inDoc := false
-	var doc []string
+	parser := &featureParser{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		rawLine := scanner.Text()
-		line := strings.TrimSpace(rawLine)
-		if line == "\"\"\"" {
-			inDoc = !inDoc
-			if !inDoc && current != nil && len(current.steps) > 0 {
-				current.steps[len(current.steps)-1].doc = strings.Join(doc, "\n")
-				doc = nil
-			}
-			continue
-		}
-		if inDoc {
-			doc = append(doc, rawLine)
-			continue
-		}
-		if strings.HasPrefix(line, "Scenario: ") {
-			scenarios = append(scenarios, featureScenario{name: strings.TrimPrefix(line, "Scenario: ")})
-			current = &scenarios[len(scenarios)-1]
-			continue
-		}
-		if current != nil && (strings.HasPrefix(line, "Given ") || strings.HasPrefix(line, "When ") || strings.HasPrefix(line, "Then ") || strings.HasPrefix(line, "And ")) {
-			current.steps = append(current.steps, featureStep{text: line})
-		}
+		parser.consume(scanner.Text())
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if inDoc {
+	if parser.inDoc {
 		t.Fatalf("unterminated doc string in %s", path)
 	}
-	if len(scenarios) == 0 {
+	if len(parser.scenarios) == 0 {
 		t.Fatalf("no scenarios in %s", path)
 	}
-	return scenarios
+	return parser.scenarios
+}
+
+// featureParser accumulates scenarios and steps while a feature file is
+// scanned line by line.
+type featureParser struct {
+	scenarios []featureScenario
+	current   *featureScenario
+	inDoc     bool
+	doc       []string
+}
+
+// consume feeds one raw line of the feature file into the parser.
+func (p *featureParser) consume(rawLine string) {
+	line := strings.TrimSpace(rawLine)
+	if line == `"""` {
+		p.toggleDoc()
+		return
+	}
+	if p.inDoc {
+		p.doc = append(p.doc, rawLine)
+		return
+	}
+	if strings.HasPrefix(line, "Scenario: ") {
+		p.scenarios = append(p.scenarios, featureScenario{name: strings.TrimPrefix(line, "Scenario: ")})
+		p.current = &p.scenarios[len(p.scenarios)-1]
+		return
+	}
+	if p.current != nil && isStepLine(line) {
+		p.current.steps = append(p.current.steps, featureStep{text: line})
+	}
+}
+
+// toggleDoc opens or closes a triple-quoted doc string, attaching the
+// collected lines to the previous step when the block closes.
+func (p *featureParser) toggleDoc() {
+	p.inDoc = !p.inDoc
+	if !p.inDoc && p.current != nil && len(p.current.steps) > 0 {
+		p.current.steps[len(p.current.steps)-1].doc = strings.Join(p.doc, "\n")
+		p.doc = nil
+	}
+}
+
+// isStepLine reports whether the line starts a Given/When/Then/And step.
+func isStepLine(line string) bool {
+	return strings.HasPrefix(line, "Given ") ||
+		strings.HasPrefix(line, "When ") ||
+		strings.HasPrefix(line, "Then ") ||
+		strings.HasPrefix(line, "And ")
 }
 
 func nonEmptyLines(doc string) []string {
