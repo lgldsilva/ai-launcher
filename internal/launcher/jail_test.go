@@ -239,6 +239,22 @@ func TestEnvironmentOmitsNativeBinWhenManagedRunnerMissingOrMemoryOff(t *testing
 	}
 }
 
+func TestEnvironmentOmitsNativeBinWhenManagedRunnerIsNotExecutable(t *testing.T) {
+	home := t.TempDir()
+	native := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	if err := os.MkdirAll(filepath.Dir(native), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("native"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range Environment(LaunchConfig{UseMemory: true, HomeDir: home}) {
+		if strings.HasPrefix(entry, "AI_MEMORY_NATIVE_BIN=") {
+			t.Fatalf("AI_MEMORY_NATIVE_BIN exported for a non-executable runner: %q", entry)
+		}
+	}
+}
+
 func TestManagedNativeRunnerPathAppendsExeForWindowsTarget(t *testing.T) {
 	originalWindows := isWindows
 	isWindows = func() bool { return true }

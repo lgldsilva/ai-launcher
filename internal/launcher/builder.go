@@ -33,9 +33,15 @@ func Environment(cfg LaunchConfig) []string {
 		env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
 		// The ai-memory wrapper skips its own download/refresh logic (fragile
 		// inside ai-jail) when AI_MEMORY_NATIVE_BIN points at an executable
-		// native binary managed by the launcher's installer.
+		// native binary managed by the launcher's installer. The executable
+		// bit is required: a regular file without it would make the wrapper
+		// exec a non-runnable path. Windows has no exec bit, so the regular
+		// file check is enough there. The check is best-effort — the managed
+		// directory is user-writable, so the file can change before the child
+		// execs it (accepted TOCTOU; the wrapper fails visibly, not silently).
 		if native := managedNativeRunnerPath(cfg.HomeDir); native != "" {
-			if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() {
+			if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() &&
+				(isWindows() || info.Mode().Perm()&0o111 != 0) {
 				env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
 			}
 		}
