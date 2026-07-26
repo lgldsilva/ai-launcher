@@ -770,3 +770,122 @@ func TestJailFlagsIsZeroCoversV115Fields(t *testing.T) {
 		}
 	}
 }
+
+// The harness lookup must trim user input and scan the whole list: dropping
+// the TrimSpace, breaking after the first entry, or flipping the comparison
+// all change which names `ai-memory run` accepts.
+func TestSupportsMemoryRunHarnessTrimsAndScansTheWholeList(t *testing.T) {
+	for _, name := range []string{"claude", "grok", "kimi", "  claude  ", "\topencode\n"} {
+		if !SupportsMemoryRunHarness(name) {
+			t.Errorf("SupportsMemoryRunHarness(%q) = false; want true", name)
+		}
+	}
+	for _, name := range []string{"", "   ", "not-a-harness", "claude-extra"} {
+		if SupportsMemoryRunHarness(name) {
+			t.Errorf("SupportsMemoryRunHarness(%q) = true; want false", name)
+		}
+	}
+}
+
+// The MRU cap is a literal contract: the list must hold exactly 32 entries,
+// newest first, with the oldest evicted beyond that.
+func TestTouchRecentAgentCapsAtExactly32Entries(t *testing.T) {
+	cfg := Global{}
+	for i := 0; i < 40; i++ {
+		TouchRecentAgent(&cfg, fmt.Sprintf("agent-%02d", i))
+	}
+	if len(cfg.RecentAgents) != 32 {
+		t.Fatalf("RecentAgents length = %d; want exactly 32", len(cfg.RecentAgents))
+	}
+	if cfg.RecentAgents[0] != "agent-39" || cfg.RecentAgents[31] != "agent-08" {
+		t.Fatalf("RecentAgents boundaries = %q ... %q; want agent-39 ... agent-08",
+			cfg.RecentAgents[0], cfg.RecentAgents[31])
+	}
+}
+
+// Re-touching an existing entry moves it to the front but must keep every
+// entry that followed it — a `continue` turned into `break` drops the tail.
+func TestTouchRecentAgentDedupesWithoutDroppingTheTail(t *testing.T) {
+	cfg := Global{RecentAgents: []string{"a", "x", "b"}}
+	TouchRecentAgent(&cfg, "x")
+	if !reflect.DeepEqual(cfg.RecentAgents, []string{"x", "a", "b"}) {
+		t.Fatalf("RecentAgents = %#v; want [x a b]", cfg.RecentAgents)
+	}
+}
+
+// SetProfile trims the agent before storing, so a padded name does not
+// poison the profile snapshot.
+func TestSetProfileTrimsAgentWhitespace(t *testing.T) {
+	global := Global{}
+	if err := SetProfile(&global, "p", Profile{Agent: "  claude  "}); err != nil {
+		t.Fatal(err)
+	}
+	if global.Profiles["p"].Agent != "claude" {
+		t.Fatalf("stored agent = %q; want trimmed %q", global.Profiles["p"].Agent, "claude")
+	}
+}
+
+// ProfileNames must come out sorted no matter how the map iterates.
+func TestProfileNamesSortsRegardlessOfMapOrder(t *testing.T) {
+	global := Global{}
+	for _, name := range []string{"delta", "alpha", "charlie", "bravo", "echo"} {
+		if err := SetProfile(&global, name, Profile{Agent: "claude"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := ProfileNames(global)
+	want := []string{"alpha", "bravo", "charlie", "delta", "echo"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ProfileNames() = %#v; want sorted %#v", got, want)
+	}
+}
+
+// Single-entry summaries are the boundary the len() > 0 checks guard: one
+// toggle, one param or one mount must each render, and an option set with no
+// toggles must not start the summary with a stray space.
+func TestProfileSummaryRendersSingleEntriesAndSkipsEmptyGroups(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile Profile
+		want    string
+	}{
+		{"one toggle", Profile{Agent: "claude", Options: &Options{Jail: true}}, "jail"},
+		{"params without toggles", Profile{Agent: "claude", Options: &Options{ParamValues: map[string]string{"model": "sonnet"}}}, "params=1"},
+		{"one mount", Profile{Agent: "claude", Mounts: []Mount{{Path: "/a"}}}, "mounts=1"},
+		{"single toggle with single mount", Profile{Agent: "claude", Mounts: []Mount{{Path: "/a"}}, Options: &Options{Memory: true}}, "memory mounts=1"},
+	}
+	for _, tc := range cases {
+		if got := ProfileSummary(tc.profile); got != tc.want {
+			t.Errorf("%s: ProfileSummary() = %q; want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A padded path must be cleaned before the stat and stored in trimmed form.
+func TestExistingPathsTrimsSurroundingWhitespace(t *testing.T) {
+	present := filepath.Join(t.TempDir(), "present")
+	if err := os.MkdirAll(present, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	got := ExistingPaths([]string{"  " + present + "\t"})
+	if !reflect.DeepEqual(got, []string{present}) {
+		t.Fatalf("ExistingPaths = %#v; want [%q]", got, present)
+	}
+}
+
+// The transitive closure must converge regardless of declaration order: with
+// the chain declared leaf-first, one pass is not enough, so a dropped
+// `changed = true` leaves the middle of the chain unmarked.
+func TestJailDependentIDsResolvesTransitiveChainInAnyOrder(t *testing.T) {
+	permissions := []Permission{
+		{ID: "gpu", Requires: []string{"docker"}},
+		{ID: "docker", Requires: []string{"jail"}},
+		{ID: "jail"},
+	}
+	dependent := JailDependentIDs(permissions)
+	for _, id := range []string{"jail", "docker", "gpu"} {
+		if !dependent[id] {
+			t.Errorf("JailDependentIDs() missing %q with leaf-first declaration order", id)
+		}
+	}
+}
