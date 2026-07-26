@@ -89,6 +89,7 @@ Options
   [✓] ai-memory
   [ ] New workstream
   [ ] --yolo
+  [ ] --fresh
 
 Preview: ai-jail --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
   ai-memory run pi --executable /usr/local/bin/pi
@@ -377,6 +378,17 @@ ai-launcher --add "My Harness" --path /opt/tools/runner --command runner
 **Mounts**, **Options** (fixed toggles + one row per parameter declared by
 the agent), and **Profiles** (section 5, visible when at least one profile is
 saved).
+
+The fixed toggles of the **Options** section, in display order (parameter
+rows declared by the agent's catalog entry follow them):
+
+| Toggle | CLI equivalent | Notes |
+| --- | --- | --- |
+| `Jail / Sandbox` | `--sandbox` / `--no-jail` | Hidden on Windows, where ai-jail has no build |
+| `ai-memory` | `--memory` / `--no-memory` | Wraps the harness in `ai-memory run` |
+| `New workstream` | `--new <name>` | Seeds the name `new-workstream`; the value shows on a `workstream:` line under the toggles |
+| `--yolo` | `--yolo` / `--no-yolo` | Passes the agent's dangerous-mode flag |
+| `--fresh` | `--fresh` | Only shown while `ai-memory` is on — with the memory layer off the flag would toggle a no-op |
 
 | Key | Action |
 | --- | --- |
