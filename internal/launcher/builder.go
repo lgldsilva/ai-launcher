@@ -580,6 +580,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	onWindows := goos == "windows"
 	issues = append(issues, agentIssues(cfg, lookPath)...)
 	issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
+	issues = append(issues, allowTCPPortIssues(cfg)...)
 	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
 	if v.Getwd != nil {
 		// Advisory only — ai-jail works on macOS; the friction is ai-memory
@@ -664,6 +665,24 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 		return []Issue{{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true}}
 	}
 	return nil
+}
+
+// allowTCPPortIssues warns when allow_tcp_ports is configured without
+// lockdown. ai-jail classifies --allow-tcp-port as lockdown-only, so the
+// builder emits the flags but upstream silently ignores them — the operator
+// believes ports are open when nothing is.
+func allowTCPPortIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail || len(cfg.JailFlags.AllowTCPPorts) == 0 {
+		return nil
+	}
+	if cfg.JailFlags.Lockdown != nil && *cfg.JailFlags.Lockdown {
+		return nil
+	}
+	return []Issue{{
+		Code:    "allow-tcp-ports-without-lockdown",
+		Message: "allow_tcp_ports only takes effect with lockdown enabled; ai-jail ignores --allow-tcp-port otherwise",
+		Warning: true,
+	}}
 }
 
 // freshIssues rejects asking to resume and to start fresh at the same time.

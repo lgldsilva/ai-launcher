@@ -594,6 +594,22 @@ Feature: Launcher command contract
       claude
       """
 
+  Scenario: Warns when TCP ports are allowed without lockdown
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_flags:
+        allow_tcp_ports: [8080]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-tcp-ports-without-lockdown
+      """
+
   Scenario: Rejects a harness ai-memory run does not accept
     Given a validation configuration
       """
