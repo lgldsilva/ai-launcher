@@ -56,8 +56,17 @@ func TestSaveLocalRejectsEmptyAndDirectoryDestination(t *testing.T) {
 	if err := SaveLocal(filepath.Join(parentFile, "config.yaml"), DefaultLocal()); err == nil || !strings.Contains(err.Error(), "create config directory") {
 		t.Fatalf("SaveLocal(file parent) error = %v; want mkdir error", err)
 	}
-	if err := SaveLocal("/proc/config.yaml", DefaultLocal()); err == nil || !strings.Contains(err.Error(), "create temporary config") {
-		t.Fatalf("SaveLocal(proc) error = %v; want temp-file error", err)
+	readOnlyDir := filepath.Join(t.TempDir(), "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0o750); err != nil { //nolint:gosec // test directory, intentionally tightened later
+		t.Fatal(err)
+	}
+	//nolint:gosec // test intentionally creates a read-only parent to force a temp-file error
+	if err := os.Chmod(readOnlyDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(readOnlyDir, 0o750) }() //nolint:gosec // restore test dir permissions for cleanup
+	if err := SaveLocal(filepath.Join(readOnlyDir, "config.yaml"), DefaultLocal()); err == nil || !strings.Contains(err.Error(), "create temporary config") {
+		t.Fatalf("SaveLocal(readonly dir) error = %v; want temp-file error", err)
 	}
 }
 
