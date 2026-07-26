@@ -61,7 +61,7 @@ Feature: Launcher command contract
       latest
       """
 
-  Scenario: Uses a relative GitHub CLI map when home is unavailable
+  Scenario: Omits the GitHub CLI map when home is unavailable
     Given a launch configuration
       """
       agent: codex
@@ -75,8 +75,28 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      codex
+      """
+
+  Scenario: Skips the GitHub CLI map when a configured mount already covers it
+    Given a launch configuration
+      """
+      agent: codex
+      jail: true
+      memory: false
+      home: /home/tester
+      permissions:
+        gh: true
+      mounts:
+        - path: /home/tester/.config
+          mode: rw
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
       --rw-map
-      .config/gh
+      /home/tester/.config
       codex
       """
 

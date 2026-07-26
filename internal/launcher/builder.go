@@ -355,11 +355,16 @@ func appendPermissionArgs(command []string, cfg LaunchConfig) []string {
 			continue
 		}
 		if permission.mountHome != "" {
-			home := cfg.HomeDir
-			if home == "" {
-				home = os.Getenv("HOME")
+			mount, ok := homeMountPath(cfg.HomeDir, permission.mountHome)
+			if !ok {
+				// Fail closed: without a home directory the mount would be a
+				// relative path whose meaning changes with the cwd.
+				continue
 			}
-			command = append(command, "--rw-map", filepathOrEmpty(home, permission.mountHome))
+			if coveredByMounts(mount, cfg.Mounts) {
+				continue
+			}
+			command = append(command, "--rw-map", mount)
 			continue
 		}
 		command = append(command, permission.flag)
@@ -473,11 +478,21 @@ func appendFlagValue(command []string, flag, value string) []string {
 	return append(command, flag, value)
 }
 
-func filepathOrEmpty(home, suffix string) string {
+// homeMountPath joins suffix to the operator's home directory, falling back
+// to $HOME, and reports false when no home is known. Emitting the bare
+// relative suffix instead would mount a path whose meaning silently changes
+// with the working directory, so the mount is omitted (fail closed).
+// filepath.Join also keeps home == "/" correct ("/.config/gh", not a path
+// built by hand-trimming separators).
+func homeMountPath(home, suffix string) (string, bool) {
+	home = strings.TrimSpace(home)
 	if home == "" {
-		return suffix
+		home = strings.TrimSpace(os.Getenv("HOME"))
 	}
-	return strings.TrimRight(home, "/") + "/" + suffix
+	if home == "" {
+		return "", false
+	}
+	return filepath.Join(home, suffix), true
 }
 
 // Issue is a single validation problem with a stable machine-readable Code.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,9 +82,27 @@ func TestValidatorUsesConfiguredExecutablePath(t *testing.T) {
 	}
 }
 
-func TestFilepathOrEmptySupportsMissingHome(t *testing.T) {
-	if got := filepathOrEmpty("", ".config/gh"); got != ".config/gh" {
-		t.Fatalf("filepathOrEmpty() = %q", got)
+func TestHomeMountPathFailsClosedWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if _, ok := homeMountPath("", ".config/gh"); ok {
+		t.Fatal("homeMountPath without any home must report false, not a relative path")
+	}
+	if got, ok := homeMountPath("/", ".config/gh"); !ok || got != "/.config/gh" {
+		t.Fatalf("homeMountPath(\"/\") = %q, %t; want /.config/gh", got, ok)
+	}
+	if got, ok := homeMountPath("/home/tester/", ".config/gh"); !ok || got != "/home/tester/.config/gh" {
+		t.Fatalf("homeMountPath with trailing slash = %q, %t", got, ok)
+	}
+}
+
+func TestCoveredByMountsExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { userHomeDir = original })
+	mounts := []config.Mount{{Path: "~/data", Mode: "rw"}}
+	if !coveredByMounts(filepath.Join(home, "data", "cache"), mounts) {
+		t.Fatal("a path under ~/data must be covered by the ~-configured mount")
 	}
 }
 

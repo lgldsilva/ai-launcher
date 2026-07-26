@@ -133,11 +133,13 @@ func MergeAutoMounts(configured, auto []config.Mount) []config.Mount {
 }
 
 // coveredByMounts reports whether path is equal to or nested under the path
-// of any mount in the list.
+// of any mount in the list. A leading "~" in a configured mount is expanded
+// against the process home first, so "~/.config/gh" dedups against the
+// absolute auto-mounts instead of appearing twice in the argv.
 func coveredByMounts(path string, mounts []config.Mount) bool {
 	path = filepath.Clean(path)
 	for _, mount := range mounts {
-		base := filepath.Clean(strings.TrimSpace(mount.Path))
+		base := filepath.Clean(expandTilde(strings.TrimSpace(mount.Path)))
 		if base == "." {
 			continue
 		}
@@ -146,4 +148,21 @@ func coveredByMounts(path string, mounts []config.Mount) bool {
 		}
 	}
 	return false
+}
+
+// expandTilde resolves a leading "~" (or "~/") against the process home
+// directory. Unexpandable forms (no home, or "~user" syntax) are returned
+// unchanged.
+func expandTilde(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		return path
+	}
+	home, err := userHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }
