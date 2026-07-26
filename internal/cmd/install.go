@@ -226,7 +226,7 @@ func installNativeMemoryRunner(client *installer.Installer, target installTarget
 func installWithoutRecipe(client *installer.Installer, target installTarget, selected string, force bool, out, errOut io.Writer, trace *installLog) (string, error) {
 	if target.SourceURL != "" {
 		if !target.AllowUnverified {
-			return "", fmt.Errorf("%s: source_url installs carry no checksum; set allow_unverified: true in the recipe to accept that, or add a release recipe", target.Name)
+			return "", fmt.Errorf("%s: source_url installs carry no checksum; set allow_unverified: true in the recipe to accept that, or add a release recipe (note: an agent overridden in the global config re-declares scalar fields — allow_unverified must be set on your entry, it is not inherited)", target.Name)
 		}
 		result, err := client.InstallSource(context.Background(), target.Name, target.Command, target.Path, target.SourceURL, force)
 		if err != nil {
