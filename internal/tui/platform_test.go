@@ -95,16 +95,17 @@ func TestNonWindowsKeepsJailToggle(t *testing.T) {
 	}
 }
 
-// stubPATHBin installs an empty executable named name on PATH so pre-flight
-// LookPath succeeds in CI (where ai-memory / ai-jail may be missing).
+// stubPATHBin puts a LookPath-resolvable name on PATH so pre-flight succeeds in
+// CI images that lack ai-memory / ai-jail. Uses a symlink to `true` so we never
+// write a world-executable file (gosec G302/G306).
 func stubPATHBin(t *testing.T, name string) {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600); err != nil {
-		t.Fatal(err)
+	trueBin, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("true not on PATH")
 	}
-	if err := os.Chmod(path, 0o700); err != nil {
+	dir := t.TempDir()
+	if err := os.Symlink(trueBin, filepath.Join(dir, name)); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
