@@ -623,6 +623,43 @@ func SaveGlobal(path string, cfg Global) error {
 	if err != nil {
 		return fmt.Errorf("encode global config: %w", err)
 	}
+	return writeGlobalAtomically(path, b)
+}
+
+// SaveRecentAgents persists only the most-recently-used list, leaving every
+// other key in the file untouched. The launch path used to call SaveGlobal on
+// every run, which wrote the *merged* in-memory catalog back to disk — freezing
+// that release's built-in agents and permissions into the user's config, so a
+// later release's additions never appeared.
+func SaveRecentAgents(path string, recent []string) error {
+	if path == "" {
+		return errors.New("global config path is empty")
+	}
+	document := make(map[string]any)
+	b, err := os.ReadFile(path) // #nosec G304 -- path is the user's config location by design
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(b, &document); err != nil {
+			return fmt.Errorf("parse global config %s: %w", path, err)
+		}
+		if document == nil {
+			document = make(map[string]any)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("read global config: %w", err)
+	}
+	document["version"] = CurrentVersion
+	document["recent_agents"] = recent
+	encoded, err := yaml.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("encode global config: %w", err)
+	}
+	return writeGlobalAtomically(path, encoded)
+}
+
+// writeGlobalAtomically writes the global config through a temporary file with
+// user-only permissions, so a crash mid-write never leaves a partial catalog.
+func writeGlobalAtomically(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create global config directory: %w", err)
 	}
@@ -783,9 +820,7 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 	if strings.TrimSpace(cfg.MemoryServerURL) == legacyMemoryServerURL {
 		cfg.MemoryServerURL = defaults.MemoryServerURL
 	}
-	if len(cfg.Agents) == 0 {
-		cfg.Agents = defaults.Agents
-	}
+	cfg.Agents = mergeAgents(defaults.Agents, cfg.Agents)
 	cfg.Permissions = mergePermissions(defaults.Permissions, cfg.Permissions)
 	if len(cfg.Tools) == 0 {
 		cfg.Tools = defaults.Tools
@@ -794,6 +829,70 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 		cfg.DefaultMounts = defaults.DefaultMounts
 	}
 	return cfg
+}
+
+// mergeAgents merges the built-in agent catalog with the user's, per entry,
+// keyed by Command. A user field that is set wins; a field the user left empty
+// falls back to the built-in default, so an entry written by hand — or
+// materialized by an older release — no longer loses Memory.RunHarness,
+// YoloFlag or Params. Replacing the list wholesale is what made the builder
+// need a hardcoded "oc" remap.
+func mergeAgents(defaults, user []Agent) []Agent {
+	if len(user) == 0 {
+		return defaults
+	}
+	byCommand := make(map[string]Agent, len(user))
+	for _, agent := range user {
+		byCommand[agent.Command] = agent
+	}
+	merged := make([]Agent, 0, len(defaults)+len(user))
+	seen := make(map[string]bool, len(defaults))
+	for _, base := range defaults {
+		seen[base.Command] = true
+		if override, ok := byCommand[base.Command]; ok {
+			merged = append(merged, mergeAgent(base, override))
+			continue
+		}
+		merged = append(merged, base)
+	}
+	for _, agent := range user {
+		if !seen[agent.Command] {
+			merged = append(merged, agent)
+		}
+	}
+	return merged
+}
+
+// mergeAgent overlays one user entry on its built-in default. Booleans are
+// taken from the user entry as-is: false is a meaningful value there (it is how
+// an operator turns off memory support for an agent).
+func mergeAgent(base, override Agent) Agent {
+	merged := override
+	if merged.Name == "" {
+		merged.Name = base.Name
+	}
+	if len(merged.Aliases) == 0 {
+		merged.Aliases = base.Aliases
+	}
+	if merged.SourceURL == "" {
+		merged.SourceURL = base.SourceURL
+	}
+	if merged.Description == "" {
+		merged.Description = base.Description
+	}
+	if merged.YoloFlag == "" {
+		merged.YoloFlag = base.YoloFlag
+	}
+	if len(merged.Params) == 0 {
+		merged.Params = base.Params
+	}
+	if merged.Release == nil {
+		merged.Release = base.Release
+	}
+	if merged.Memory == nil {
+		merged.Memory = base.Memory
+	}
+	return merged
 }
 
 // mergePermissions merges the built-in permission defaults with the user's

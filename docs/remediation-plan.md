@@ -129,14 +129,14 @@ see **Progress** below for what each closed item shipped.
 | S1 | ai-memory installed with no checksum from a mutable ref | high | 1 | done |
 | I1 | 14 of 24 catalog agents break under the default config | high | 1 | done |
 | I4 | `--dry-run` prints before validating | medium | 1 | done |
-| I2 | `--continue` drops workstream, yolo and extra args | medium | 2 | open |
-| I3 | CLI permission flags skip normalization | medium | 2 | open |
-| I7 | Spurious `jail-options-without-jail` warning | medium | 2 | open |
-| S2 | Symlinked `.ai-jail` disables ai-jail config masking | high | 2 | open |
-| S3 | `HomeSymlinkMounts` auto-mounts read-write with no denylist | medium-high | 2 | open |
-| S4 | Ambient `AI_MEMORY_*` variables are never sanitized | medium | 2 | open |
-| I6 | Catalog is not deep-merged and is frozen on every launch | medium | 2 | partial |
-| I5 | Minor consistency cluster (4 sub-items) | low | 2 | open |
+| I2 | `--continue` drops workstream, yolo and extra args | medium | 2 | done |
+| I3 | CLI permission flags skip normalization | medium | 2 | done |
+| I7 | Spurious `jail-options-without-jail` warning | medium | 2 | done |
+| S2 | Symlinked `.ai-jail` disables ai-jail config masking | high | 2 | done |
+| S3 | `HomeSymlinkMounts` auto-mounts read-write with no denylist | medium-high | 2 | done |
+| S4 | Ambient `AI_MEMORY_*` variables are never sanitized | medium | 2 | done |
+| I6 | Catalog is not deep-merged and is frozen on every launch | medium | 2 | done |
+| I5 | Minor consistency cluster (4 sub-items) | low | 2 | done |
 | S6 | No upstream version pinning or compatibility probe | medium | 3 | done |
 | F3 | Gaps in the Gherkin contract | medium | 3 | open |
 | I8 | `COVER_PKGS` does not exist; three divergent exclusion lists | medium | 3 | open |
@@ -150,10 +150,18 @@ see **Progress** below for what each closed item shipped.
 
 Phase 3 was executed before Phase 1, inverting the risk ordering below. Phase 1
 has since been worked in its documented order (I4 first, so the rest is visible
-in `--dry-run`) and is now **complete**. Phase 2 is the remaining work.
+in `--dry-run`). **Phases 1 and 2 are complete**; what remains is Phase 3.
 
 | ID | What shipped | What is still missing |
 | --- | --- | --- |
+| I2 | `buildContinue` emits every wrapper flag `ai-memory run` accepts without a harness — scope, `--new` / `--workstream`, `--yolo`. Harness-native input that genuinely cannot apply is reported as `continue-ignores-harness-input` instead of vanishing | nothing |
+| I3 | Permissions are normalized **after** config, profile and flags are merged, so a dependency pulled in by `--gpu` resolves and the CLI matches the TUI | nothing |
+| I7 | `JailExec` left the `jail-options-without-jail` condition. It is set for every non-TUI launch, so it fired the warning on plain `--no-jail` runs where no jail option had been configured at all | nothing |
+| S2 | The automatic `--no-hide-config` for a symlinked `.ai-jail` now prints an explicit warning naming the file and the effect. Auto-mounted symlink targets are announced too, instead of appearing only in the final argv echo | restricting the automatic path to symlinks resolving inside the checkout (the item lists it as optional) |
+| S3 | `HomeSymlinkMounts` refuses filesystem roots and system trees (`/etc`, `/usr`, `/var`, `/System`, `/private/*`, …) and returns them as `RefusedMount` so each refusal is reported by name | the mode is still read-write for accepted targets; the item asks for it to be configurable |
+| S4 | `upsertEnv` removes the inherited variable when the config leaves an `AI_MEMORY_*` value empty. "Not configured" now means "not set" instead of "whatever direnv exported". The environment-forwarding posture — including the deliberate absence of an allowlist — is recorded in `docs/design-decisions.md` | the allowlist itself, and the `ai-memory run --config` alternative for keeping the token out of the environment |
+| I6 | `mergeAgents` merges the catalog per entry keyed by `Command`, so a hand-written entry no longer loses `Memory.RunHarness` / `YoloFlag` / `Params`. The launch path persists only the MRU list (`SaveRecentAgents`) instead of writing the merged catalog back on every run. With both in place the hardcoded `"oc"` remap in `memoryRunHarness` is gone | nothing |
+| I5 | `--no-memory` inverts like `--no-jail` and `--no-yolo` instead of only ever disabling; `parseMount` splits on the last colon (a directory ending in `ro` survives), requires an absolute path and cleans it; a TUI failure propagates instead of every error reading as a cancellation | the two `extra_args` parsers (`strings.Fields` in the YAML path vs `splitArgs` in the CLI) are still separate |
 | C2 | `enforceLocalConfigTrust` draws a boundary around file-supplied configuration: a local config cannot select an agent the catalog fails to resolve, cannot disable the sandbox while the global catalog defaults it on, and cannot declare a relative mount or a filesystem root. Every refusal names the explicit opt-in (`--agent`, `--add`, `--no-jail`) and what the operator types stays fully trusted | the refusal is unconditional rather than a TTY confirmation prompt (the item allows either; non-interactive runs had to refuse regardless). `jail_flags` weakening `seccomp` / `landlock` / `rlimits` / `hide_config` is not yet part of the comparison |
 | I4 | `--dry-run` validates before printing. The argv is still printed when issues exist, warnings exit 0, a fatal issue exits non-zero. Issues are now labelled `error:` / `warning:` instead of calling everything a warning. The CLI fixtures gained PATH stubs for the harness and both upstream CLIs, so the suite validates a realistic configuration and stays hermetic | nothing |
 | C1 | Presence of `options.jail` / `options.memory` comes from the parsed document (`declaredOptionKeys`) instead of a substring search. `hasOptionKey` / `hasSectionKey` are gone | nothing |

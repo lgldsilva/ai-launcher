@@ -94,8 +94,16 @@ func TestLoadGlobalUsesDefaultsAndMergesOmittedSections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
-	if got.Version != CurrentVersion || len(got.Agents) != 1 || got.Agents[0].Command != "test-agent" {
-		t.Fatalf("configured global fields were not retained: %#v", got)
+	// Agents merge per entry: the user's addition survives alongside the
+	// built-ins instead of replacing the whole catalog.
+	if got.Version != CurrentVersion {
+		t.Fatalf("version = %q; want %q", got.Version, CurrentVersion)
+	}
+	if _, ok := agentByCommand(got.Agents, "test-agent"); !ok {
+		t.Fatalf("configured agent was not retained: %#v", got.Agents)
+	}
+	if _, ok := agentByCommand(got.Agents, "claude"); !ok {
+		t.Fatalf("built-in agents were dropped by a user entry: %#v", got.Agents)
 	}
 	if !reflect.DeepEqual(got.Permissions, DefaultGlobal().Permissions) || !reflect.DeepEqual(got.DefaultMounts, DefaultGlobal().DefaultMounts) {
 		t.Fatalf("omitted global sections were not defaulted: %#v", got)
@@ -430,7 +438,10 @@ permissions:
 	if err != nil {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
-	agent := got.Agents[0]
+	agent, ok := agentByCommand(got.Agents, "custom-cli")
+	if !ok {
+		t.Fatalf("configured agent was not retained: %#v", got.Agents)
+	}
 	if agent.YoloFlag != "--force-yolo" {
 		t.Fatalf("yolo flag = %q", agent.YoloFlag)
 	}

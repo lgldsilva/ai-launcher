@@ -19,9 +19,21 @@ func TestBuildMinimalWithMemory(t *testing.T) {
 }
 
 func TestBuildRemapsOcWrapperToOpencodeHarness(t *testing.T) {
-	// Catalog command is "oc" (preset selector); ai-memory only accepts "opencode".
+	// Catalog command is "oc" (preset selector); ai-memory only accepts
+	// "opencode". The remap comes from the catalog entry, not from a hardcoded
+	// case in the builder: with agents merged per entry, run_harness always
+	// reaches this point.
+	var oc config.Agent
+	for _, agent := range config.DefaultGlobal().Agents {
+		if agent.Command == "oc" {
+			oc = agent
+		}
+	}
+	if oc.Memory == nil || oc.Memory.RunHarness != "opencode" {
+		t.Fatalf("catalog entry for oc = %#v; want run_harness opencode", oc)
+	}
 	got, err := Build(LaunchConfig{
-		Agent:      config.Agent{Command: "oc"},
+		Agent:      oc,
 		Executable: "/Users/me/.local/bin/oc",
 		UseJail:    false,
 		UseMemory:  true,
@@ -30,19 +42,8 @@ func TestBuildRemapsOcWrapperToOpencodeHarness(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build(oc) = %#v, %v; want %#v", got, err, want)
 	}
-	// Explicit RunHarness wins over the built-in remap.
-	got, err = Build(LaunchConfig{
-		Agent: config.Agent{
-			Command: "oc",
-			Memory:  &config.MemoryIntegration{RunHarness: "opencode"},
-		},
-		UseMemory: true,
-	})
-	if err != nil || !reflect.DeepEqual(got, []string{"ai-memory", "run", "opencode"}) {
-		t.Fatalf("Build(oc+run_harness) = %#v, %v", got, err)
-	}
 	// Without memory, still invoke the wrapper binary directly.
-	got, err = Build(LaunchConfig{Agent: config.Agent{Command: "oc"}, Executable: "/bin/oc", UseMemory: false})
+	got, err = Build(LaunchConfig{Agent: oc, Executable: "/bin/oc", UseMemory: false})
 	if err != nil || !reflect.DeepEqual(got, []string{"/bin/oc"}) {
 		t.Fatalf("Build(oc no-memory) = %#v, %v", got, err)
 	}
