@@ -57,13 +57,16 @@ type cliOptions struct {
 	profile, saveProfile           string
 	deleteProfile                  string
 	ssh, gh, docker, gpu           bool
+	display, pictures              bool
+	tailscale, systemdUser         bool
+	mise, worktree                 bool
 	noJail, sandbox                bool
 	memory, noMemory               bool
 	yolo, noYolo                   bool
 	dryRun, save, install, upgrade bool
 	listProfiles                   bool
 	continueSession                bool
-	showVersion                    bool
+	showVersion, doctor            bool
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
@@ -72,6 +75,12 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.gh, "gh", false, "optional: map ~/.config/gh into the jail (for host gh auth; not required)")
 	flags.BoolVar(&o.docker, "docker", false, "enable Docker permission")
 	flags.BoolVar(&o.gpu, "gpu", false, "enable GPU permission")
+	flags.BoolVar(&o.display, "display", false, "force X11/Wayland display passthrough in the jail (Linux only)")
+	flags.BoolVar(&o.pictures, "pictures", false, "map the Pictures folder into the jail (Linux/macOS)")
+	flags.BoolVar(&o.tailscale, "tailscale", false, "expose the Tailscale socket in the jail (Linux/macOS)")
+	flags.BoolVar(&o.systemdUser, "systemd-user", false, "expose the systemd user bus in the jail (Linux only)")
+	flags.BoolVar(&o.mise, "mise", false, "enable the ai-jail mise integration")
+	flags.BoolVar(&o.worktree, "worktree", false, "enable Git worktree passthrough in the jail")
 	flags.BoolVar(&o.noJail, "no-jail", false, "run without ai-jail")
 	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
@@ -105,6 +114,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
+	flags.BoolVar(&o.doctor, "doctor", false, "report the installed upstream tool versions against the supported floor and exit")
 }
 
 // applyToLocal folds every explicitly-set flag into the local configuration
@@ -192,6 +202,45 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 	return nil
 }
 
+// reportInfoFlags handles the flags that only print information and exit,
+// before any configuration is loaded. handled is true when one of them ran.
+func reportInfoFlags(opts cliOptions, out io.Writer) (bool, error) {
+	switch {
+	case opts.showVersion:
+		_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
+		return true, nil
+	case opts.doctor:
+		return true, reportDoctor(out)
+	}
+	return false, nil
+}
+
+// reportDoctor prints the installed upstream CLI versions against the floor
+// this launcher composes with. It is the explicit home of the --version probe:
+// pre-flight validation stays hermetic so a launch never pays for extra
+// processes, and the TUI event loop never blocks on them.
+func reportDoctor(out io.Writer) error {
+	_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
+	stale := false
+	for _, status := range launcher.UpstreamReport(nil, "") {
+		switch {
+		case status.Missing:
+			_, _ = fmt.Fprintf(out, "%-10s not found in PATH (required >= %s)\n", status.Command, status.Minimum)
+		case status.Version == "":
+			_, _ = fmt.Fprintf(out, "%-10s %s (version unreadable; required >= %s)\n", status.Command, status.Path, status.Minimum)
+		case status.TooOld:
+			stale = true
+			_, _ = fmt.Fprintf(out, "%-10s %s is older than the required %s; upgrade with --upgrade\n", status.Command, status.Version, status.Minimum)
+		default:
+			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
+		}
+	}
+	if stale {
+		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits.")
+	}
+	return nil
+}
+
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	// A positional `upgrade` as the first argument is the self-update
 	// subcommand (mirroring semidx). It must be intercepted before the launch
@@ -208,9 +257,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if opts.showVersion {
-		_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
-		return nil
+	if handled, err := reportInfoFlags(opts, out); handled {
+		return err
 	}
 
 	home, err := os.UserHomeDir()
@@ -275,6 +323,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
 	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
 	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
+	applyBoolFlag(flags, "display", permissions, "display", opts.display)
+	applyBoolFlag(flags, "pictures", permissions, "pictures", opts.pictures)
+	applyBoolFlag(flags, "tailscale", permissions, "tailscale", opts.tailscale)
+	applyBoolFlag(flags, "systemd-user", permissions, "systemd-user", opts.systemdUser)
+	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
+	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
 	mountConfig, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
 	if err != nil {
 		return err
@@ -540,7 +594,7 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 		_, _ = fmt.Fprintln(out, shellJoin(argv))
 		return nil
 	}
-	issues := launcher.NewValidator().Validate(launchConfig)
+	issues := launcher.NewValidator().WithPermissions(global.Permissions).Validate(launchConfig)
 	fatal := false
 	for _, issue := range issues {
 		_, _ = fmt.Fprintln(errOut, "warning:", issue)

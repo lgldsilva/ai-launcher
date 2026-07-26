@@ -27,11 +27,23 @@ func buildWithJailFlags(t *testing.T, flags config.JailFlags) []string {
 	return argv
 }
 
-func TestBuildMapsDefaultOffTogglesInBothForms(t *testing.T) {
+// Every tri-state jail flag emits both forms. ai-jail treats an unset boolean
+// as auto (enabled when the resource exists), so "force on" and "leave alone"
+// are different states and neither direction may be dropped.
+func TestBuildMapsEveryTriStateToggleInBothForms(t *testing.T) {
 	for name, toggle := range map[string]func(*config.JailFlags) **bool{
 		"--lockdown":     func(f *config.JailFlags) **bool { return &f.Lockdown },
 		"--private-home": func(f *config.JailFlags) **bool { return &f.PrivateHome },
 		"--tailscale":    func(f *config.JailFlags) **bool { return &f.Tailscale },
+		"--gpu":          func(f *config.JailFlags) **bool { return &f.GPU },
+		"--display":      func(f *config.JailFlags) **bool { return &f.Display },
+		"--mise":         func(f *config.JailFlags) **bool { return &f.Mise },
+		"--worktree":     func(f *config.JailFlags) **bool { return &f.Worktree },
+		"--landlock":     func(f *config.JailFlags) **bool { return &f.Landlock },
+		"--seccomp":      func(f *config.JailFlags) **bool { return &f.Seccomp },
+		"--rlimits":      func(f *config.JailFlags) **bool { return &f.Rlimits },
+		"--status-bar":   func(f *config.JailFlags) **bool { return &f.StatusBar },
+		"--hide-config":  func(f *config.JailFlags) **bool { return &f.HideConfig },
 	} {
 		var flags config.JailFlags
 		*toggle(&flags) = boolPtr(true)
@@ -43,26 +55,9 @@ func TestBuildMapsDefaultOffTogglesInBothForms(t *testing.T) {
 		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", negative, "claude"}) {
 			t.Errorf("disabled %s: argv = %#v; want %s", name, argv, negative)
 		}
-	}
-}
-
-func TestBuildMapsDefaultOnTogglesOnlyWhenDisabled(t *testing.T) {
-	for name, toggle := range map[string]func(*config.JailFlags) **bool{
-		"--no-gpu":         func(f *config.JailFlags) **bool { return &f.GPU },
-		"--no-landlock":    func(f *config.JailFlags) **bool { return &f.Landlock },
-		"--no-seccomp":     func(f *config.JailFlags) **bool { return &f.Seccomp },
-		"--no-rlimits":     func(f *config.JailFlags) **bool { return &f.Rlimits },
-		"--no-status-bar":  func(f *config.JailFlags) **bool { return &f.StatusBar },
-		"--no-hide-config": func(f *config.JailFlags) **bool { return &f.HideConfig },
-	} {
-		var flags config.JailFlags
-		*toggle(&flags) = boolPtr(false)
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", name, "claude"}) {
-			t.Errorf("disabled toggle: argv = %#v; want %s", argv, name)
-		}
-		*toggle(&flags) = boolPtr(true)
+		*toggle(&flags) = nil
 		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "claude"}) {
-			t.Errorf("explicitly enabled default-on toggle must emit nothing: argv = %#v", argv)
+			t.Errorf("unset %s must stay in ai-jail auto mode: argv = %#v", name, argv)
 		}
 	}
 }
@@ -360,5 +355,60 @@ func TestValidatorSkipsAgentLookupForContinueSessions(t *testing.T) {
 	issues := v.Validate(LaunchConfig{ContinueSession: true, UseMemory: true})
 	if len(issues) != 0 {
 		t.Fatalf("continue session produced issues: %#v", issues)
+	}
+}
+
+func TestBuildMapsJailExceptionListsAndHiddenDotdirs(t *testing.T) {
+	argv := buildWithJailFlags(t, config.JailFlags{
+		Mask:               []string{"/etc/secrets"},
+		DenyPaths:          []string{"/proc/kcore"},
+		MaskExceptions:     []string{"/etc/secrets/public", " "},
+		DenyPathExceptions: []string{"/proc/kcore/keep"},
+		HideDotdirs:        []string{".aws", ".gnupg"},
+	})
+	want := []string{
+		"ai-jail",
+		"--mask", "/etc/secrets",
+		"--deny-path", "/proc/kcore",
+		"--mask-except", "/etc/secrets/public",
+		"--deny-path-except", "/proc/kcore/keep",
+		"--hide-dotdir", ".aws",
+		"--hide-dotdir", ".gnupg",
+		"claude",
+	}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("Build() = %#v; want %#v", argv, want)
+	}
+}
+
+func TestBuildMapsStatusBarStyle(t *testing.T) {
+	for _, style := range []string{"dark", "light", "pastel"} {
+		argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: style})
+		if want := []string{"ai-jail", "--status-bar=" + style, "claude"}; !reflect.DeepEqual(argv, want) {
+			t.Errorf("style %q: argv = %#v; want %#v", style, argv, want)
+		}
+	}
+	// Mixed case and surrounding whitespace normalize to the lowercase style.
+	argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: " Dark "})
+	if want := []string{"ai-jail", "--status-bar=dark", "claude"}; !reflect.DeepEqual(argv, want) {
+		t.Fatalf("mixed-case style: argv = %#v; want %#v", argv, want)
+	}
+}
+
+func TestBuildStatusBarStyleSuppressesBooleanForms(t *testing.T) {
+	// A configured style wins over the tri-state toggle: --no-status-bar is
+	// never emitted alongside --status-bar=STYLE.
+	argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "pastel", StatusBar: boolPtr(false)})
+	if want := []string{"ai-jail", "--status-bar=pastel", "claude"}; !reflect.DeepEqual(argv, want) {
+		t.Fatalf("style + disabled toggle: argv = %#v; want %#v", argv, want)
+	}
+	argv = buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "light", StatusBar: boolPtr(true)})
+	if want := []string{"ai-jail", "--status-bar=light", "claude"}; !reflect.DeepEqual(argv, want) {
+		t.Fatalf("style + enabled toggle: argv = %#v; want %#v", argv, want)
+	}
+	// An unrecognized style leaves the boolean toggle in charge.
+	argv = buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "neon", StatusBar: boolPtr(false)})
+	if want := []string{"ai-jail", "--no-status-bar", "claude"}; !reflect.DeepEqual(argv, want) {
+		t.Fatalf("unknown style: argv = %#v; want %#v", argv, want)
 	}
 }

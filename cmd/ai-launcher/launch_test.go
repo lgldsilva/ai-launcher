@@ -77,6 +77,21 @@ func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 	}
 }
 
+func TestV115PermissionFlagsMapToAiJail(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	globalPath, localPath, mounts := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+		"--display", "--pictures", "--tailscale", "--systemd-user", "--mise", "--worktree", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	want := "ai-jail --exec --display --pictures --tailscale --systemd-user --mise --worktree " +
+		defaultMountArgv(mounts) + " custom-cli"
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("dry-run = %q; want %q", out, want)
+	}
+}
+
 func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: /data\n    mode: ro\n")

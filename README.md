@@ -182,7 +182,8 @@ make build-release  # Linux/macOS/Windows binaries (amd64/arm64) in dist/
 ### Managed tools (ai-jail, ai-memory, harnesses)
 
 The launcher installs the tools it orchestrates from GitHub releases, with
-mandatory SHA-256 checksum verification:
+SHA-256 checksum verification on every release asset (see **Security** for the
+one recipe shape that currently bypasses it):
 
 ```bash
 ai-launcher --install                     # everything that has a recipe in the catalog
@@ -228,6 +229,8 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | --- | --- |
 | `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, …) |
 | `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; gpu needs docker) |
+| `--display` / `--pictures` / `--tailscale` / `--systemd-user` / `--mise` / `--worktree` | Optional jail passthroughs, all off by default; each one **forces** its capability on (platform support varies — `display` and `systemd-user` are Linux-only) |
+| `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and exits |
 | `--no-jail` / `--sandbox` | Explicitly disables / enables ai-jail |
 | `--memory` / `--no-memory` | Enables / disables the ai-memory layer |
 | `--yolo` / `--no-yolo` | Passes (or not) the agent's dangerous-mode flag |
@@ -256,12 +259,30 @@ the host tool’s **config/state** stays usable inside the sandbox. All of them
 still **require Jail / Sandbox** when enabled (pre-flight fails if Jail is off
 and a permission is on). On Windows they are hidden: there is no ai-jail.
 
-| Permission (TUI / flag) | What ai-launcher adds | Optional on the host | Notes |
-| --- | --- | --- | --- |
-| **SSH access** / `--ssh` | `ai-jail --ssh` | OpenSSH client / agent if you use SSH from agents | Native ai-jail capability (not a free-form mount list) |
-| **GitHub CLI** / `--gh` | `--rw-map $HOME/.config/gh` | Only if you want `gh` inside the jail: install + `gh auth login` | **Auxiliary only.** Does not install `gh` and does not fail when `gh` is missing. Mounts host config so tokens travel with the tool |
-| **Docker socket** / `--docker` | `ai-jail --docker` | Docker (or compatible) socket if agents need containers | **Opt-in only.** Socket access is effectively host root — enable only for trusted projects |
-| **GPU passthrough** / `--gpu` | `ai-jail --gpu` | GPU devices (mainly Linux) if agents need GPU | Requires Docker permission in the catalog dependency graph |
+| Permission (TUI / flag) | What ai-launcher adds | Platform | Optional on the host | Notes |
+| --- | --- | --- | --- | --- |
+| **SSH access** / `--ssh` | `ai-jail --ssh` | Linux + macOS | OpenSSH client / agent if you use SSH from agents | Native ai-jail capability (not a free-form mount list) |
+| **GitHub CLI** / `--gh` | `--rw-map $HOME/.config/gh` | Linux + macOS | Only if you want `gh` inside the jail: install + `gh auth login` | **Auxiliary only.** Does not install `gh` and does not fail when `gh` is missing. Mounts host config so tokens travel with the tool |
+| **Docker socket** / `--docker` | `ai-jail --docker` | Linux + macOS | Docker (or compatible) socket if agents need containers | **Opt-in only.** Socket access is effectively host root — enable only for trusted projects |
+| **GPU passthrough** / `--gpu` | `ai-jail --gpu` | Linux + macOS | GPU devices (mainly Linux) if agents need GPU | Requires Docker permission in the catalog dependency graph |
+| **Display passthrough** / `--display` | `ai-jail --display` | Linux only | X11/Wayland session if agents open GUI windows | Forces X11/Wayland on; ai-jail auto-detects it when left off |
+| **Pictures folder** / `--pictures` | `ai-jail --pictures` | Linux + macOS | — | Off by default |
+| **Tailscale socket** / `--tailscale` | `ai-jail --tailscale` | Linux + macOS | Tailscale daemon if agents use the tailnet | Off by default |
+| **systemd user bus** / `--systemd-user` | `ai-jail --systemd-user` | Linux only | systemd user session | Off by default; hidden on macOS and unsupported there (pre-flight warns `unsupported-platform`) |
+| **mise integration** / `--mise` | `ai-jail --mise` | Linux + macOS | mise if agents rely on its shims | Forces mise on; ai-jail auto-detects it when left off |
+| **Git worktree passthrough** / `--worktree` | `ai-jail --worktree` | Linux + macOS | — | Forces worktree metadata on; ai-jail auto-detects it when left off |
+
+Permissions unsupported on the current platform are hidden in the TUI; if a
+hand-edited config enables one anyway, pre-flight reports an
+`unsupported-platform` warning instead of failing the launch.
+
+A permission only ever **forces a capability on**. ai-jail treats an unset
+capability as *auto* — enabled when the resource exists on the host — so leaving
+a permission off means "let ai-jail decide", not "off". To force one **off**,
+use the tri-state `jail_flags` block below. When both name the same capability
+(`gpu`, `display`, `tailscale`, `mise`, `worktree`), the explicit `jail_flags`
+value wins and the permission stays silent, so the argv never contradicts
+itself.
 
 Model: the sandbox already sees normal system paths for tools (e.g. `/usr`,
 Homebrew layout depending on ai-jail). Sensitive **state** is withheld unless
@@ -404,16 +425,47 @@ The full schema (fields, defaults, ai-jail `jail_flags`) is in
 via the Docker permission / `--docker` (aligned with recent ai-jail defaults:
 do not pass the host socket unless you trust the workload).
 
+The `jail_flags` block of `.ai-launch.yaml` mirrors the ai-jail v1.15 CLI. Its
+booleans are tri-state and match ai-jail's own model: unset leaves the
+capability in ai-jail's *auto* mode (enabled when the resource exists), while
+`true` and `false` force it on or off. Forcing on is a real state, not a
+synonym for unset, so both forms are always emitted:
+
+| `jail_flags` key | Type | ai-jail flag emitted |
+| --- | --- | --- |
+| `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
+| `status_bar_style` | string (`dark` / `light` / `pastel`) | `--status-bar=STYLE` (suppresses the boolean `status_bar` forms) |
+| `browser` | string (`hard` / `soft` / `off`) | `--browser=hard` / `--browser=soft` / `--no-browser` |
+| `claude_dir` | string | `--claude-dir <PATH>` |
+| `overlay_maps` | list | `--overlay-map <PATH>` per entry |
+| `mask` | list | `--mask <PATH>` per entry |
+| `mask_exceptions` | list | `--mask-except <PATH>` per entry |
+| `deny_paths` | list | `--deny-path <PATH>` per entry |
+| `deny_path_exceptions` | list | `--deny-path-except <PATH>` per entry |
+| `hide_dotdirs` | list | `--hide-dotdir <NAME>` per entry |
+| `allow_tcp_ports` | list of int | `--allow-tcp-port <PORT>` per entry (lockdown only) |
+
 ## Security
 
 Layers of defense:
 
 - Sandbox via ai-jail (bubblewrap on Linux, sandbox-exec on macOS) with
-  read-only mounts by default and permissions (ssh, gh, docker, gpu) off by
-  default.
-- Every install is SHA-256 checksum-verified (`.sha256`, `.sha256sum`,
-  `checksums.txt`, `SHA256SUMS`, or the release body); `allow_unverified:
-  true` exists, but it is an explicit operator choice.
+  read-only mounts by default and every permission (ssh, gh, docker, gpu,
+  display, pictures, tailscale, systemd-user, mise, worktree) off by default.
+  Off means "leave ai-jail's own auto-detection alone", never "force off" —
+  that is a `jail_flags` decision.
+- `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.15.0,
+  `ai-memory` ≥ 1.19.0): it probes `--version` and reports
+  (`ai-jail-version-too-old` / `ai-memory-version-too-old`) when the installed
+  binary is older. It is a separate command on purpose — pre-flight validation
+  never execs the upstream binaries, so a launch costs no extra processes.
+- Installs from a GitHub **release asset** are SHA-256 checksum-verified
+  (`.sha256`, `.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release
+  body); `allow_unverified: true` exists, but it is an explicit operator
+  choice. A tool whose recipe declares `source_url` currently takes the source
+  path instead on Linux and macOS, which validates only the HTTPS scheme and a
+  `#!` shebang — ai-memory is installed this way today. Tracked as item S1 in
+  [docs/remediation-plan.md](docs/remediation-plan.md).
 - Self-update (`ai-launcher upgrade`) and the `install.sh` curl installer are
   stricter: the release `checksums.txt` is mandatory and there is no
   `allow_unverified` escape hatch. The managed ai-memory native runner comes
@@ -460,13 +512,16 @@ Documentation and UI strings in this repository are **English**.
 | [docs/design-decisions.md](docs/design-decisions.md) | Thematic decisions, trade-offs, and what we are not doing |
 | [docs/cicd.md](docs/cicd.md) | GitHub Actions pipeline, SonarCloud, and the release process |
 | [docs/test-strategy.md](docs/test-strategy.md) | Test pyramid, coverage gate, and the Gherkin contract suite |
+| [docs/remediation-plan.md](docs/remediation-plan.md) | Live tracker: audit findings against the ai-jail / ai-memory composition, their status, and the phased plan to close the open ones |
 | [AGENTS.md](AGENTS.md) | Instructions for AI agents working in this repository |
 
 ## Roadmap
 
 - [x] Interactive TUI with real execution (`r` / Ctrl+Enter runs; Space/Enter select)
 - [x] Named profiles and harness-declared parameters
-- [x] Installer with mandatory SHA-256 checksum
+- [x] Installer with SHA-256 checksum verification for release assets
+- [x] Full ai-jail v1.15 capability surface (tri-state auto / force-on / force-off)
+- [ ] Checksum-verified install for tools that ship a `source_url` (today ai-memory takes the unverified source path — see [docs/remediation-plan.md](docs/remediation-plan.md) item S1)
 - [x] Windows as a first-class citizen without jail
 - [x] Gherkin contract suite against ai-jail/ai-memory drift
 - [x] Automated release pipeline (autotag semver + GoReleaser: archives, `checksums.txt`, SBOM)

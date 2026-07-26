@@ -19,10 +19,23 @@ changed under us.
 **How.** Explicit contract: the Gherkin suite in
 `test/features/launcher.feature` (run by `test/gherkin`) locks the exact argv
 composition — `ai-jail → ai-memory run → harness` order, `--no-*` forms,
-workstream/workspace/project scope. If upstream changes, the contract breaks
-in CI, not on the user's machine. The jail flags live in a declarative
-structure (tri-state `config.JailFlags`), so absorbing a new ai-jail version
-is adding a row to a table, not rewriting `if`s.
+workstream/workspace/project scope. The contract asserts what ai-launcher
+**emits**, never what upstream **accepts**: a new upstream release that
+renames a flag installs cleanly and CI stays green. That gap is closed by
+version pinning, not by the contract alone — `config.MinAIJailVersion`
+(`1.15.0`) and `config.MinAIMemoryVersion` (`1.19.0`) declare the supported
+floor in exactly one place, and `ai-launcher --doctor` probes
+`ai-jail --version` / `ai-memory --version` (5s timeout), reporting
+`ai-jail-version-too-old` / `ai-memory-version-too-old` when the installed
+binary is below it. Report, never block: the user may knowingly run ahead. The
+probe is a separate command rather than a pre-flight check because
+`Validator.Validate` runs on every launch and inside the TUI update loop —
+forking two children there buys ~300 ms of latency and a frozen UI for a
+diagnostic nobody asked for. The jail flags live in a declarative structure
+(tri-state `config.JailFlags`) that mirrors ai-jail's own auto / on / off
+model, so absorbing a new ai-jail version is adding a row to a table, not
+rewriting `if`s — and the process for a bump is: review the upstream
+changelog, update the constants and the Gherkin contract in the same commit.
 
 **Trade-offs.** We depend on the third-party CLI surface and the release
 asset formats (e.g. ai-jail publishes only linux-x86_64 and macos-aarch64).
@@ -155,8 +168,11 @@ jail on Windows), instead of fail-fast on the first problem.
 ## Mistakes to avoid
 
 - [ ] Do not reimplement ai-jail/ai-memory functionality — absorb upstream and update the Gherkin contract.
+- [ ] Do not bump `MinAIJailVersion`/`MinAIMemoryVersion` without reviewing the upstream changelog and updating the Gherkin contract in the same commit.
 - [ ] Do not add `if agent == "x"` in the builder — declare a `params:` entry in the catalog.
-- [ ] Do not emit jail flags as loose strings — use `config.JailFlags` (tri-state) to respect ai-jail defaults.
+- [ ] Do not emit jail flags as loose strings — use `config.JailFlags` (tri-state) to respect ai-jail's auto / on / off model.
+- [ ] Do not let a permission and a `jail_flags` entry emit the same ai-jail capability — the explicit flag wins, or the argv contradicts itself.
+- [ ] Do not exec an upstream binary from `Validator.Validate` — it runs on every launch and inside the TUI update loop.
 - [ ] Do not install anything without a verifiable checksum — do not "work around" it with `allow_unverified` in the default catalog.
 - [ ] Do not weaken self-update verification — a missing `checksums.txt` is a hard error, never a silent skip.
 - [ ] Do not put `internal/tui` or the PTY executor in the coverage gate denominator.

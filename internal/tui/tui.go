@@ -26,6 +26,10 @@ var ErrCancelled = errors.New("launcher cancelled")
 // can stub platform detection while running on Linux.
 var isWindows = func() bool { return runtime.GOOS == "windows" }
 
+// goos reports the host platform for permission platform filtering; it is a
+// variable so tests can exercise the filter for any target platform.
+var goos = func() string { return runtime.GOOS }
+
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#b4befe"))
 	mutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6adc8"))
@@ -95,10 +99,15 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	}
 	// ai-jail has no Windows build: hide the jail permission and everything
 	// that requires it there. On macOS (including /Volumes) the jail stays
-	// available — sandbox-exec is a supported backend.
+	// available — sandbox-exec is a supported backend. Permissions whose
+	// Platforms list excludes this host (for example systemd-user on macOS)
+	// are hidden as well.
 	jailDependent := config.JailDependentIDs(global.Permissions)
 	for _, permission := range global.Permissions {
 		if isWindows() && jailDependent[permission.ID] {
+			continue
+		}
+		if !config.PermissionSupportedOn(permission, goos()) {
 			continue
 		}
 		model.permissionIDs = append(model.permissionIDs, permission.ID)
