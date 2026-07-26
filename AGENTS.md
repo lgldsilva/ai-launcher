@@ -17,14 +17,16 @@ canonical chain is `ai-jail [jail flags] ai-memory run [wrapper flags]
 | `make test-coverage` | 90% line gate on the logic packages |
 | `make test-gherkin` | Contract suite (`test/features/launcher.feature`) |
 | `make lint` / `make lint-full` | `go vet` / golangci-lint |
+| `make lint-dist` | ShellCheck + shfmt on `install.sh`, `goreleaser check` |
 
 **Coverage gate**: measures only `internal/config`, `internal/catalog`, and
 `internal/launcher` (excluding `executor.go` and `replace_*.go`); the minimum
 is 90% (`COVERAGE_MIN`). `internal/tui`, `internal/installer`, and the PTY
 executor stay **out of the denominator** — they are covered by `go test -race
--shuffle=on ./...` (race-only). The same boundary is in `COVER_PKGS` in
-`.ai-standards.env`, read by the commit hooks. Do not move UI/execution
-packages into the gate.
+-shuffle=on ./...` (race-only). The commit hooks read the same boundary from
+the `COVERAGE_EXCLUDE` regex in `.ai-standards.env`, and SonarCloud from
+`sonar.coverage.exclusions`; change the three together. Do not move
+UI/execution packages into the gate.
 
 ## Git and hooks (ai-standards)
 
@@ -43,6 +45,14 @@ drift detector for the third-party CLIs: it locks the exact argv composition
 contract test fails after a change, **the code is wrong, not the test** —
 unless upstream changed, in which case the contract is updated together with
 the code, in the same commit.
+
+Out of contract scope (covered by unit tests instead, because they depend on
+the real filesystem or the process environment rather than on argv): the
+home-symlink auto-mounts and their denylist (ARCHITECTURE invariant 9,
+`internal/launcher/symlink_test.go`), the automatic `--no-hide-config` for a
+symlinked project `.ai-jail` (`cmd/ai-launcher/launch_test.go`), and the
+`AI_MEMORY_NATIVE_BIN` export (ARCHITECTURE invariant 8,
+`internal/launcher/builder_test.go`).
 
 ## Quality tools
 

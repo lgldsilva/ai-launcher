@@ -23,13 +23,25 @@ BIN_DIR="${AI_LAUNCHER_INSTALL_DIR:-$HOME/.local/bin}"
 TOKEN="${AI_LAUNCHER_UPDATE_TOKEN:-${GITHUB_TOKEN:-}}"
 VERSION=""
 
-die() { echo "install: $*" >&2; exit 1; }
+die() {
+  echo "install: $*" >&2
+  exit 1
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) VERSION="${2:?--version requires a value}"; shift 2 ;;
-    --bin-dir) BIN_DIR="${2:?--bin-dir requires a value}"; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    --version)
+      VERSION="${2:?--version requires a value}"
+      shift 2
+      ;;
+    --bin-dir)
+      BIN_DIR="${2:?--bin-dir requires a value}"
+      shift 2
+      ;;
+    -h | --help)
+      sed -n '2,17p' "$0"
+      exit 0
+      ;;
     *) die "unknown flag: $1" ;;
   esac
 done
@@ -64,8 +76,8 @@ detect_os() {
 }
 detect_arch() {
   case "$(uname -m)" in
-    x86_64|amd64) echo amd64 ;;
-    aarch64|arm64) echo arm64 ;;
+    x86_64 | amd64) echo amd64 ;;
+    aarch64 | arm64) echo arm64 ;;
     *) die "unsupported arch: $(uname -m) (only amd64 and arm64 releases are published)" ;;
   esac
 }
@@ -85,8 +97,8 @@ pick_highest() {
   fi
   [ -n "$stable" ] || return 1
   echo "$stable" | awk '{ v=$0; sub(/^v/, "", v); n=split(v, a, ".");
-    printf "%010d %010d %010d %s\n", a[1], a[2], a[3], $0 }' \
-    | sort | tail -1 | awk '{ print $4 }'
+    printf "%010d %010d %010d %s\n", a[1], a[2], a[3], $0 }' |
+    sort | tail -1 | awk '{ print $4 }'
 }
 
 # asset_api_url NAME RELEASE_JSON — print the API URL for the named asset.
@@ -124,12 +136,12 @@ download_asset() {
   fi
   [ -n "$TOKEN" ] || die "download failed: $BASE/$_name (set AI_LAUNCHER_UPDATE_TOKEN or GITHUB_TOKEN for private releases)"
   _rel="$WORK/release.json"
-  curl_auth "$API/releases/tags/$VERSION" "application/vnd.github+json" "$_rel" \
-    || die "could not fetch release $VERSION via API (check AI_LAUNCHER_UPDATE_TOKEN / GITHUB_TOKEN)"
+  curl_auth "$API/releases/tags/$VERSION" "application/vnd.github+json" "$_rel" ||
+    die "could not fetch release $VERSION via API (check AI_LAUNCHER_UPDATE_TOKEN / GITHUB_TOKEN)"
   _url="$(asset_api_url "$_name" "$_rel")"
   [ -n "$_url" ] || die "asset $_name not found in release $VERSION"
-  curl_auth "$_url" "application/octet-stream" "$_dest" \
-    || die "download failed via assets API: $_name"
+  curl_auth "$_url" "application/octet-stream" "$_dest" ||
+    die "download failed via assets API: $_name"
 }
 
 # Resolve the version from the latest release when not pinned. Some release
@@ -151,20 +163,21 @@ VER_NOV="${VERSION#v}"
 
 OS="$(detect_os)"
 ARCH="$(detect_arch)"
-EXT=tar.gz
-[ "$OS" = windows ] && EXT=zip
-ARCHIVE="ai-launcher_${VER_NOV}_${OS}_${ARCH}.${EXT}"
+# detect_os only ever returns linux or darwin, and both release archives are
+# tar.gz (the Windows zip exists for manual download from the releases page).
+ARCHIVE="ai-launcher_${VER_NOV}_${OS}_${ARCH}.tar.gz"
 BASE="$DL_BASE/$VERSION"
 
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 echo "Fetching $ARCHIVE ($VERSION) ..."
 download_asset "$ARCHIVE" "$WORK/$ARCHIVE"
 
 # Verify SHA-256 against the release checksums.txt. Verification is mandatory:
 # this script installs the executable you will run, so an unverifiable
 # download is a hard error.
-download_asset "checksums.txt" "$WORK/checksums.txt" \
-  || die "checksums.txt not found — refusing to install an unverified binary"
+download_asset "checksums.txt" "$WORK/checksums.txt" ||
+  die "checksums.txt not found — refusing to install an unverified binary"
 want="$(grep " $ARCHIVE\$" "$WORK/checksums.txt" | awk '{print $1}')"
 [ -n "$want" ] || die "no checksum entry for $ARCHIVE in checksums.txt"
 if command -v sha256sum >/dev/null 2>&1; then
@@ -182,9 +195,9 @@ BIN="$WORK/ai-launcher"
 [ -f "$BIN" ] || die "binary not found inside $ARCHIVE"
 
 mkdir -p "$BIN_DIR"
-install -m 0755 "$BIN" "$BIN_DIR/ai-launcher" 2>/dev/null \
-  || { cp "$BIN" "$BIN_DIR/ai-launcher" && chmod 0755 "$BIN_DIR/ai-launcher"; } \
-  || die "could not write to $BIN_DIR — set AI_LAUNCHER_INSTALL_DIR to a user-writable directory"
+install -m 0755 "$BIN" "$BIN_DIR/ai-launcher" 2>/dev/null ||
+  { cp "$BIN" "$BIN_DIR/ai-launcher" && chmod 0755 "$BIN_DIR/ai-launcher"; } ||
+  die "could not write to $BIN_DIR — set AI_LAUNCHER_INSTALL_DIR to a user-writable directory"
 echo "Installed ai-launcher $VERSION to $BIN_DIR/ai-launcher"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

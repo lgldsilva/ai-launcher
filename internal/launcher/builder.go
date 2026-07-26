@@ -15,6 +15,12 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
+// aiMemoryCommand is the upstream memory CLI invoked as the wrapper layer of
+// the composed argv (`ai-memory run <harness>`) and probed on PATH by the
+// validator. The literal is locked byte-for-byte by the Gherkin contract
+// suite, so every emission shares this single constant.
+const aiMemoryCommand = "ai-memory"
+
 // userHomeDir and isWindows abstract the platform lookups so tests can
 // exercise the managed ai-memory native runner path for any target platform.
 var userHomeDir = os.UserHomeDir
@@ -33,9 +39,15 @@ func Environment(cfg LaunchConfig) []string {
 		env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
 		// The ai-memory wrapper skips its own download/refresh logic (fragile
 		// inside ai-jail) when AI_MEMORY_NATIVE_BIN points at an executable
-		// native binary managed by the launcher's installer.
+		// native binary managed by the launcher's installer. The executable
+		// bit is required: a regular file without it would make the wrapper
+		// exec a non-runnable path. Windows has no exec bit, so the regular
+		// file check is enough there. The check is best-effort — the managed
+		// directory is user-writable, so the file can change before the child
+		// execs it (accepted TOCTOU; the wrapper fails visibly, not silently).
 		if native := managedNativeRunnerPath(cfg.HomeDir); native != "" {
-			if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() {
+			if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() &&
+				(isWindows() || info.Mode().Perm()&0o111 != 0) {
 				env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
 			}
 		}
@@ -56,7 +68,7 @@ func managedNativeRunnerPath(home string) string {
 		}
 		home = resolved
 	}
-	path := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	path := filepath.Join(home, ".local", "share", "ai-launcher", "bin", aiMemoryCommand)
 	if isWindows() {
 		path += ".exe"
 	}
@@ -104,8 +116,11 @@ type LaunchConfig struct {
 	Permissions     map[string]bool
 	Mounts          []config.Mount
 	Yolo            bool
-	ExtraArgs       []string
-	ParamValues     map[string]string
+	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
+	// current workstream instead of resuming or adopting one.
+	Fresh       bool
+	ExtraArgs   []string
+	ParamValues map[string]string
 }
 
 // Build returns argv without executing anything. This is deliberately pure so
@@ -124,9 +139,12 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		command = appendJailArgs(command, cfg)
 	}
 	if cfg.UseMemory {
-		command = append(command, "ai-memory", "run")
+		command = append(command, aiMemoryCommand, "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
+		if cfg.Fresh {
+			command = append(command, "--fresh")
+		}
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
@@ -173,7 +191,7 @@ func buildContinue(cfg LaunchConfig) ([]string, error) {
 	if cfg.UseJail {
 		command = appendJailArgs(command, cfg)
 	}
-	command = append(command, "ai-memory", "run")
+	command = append(command, aiMemoryCommand, "run")
 	command = appendMemoryScope(command, cfg)
 	command = appendWorkstreamSelection(command, cfg)
 	return appendYoloFlag(command, cfg), nil
@@ -266,6 +284,7 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	}
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
+	command = appendExecutableMount(command, cfg)
 	for _, mount := range cfg.Mounts {
 		path := strings.TrimSpace(mount.Path)
 		if path == "" {
@@ -278,6 +297,27 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 		}
 	}
 	return command
+}
+
+// appendExecutableMount maps the directory holding the resolved harness binary
+// read-only, unless a configured mount already covers it. `--executable` names
+// a host path that has to exist *inside* the sandbox; nothing mounted it, so
+// the argv pointed at a binary the agent could not reach and operators worked
+// around it by hand (the .ai-jail in this repo carries /opt/homebrew for
+// exactly that reason). Read-only is enough: the agent runs it, never writes it.
+func appendExecutableMount(command []string, cfg LaunchConfig) []string {
+	executable := strings.TrimSpace(cfg.Executable)
+	if executable == "" || !filepath.IsAbs(executable) {
+		return command
+	}
+	dir := filepath.Dir(executable)
+	if dir == "" || dir == string(filepath.Separator) {
+		return command
+	}
+	if coveredByMounts(dir, cfg.Mounts) {
+		return command
+	}
+	return append(command, "--map", dir)
 }
 
 // jailPermission maps a catalog permission id to the ai-jail capability it
@@ -321,11 +361,16 @@ func appendPermissionArgs(command []string, cfg LaunchConfig) []string {
 			continue
 		}
 		if permission.mountHome != "" {
-			home := cfg.HomeDir
-			if home == "" {
-				home = os.Getenv("HOME")
+			mount, ok := homeMountPath(cfg.HomeDir, permission.mountHome)
+			if !ok {
+				// Fail closed: without a home directory the mount would be a
+				// relative path whose meaning changes with the cwd.
+				continue
 			}
-			command = append(command, "--rw-map", filepathOrEmpty(home, permission.mountHome))
+			if coveredByMounts(mount, cfg.Mounts) {
+				continue
+			}
+			command = append(command, "--rw-map", mount)
 			continue
 		}
 		command = append(command, permission.flag)
@@ -439,11 +484,21 @@ func appendFlagValue(command []string, flag, value string) []string {
 	return append(command, flag, value)
 }
 
-func filepathOrEmpty(home, suffix string) string {
+// homeMountPath joins suffix to the operator's home directory, falling back
+// to $HOME, and reports false when no home is known. Emitting the bare
+// relative suffix instead would mount a path whose meaning silently changes
+// with the working directory, so the mount is omitted (fail closed).
+// filepath.Join also keeps home == "/" correct ("/.config/gh", not a path
+// built by hand-trimming separators).
+func homeMountPath(home, suffix string) (string, bool) {
+	home = strings.TrimSpace(home)
 	if home == "" {
-		return suffix
+		home = strings.TrimSpace(os.Getenv("HOME"))
 	}
-	return strings.TrimRight(home, "/") + "/" + suffix
+	if home == "" {
+		return "", false
+	}
+	return filepath.Join(home, suffix), true
 }
 
 // Issue is a single validation problem with a stable machine-readable Code.
@@ -474,14 +529,6 @@ func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Per
 		message += "; disabled jail-only permissions: " + strings.Join(dropped, ", ")
 	}
 	return cfg, []Issue{{Code: "jail-unsupported-windows", Message: message, Warning: true}}
-}
-
-// ConstrainForHost used to auto-disable the jail on external volumes. That was
-// wrong on macOS: ai-jail (sandbox-exec) is supported there, including under
-// /Volumes. Kept as a no-op so callers still compile; use jailMemoryVolumeIssues
-// for the optional advisory about ai-memory+jail on external disks.
-func ConstrainForHost(cfg LaunchConfig, _, _ string, _ []config.Permission) (LaunchConfig, []Issue) {
-	return cfg, nil
 }
 
 // dropJailAndDependents turns off UseJail and every jail-backed permission.
@@ -552,6 +599,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	onWindows := goos == "windows"
 	issues = append(issues, agentIssues(cfg, lookPath)...)
 	issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
+	issues = append(issues, allowTCPPortIssues(cfg)...)
 	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
 	if v.Getwd != nil {
 		// Advisory only — ai-jail works on macOS; the friction is ai-memory
@@ -559,15 +607,18 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		issues = append(issues, jailMemoryVolumeIssues(cfg, v.Getwd, goos)...)
 	}
 	if cfg.UseMemory {
-		if _, err := lookPath("ai-memory"); err != nil {
+		if _, err := lookPath(aiMemoryCommand); err != nil {
 			issues = append(issues, Issue{Code: "memory-not-found", Message: "ai-memory is required when memory integration is enabled"})
 		}
 		issues = append(issues, memoryHarnessIssues(cfg)...)
 	}
 	issues = append(issues, mountIssues(cfg, stat)...)
 	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
+	issues = append(issues, permissionMountIssues(cfg)...)
 	issues = append(issues, undeclaredParamIssues(cfg)...)
+	issues = append(issues, catalogBooleanParamIssues(cfg)...)
 	issues = append(issues, continueIssues(cfg)...)
+	issues = append(issues, freshIssues(cfg)...)
 	return issues
 }
 
@@ -633,6 +684,72 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 	// option had been configured at all.
 	if !cfg.JailFlags.IsZero() {
 		return []Issue{{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true}}
+	}
+	return nil
+}
+
+// allowTCPPortIssues warns when allow_tcp_ports is configured without
+// lockdown. ai-jail classifies --allow-tcp-port as lockdown-only, so the
+// builder emits the flags but upstream silently ignores them — the operator
+// believes ports are open when nothing is.
+func allowTCPPortIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail || len(cfg.JailFlags.AllowTCPPorts) == 0 {
+		return nil
+	}
+	if cfg.JailFlags.Lockdown != nil && *cfg.JailFlags.Lockdown {
+		return nil
+	}
+	return []Issue{{
+		Code:    "allow-tcp-ports-without-lockdown",
+		Message: "allow_tcp_ports only takes effect with lockdown enabled; ai-jail ignores --allow-tcp-port otherwise",
+		Warning: true,
+	}}
+}
+
+// permissionMountIssues surfaces the two ways an enabled home-mount
+// permission (gh) can silently lose its effect: the mount is omitted because
+// no home directory is known, or a configured read-only mount covers the path
+// and the dedup keeps the weaker mode. Both keep the operator's explicit
+// choice — the warning is what was missing.
+func permissionMountIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail {
+		return nil
+	}
+	var issues []Issue
+	for _, permission := range jailPermissions() {
+		if permission.mountHome == "" || !cfg.Permissions[permission.id] {
+			continue
+		}
+		mount, ok := homeMountPath(cfg.HomeDir, permission.mountHome)
+		if !ok {
+			issues = append(issues, Issue{
+				Code:    "permission-mount-without-home",
+				Message: fmt.Sprintf("permission %q needs a mount under the home directory, but no home is known; the mount was omitted", permission.id),
+				Warning: true,
+			})
+			continue
+		}
+		if coveredByMounts(mount, cfg.Mounts) && !coveredByWritableMounts(mount, cfg.Mounts) {
+			issues = append(issues, Issue{
+				Code:    "permission-mount-downgraded",
+				Message: fmt.Sprintf("permission %q needs read-write access to %s, but a configured mount covers it read-only; make that mount rw or narrower", permission.id, mount),
+				Warning: true,
+			})
+		}
+	}
+	return issues
+}
+
+// freshIssues rejects asking to resume and to start fresh at the same time.
+// --continue resumes the most recent session; --fresh starts a new one in the
+// current workstream. Letting ai-memory arbitrate would make the outcome depend
+// on flag order rather than on what the operator asked for.
+func freshIssues(cfg LaunchConfig) []Issue {
+	if cfg.Fresh && cfg.ContinueSession {
+		return []Issue{{
+			Code:    "fresh-with-continue",
+			Message: "--fresh starts a new session and --continue resumes the most recent one; pick one",
+		}}
 	}
 	return nil
 }
@@ -762,6 +879,36 @@ func unsupportedPlatformIssues(cfg LaunchConfig, goos string, catalog []config.P
 		issues = append(issues, Issue{
 			Code:    "unsupported-platform",
 			Message: fmt.Sprintf("permission %s is not supported on %s", id, goos),
+			Warning: true,
+		})
+	}
+	return issues
+}
+
+// catalogBooleanParamIssues warns when a takes_value: false catalog param is
+// enabled. For those params the emitted flag comes verbatim from the global
+// catalog rather than from the operator, so a hand-edited config can declare
+// a dangerous flag and have any truthy param_values entry inject it. The
+// global config is the trusted location, so this is a visibility warning,
+// not a refusal: a launch shows exactly which catalog-declared flags fire.
+func catalogBooleanParamIssues(cfg LaunchConfig) []Issue {
+	if cfg.ContinueSession {
+		return nil
+	}
+	issues := make([]Issue, 0)
+	for _, param := range cfg.Agent.Params {
+		if param.TakesValue {
+			continue
+		}
+		value, ok := cfg.ParamValues[param.Name]
+		if !ok || !flagEnabled(value) {
+			continue
+		}
+		issues = append(issues, Issue{
+			Code: "catalog-flag-param",
+			Message: fmt.Sprintf(
+				"param %q injects the catalog-declared flag %q; review the global catalog if this is unexpected",
+				param.Name, param.Flag),
 			Warning: true,
 		})
 	}

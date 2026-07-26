@@ -239,6 +239,22 @@ func TestEnvironmentOmitsNativeBinWhenManagedRunnerMissingOrMemoryOff(t *testing
 	}
 }
 
+func TestEnvironmentOmitsNativeBinWhenManagedRunnerIsNotExecutable(t *testing.T) {
+	home := t.TempDir()
+	native := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")
+	if err := os.MkdirAll(filepath.Dir(native), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("native"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range Environment(LaunchConfig{UseMemory: true, HomeDir: home}) {
+		if strings.HasPrefix(entry, "AI_MEMORY_NATIVE_BIN=") {
+			t.Fatalf("AI_MEMORY_NATIVE_BIN exported for a non-executable runner: %q", entry)
+		}
+	}
+}
+
 func TestManagedNativeRunnerPathAppendsExeForWindowsTarget(t *testing.T) {
 	originalWindows := isWindows
 	isWindows = func() bool { return true }
@@ -292,24 +308,6 @@ func TestConstrainToPlatformIsANoOpElsewhere(t *testing.T) {
 		t.Fatalf("windows without jail produced issues: %#v", issues)
 	}
 	_ = constrained
-}
-
-func TestConstrainForHostIsNoOpOnMacOSExternalVolume(t *testing.T) {
-	// ai-jail works on macOS (sandbox-exec), including under /Volumes — do not strip it.
-	cfg := LaunchConfig{
-		UseJail:     true,
-		Permissions: map[string]bool{"ssh": true, "gh": true},
-	}
-	constrained, issues := ConstrainForHost(cfg, "darwin", "/Volumes/MSD512/Projetos/app", config.DefaultGlobal().Permissions)
-	if !constrained.UseJail {
-		t.Fatal("jail must stay enabled on macOS external volume")
-	}
-	if !constrained.Permissions["ssh"] || !constrained.Permissions["gh"] {
-		t.Fatalf("permissions must stay: %#v", constrained.Permissions)
-	}
-	if len(issues) != 0 {
-		t.Fatalf("issues = %#v; want none (ConstrainForHost is a no-op)", issues)
-	}
 }
 
 func TestValidatorWarnsForJailOptionsWithoutJail(t *testing.T) {

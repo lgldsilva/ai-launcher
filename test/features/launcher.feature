@@ -61,7 +61,7 @@ Feature: Launcher command contract
       latest
       """
 
-  Scenario: Uses a relative GitHub CLI map when home is unavailable
+  Scenario: Omits the GitHub CLI map when home is unavailable
     Given a launch configuration
       """
       agent: codex
@@ -75,8 +75,28 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      codex
+      """
+
+  Scenario: Skips the GitHub CLI map when a configured mount already covers it
+    Given a launch configuration
+      """
+      agent: codex
+      jail: true
+      memory: false
+      home: /home/tester
+      permissions:
+        gh: true
+      mounts:
+        - path: /home/tester/.config
+          mode: rw
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
       --rw-map
-      .config/gh
+      /home/tester/.config
       codex
       """
 
@@ -369,6 +389,42 @@ Feature: Launcher command contract
       claude
       """
 
+  Scenario: Emits --fresh as an ai-memory run wrapper flag
+    Given a launch configuration
+      """
+      agent: claude
+      jail: false
+      memory: true
+      fresh: true
+      workstream: release-1
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      release-1
+      --fresh
+      claude
+      """
+
+  Scenario: Rejects --fresh together with --continue
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      continue: true
+      fresh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      fresh-with-continue
+      """
+
   Scenario: Resumes a named workstream through ai-memory run
     Given a launch configuration
       """
@@ -558,6 +614,22 @@ Feature: Launcher command contract
       claude
       """
 
+  Scenario: Warns when TCP ports are allowed without lockdown
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_flags:
+        allow_tcp_ports: [8080]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-tcp-ports-without-lockdown
+      """
+
   Scenario: Rejects a harness ai-memory run does not accept
     Given a validation configuration
       """
@@ -586,4 +658,177 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       permission-without-jail
+      """
+
+  Scenario: Remaps a wrapper command to the ai-memory harness name
+    Given a launch configuration
+      """
+      agent: oc
+      run_harness: opencode
+      jail: false
+      memory: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      opencode
+      """
+
+  Scenario: Mounts the executable directory read-only inside the jail
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: true
+      executable: /opt/tools/bin/claude
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --map
+      /opt/tools/bin
+      ai-memory
+      run
+      claude
+      --executable
+      /opt/tools/bin/claude
+      """
+
+  Scenario: Emits private home, overlay maps, deny paths, tcp ports and claude dir
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        lockdown: true
+        private_home: true
+        overlay_maps: [/data]
+        deny_paths: [/proc/kcore]
+        allow_tcp_ports: [8080]
+        claude_dir: /home/tester/.claude
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --lockdown
+      --private-home
+      --overlay-map
+      /data
+      --deny-path
+      /proc/kcore
+      --allow-tcp-port
+      8080
+      --claude-dir
+      /home/tester/.claude
+      claude
+      """
+
+  Scenario: Emits the soft browser profile
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        browser: soft
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --browser=soft
+      claude
+      """
+
+  Scenario: Emits the negative form for browser off
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        browser: off
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-browser
+      claude
+      """
+
+  Scenario: Continues the most recent session keeping workstream and yolo
+    Given a launch configuration
+      """
+      continue: true
+      jail: false
+      memory: true
+      workstream: sprint-3
+      yolo: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      sprint-3
+      --yolo
+      """
+
+  Scenario: Produces no issues for a plain --no-jail launch
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: false
+      jail_exec: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      """
+
+  Scenario: Warns when a read-only mount downgrades an enabled permission
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      home: /home/tester
+      permissions:
+        gh: true
+      mounts:
+        - path: /home/tester/.config
+          mode: ro
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      mount-not-found
+      permission-mount-downgraded
+      """
+
+  Scenario: Warns when a permission mount is omitted without a home
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      clear_home: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-mount-without-home
       """

@@ -21,38 +21,52 @@ func harnessValidator() Validator {
 // it. Pre-flight has to catch it first, and name the escape hatch.
 func TestValidateRejectsHarnessUnknownToAiMemory(t *testing.T) {
 	for _, harness := range config.MemoryRunHarnesses() {
-		issues := harnessValidator().Validate(LaunchConfig{
-			Agent:     config.Agent{Command: harness},
-			UseMemory: true,
-		})
-		for _, issue := range issues {
-			if issue.Code == "memory-harness-unsupported" {
-				t.Errorf("harness %q rejected: %v", harness, issue)
-			}
-		}
+		assertHarnessAccepted(t, harness)
 	}
 
 	for _, harness := range []string{"gemini", "cursor-agent", "aider"} {
-		issues := harnessValidator().Validate(LaunchConfig{
-			Agent:     config.Agent{Command: harness},
-			UseMemory: true,
-		})
-		found := false
-		for _, issue := range issues {
-			if issue.Code != "memory-harness-unsupported" {
-				continue
-			}
-			found = true
-			if issue.Warning {
-				t.Errorf("harness %q: issue is a warning; an argv ai-memory rejects must be fatal", harness)
-			}
-			if !strings.Contains(issue.Message, "--no-memory") {
-				t.Errorf("harness %q message = %q; want the --no-memory escape named", harness, issue.Message)
-			}
+		assertHarnessRejected(t, harness)
+	}
+}
+
+// assertHarnessAccepted asserts that ai-memory run supports the harness, so
+// validation must not raise memory-harness-unsupported for it.
+func assertHarnessAccepted(t *testing.T, harness string) {
+	t.Helper()
+	issues := harnessValidator().Validate(LaunchConfig{
+		Agent:     config.Agent{Command: harness},
+		UseMemory: true,
+	})
+	for _, issue := range issues {
+		if issue.Code == "memory-harness-unsupported" {
+			t.Errorf("harness %q rejected: %v", harness, issue)
 		}
-		if !found {
-			t.Errorf("harness %q accepted; ai-memory run rejects it", harness)
+	}
+}
+
+// assertHarnessRejected asserts that validation rejects the harness with a
+// fatal memory-harness-unsupported issue naming the --no-memory escape hatch.
+func assertHarnessRejected(t *testing.T, harness string) {
+	t.Helper()
+	issues := harnessValidator().Validate(LaunchConfig{
+		Agent:     config.Agent{Command: harness},
+		UseMemory: true,
+	})
+	found := false
+	for _, issue := range issues {
+		if issue.Code != "memory-harness-unsupported" {
+			continue
 		}
+		found = true
+		if issue.Warning {
+			t.Errorf("harness %q: issue is a warning; an argv ai-memory rejects must be fatal", harness)
+		}
+		if !strings.Contains(issue.Message, "--no-memory") {
+			t.Errorf("harness %q message = %q; want the --no-memory escape named", harness, issue.Message)
+		}
+	}
+	if !found {
+		t.Errorf("harness %q accepted; ai-memory run rejects it", harness)
 	}
 }
 

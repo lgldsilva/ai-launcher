@@ -40,8 +40,10 @@ func TestDefaultGlobalJailRecipeMatchesPublishedAssets(t *testing.T) {
 		t.Errorf("ai-memory assets = %#v; want %#v", got, want)
 	}
 	for _, tool := range global.Tools {
-		if tool.Command == "ai-memory" && tool.SourceURL == "" {
-			t.Error("ai-memory must keep the source_url wrapper as the primary install path")
+		// The default catalog declares no unverified fallback: every tool
+		// installs from checksum-verified release assets (invariant 4).
+		if tool.SourceURL != "" {
+			t.Errorf("tool %q declares a checksum-less source_url in the default catalog", tool.Command)
 		}
 	}
 }
@@ -115,6 +117,42 @@ func TestJailDependentIDsIncludesTransitiveRequirements(t *testing.T) {
 	}
 	if dependent["other"] {
 		t.Error("JailDependentIDs() includes an unrelated permission")
+	}
+}
+
+// IsZero must notice a deviation in every single field: dropping one operand
+// from the && chain would make that field invisible to the zero check.
+func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
+	mutators := map[string]func(*JailFlags){
+		"lockdown":             func(f *JailFlags) { f.Lockdown = boolPointer(true) },
+		"private_home":         func(f *JailFlags) { f.PrivateHome = boolPointer(false) },
+		"tailscale":            func(f *JailFlags) { f.Tailscale = boolPointer(true) },
+		"gpu":                  func(f *JailFlags) { f.GPU = boolPointer(true) },
+		"display":              func(f *JailFlags) { f.Display = boolPointer(false) },
+		"mise":                 func(f *JailFlags) { f.Mise = boolPointer(true) },
+		"worktree":             func(f *JailFlags) { f.Worktree = boolPointer(false) },
+		"landlock":             func(f *JailFlags) { f.Landlock = boolPointer(true) },
+		"seccomp":              func(f *JailFlags) { f.Seccomp = boolPointer(false) },
+		"rlimits":              func(f *JailFlags) { f.Rlimits = boolPointer(true) },
+		"status_bar":           func(f *JailFlags) { f.StatusBar = boolPointer(true) },
+		"hide_config":          func(f *JailFlags) { f.HideConfig = boolPointer(false) },
+		"browser":              func(f *JailFlags) { f.Browser = "soft" },
+		"claude_dir":           func(f *JailFlags) { f.ClaudeDir = "/home/tester/.claude" },
+		"overlay_maps":         func(f *JailFlags) { f.OverlayMaps = []string{"/data"} },
+		"mask":                 func(f *JailFlags) { f.Mask = []string{"/etc/secrets"} },
+		"deny_paths":           func(f *JailFlags) { f.DenyPaths = []string{"/proc/kcore"} },
+		"allow_tcp_ports":      func(f *JailFlags) { f.AllowTCPPorts = []int{8080} },
+		"mask_exceptions":      func(f *JailFlags) { f.MaskExceptions = []string{"/srv/shared"} },
+		"deny_path_exceptions": func(f *JailFlags) { f.DenyPathExceptions = []string{"/var/cache"} },
+		"hide_dotdirs":         func(f *JailFlags) { f.HideDotdirs = []string{".aws"} },
+		"status_bar_style":     func(f *JailFlags) { f.StatusBarStyle = "dark" },
+	}
+	for name, mutate := range mutators {
+		var flags JailFlags
+		mutate(&flags)
+		if flags.IsZero() {
+			t.Errorf("IsZero() = true with only %s set", name)
+		}
 	}
 }
 

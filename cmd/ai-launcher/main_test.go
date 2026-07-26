@@ -40,6 +40,14 @@ func stubPath(t *testing.T, name string) string {
 	return path
 }
 
+// execMountArgv is the read-only map of the directory holding the resolved
+// harness. --executable names a host path that has to exist inside the sandbox,
+// so the launcher mounts its directory.
+func execMountArgv(t *testing.T, name string) string {
+	t.Helper()
+	return "--map " + filepath.Dir(stubPath(t, name))
+}
+
 // writeTestConfigs creates a global config with a custom harness and two
 // profiles plus a local config. The returned mounts are three existing
 // directories used as default_mounts so tests stay independent of the host OS
@@ -120,6 +128,23 @@ func runDryRun(t *testing.T, args ...string) (string, error) {
 	var out, errOut bytes.Buffer
 	err := run(args, strings.NewReader(""), &out, &errOut)
 	return out.String(), err
+}
+
+func TestCorruptLocalConfigWarnsAndContinues(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "options: [not, valid")
+	var out, errOut bytes.Buffer
+	err := run([]string{"--config", globalPath, "--local-config", localPath,
+		"--agent", "codex", "--no-jail", "--no-memory", "--dry-run"},
+		strings.NewReader(""), &out, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v; a corrupt local config must degrade like a corrupt global one", err)
+	}
+	if !strings.Contains(errOut.String(), "warning:") || !strings.Contains(errOut.String(), "local config") {
+		t.Fatalf("stderr %q; want a warning naming the local config parse failure", errOut.String())
+	}
+	if !strings.Contains(out.String(), "codex") {
+		t.Fatalf("dry-run = %q; want the launch to proceed with defaults", out.String())
+	}
 }
 
 func TestProfileFlagLayersOverLocalConfig(t *testing.T) {

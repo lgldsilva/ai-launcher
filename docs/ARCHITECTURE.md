@@ -84,7 +84,11 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    unresolvable agent, disables the sandbox while the global catalog defaults
    it on, or declares a relative mount or a filesystem root. Global config,
    profiles and command-line flags are trusted; the boundary is around the
-   workspace file.
+   workspace file. The exception is provenance: when the launcher saves the
+   file itself (Ctrl+S / `--save`), it records the file's SHA-256 in the
+   trusted global config (`trusted_local_configs`), and a byte-identical file
+   is honored like operator input. Any later edit changes the hash and the
+   boundary applies again — a cloned repository cannot forge the record.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
 4. **Mandatory checksum on installs**: without a verifiable checksum the
    install fails, unless an explicit `allow_unverified: true` in the recipe.
@@ -116,7 +120,21 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    the sandbox). With the jail enabled, the launcher mounts every home
    dotfile symlink target that resolves outside `$HOME` as `--rw-map`
    (`internal/launcher/symlink.go`), skipping targets already covered by a
-   configured mount.
+   configured mount. A denylist refuses filesystem roots and system trees
+   (`/`, `/etc`, `/usr`, `/var`, `/System`, `/private/*`, …): a refused
+   target is never mounted and is reported by name as a pre-flight warning.
+10. **The harness binary must be reachable inside the jail**: `--executable`
+    names an absolute host path, and ai-jail hides everything not explicitly
+    mapped. With the jail enabled, the launcher maps the directory holding
+    the resolved binary read-only (`--map <dir>`), unless a configured mount
+    already covers it. Read-only is sufficient: the agent executes the
+    binary, it never writes it.
+11. **`--exec` marks programmatic launches**: the launcher passes ai-jail's
+    `--exec` (direct exec without the PTY proxy or status bar) whenever the
+    invocation carries arguments — agent selection, flags, `--dry-run`.
+    Bare `ai-launcher` opens the TUI, and the TUI launch omits `--exec` so
+    ai-jail's defaults keep charge of the terminal (`JailExec` in
+    `cmd/ai-launcher/main.go` is exactly `len(args) > 0`).
 
 ## Configuration (summary)
 
@@ -135,9 +153,9 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | `recent_agents[]` | list | Most-recently-used agent commands (newest first); the TUI lists installed agents in this order |
 
 Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
-(`path`/`mode`), and `options`: `jail`, `memory`, `yolo`, `new_workstream`,
-`workstream`, `workspace`, `project`, `jail_flags`, `extra_args`,
-`param_values`.
+(`path`/`mode`), and `options`: `jail`, `memory`, `yolo`, `fresh`,
+`new_workstream`, `workstream`, `workspace`, `project`, `jail_flags`,
+`extra_args`, `param_values`.
 
 ### Permission → jail argv (implementation)
 
@@ -151,7 +169,7 @@ ai-jail (all require `UseJail` when on):
 | Permission id | Argv contribution |
 | --- | --- |
 | `ssh` | `--ssh` |
-| `gh` | `--rw-map $HOME/.config/gh` (config mount only; does not LookPath `gh`) |
+| `gh` | `--rw-map $HOME/.config/gh` (config mount only; does not LookPath `gh`; omitted when no home is known or a configured mount already covers it) |
 | `docker` | `--docker` |
 | `gpu` | `--gpu` |
 | `display` | `--display` (Linux only) |

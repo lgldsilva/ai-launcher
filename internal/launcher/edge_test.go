@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
@@ -80,9 +82,48 @@ func TestValidatorUsesConfiguredExecutablePath(t *testing.T) {
 	}
 }
 
-func TestFilepathOrEmptySupportsMissingHome(t *testing.T) {
-	if got := filepathOrEmpty("", ".config/gh"); got != ".config/gh" {
-		t.Fatalf("filepathOrEmpty() = %q", got)
+func TestHomeMountPathFailsClosedWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if _, ok := homeMountPath("", ".config/gh"); ok {
+		t.Fatal("homeMountPath without any home must report false, not a relative path")
+	}
+	if got, ok := homeMountPath("/", ".config/gh"); !ok || got != "/.config/gh" {
+		t.Fatalf("homeMountPath(\"/\") = %q, %t; want /.config/gh", got, ok)
+	}
+	if got, ok := homeMountPath("/home/tester/", ".config/gh"); !ok || got != "/home/tester/.config/gh" {
+		t.Fatalf("homeMountPath with trailing slash = %q, %t", got, ok)
+	}
+}
+
+func TestCoveredByMountsExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { userHomeDir = original })
+	mounts := []config.Mount{{Path: "~/data", Mode: "rw"}}
+	if !coveredByMounts(filepath.Join(home, "data", "cache"), mounts) {
+		t.Fatal("a path under ~/data must be covered by the ~-configured mount")
+	}
+}
+
+func TestValidatorWarnsOnCatalogBooleanFlagInjection(t *testing.T) {
+	v := Validator{
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+	}
+	agent := config.Agent{Command: "kimi", Params: []config.Param{
+		{Name: "danger", Flag: "--allow-everything", TakesValue: false},
+		{Name: "model", Flag: "--model", TakesValue: true},
+	}}
+	issues := v.Validate(LaunchConfig{
+		Agent:       agent,
+		ParamValues: map[string]string{"danger": "true", "model": "k2"},
+	})
+	if len(issues) != 1 || issues[0].Code != "catalog-flag-param" || !issues[0].Warning {
+		t.Fatalf("issues = %#v; want one catalog-flag-param warning", issues)
+	}
+	if !strings.Contains(issues[0].Message, "--allow-everything") {
+		t.Fatalf("warning must name the injected flag: %q", issues[0].Message)
 	}
 }
 
@@ -117,6 +158,26 @@ func TestPTYExecutorRunsCommand(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "hi") {
 		t.Fatalf("PTY output = %q; want hi", output.String())
+	}
+}
+
+func TestPTYExecutorDrainsOutputWhenWriterIsNil(t *testing.T) {
+	// A nil out must not deadlock: nothing drains the PTY, the child blocks
+	// on a full pipe buffer, and cmd.Wait never returns. Write well past the
+	// PTY buffer size to prove it.
+	done := make(chan error, 1)
+	go func() {
+		done <- (PTYExecutor{}).Run(context.Background(),
+			[]string{"sh", "-c", "head -c 1048576 /dev/zero | tr '\\000' x"},
+			strings.NewReader(""), nil, nil)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("PTYExecutor.Run() error = %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run blocked on a full PTY buffer with out == nil")
 	}
 }
 

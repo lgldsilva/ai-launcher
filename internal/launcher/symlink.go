@@ -43,26 +43,41 @@ func HomeSymlinkMounts(home string) ([]config.Mount, []RefusedMount) {
 		if !strings.HasPrefix(name, ".") {
 			continue
 		}
-		info, err := os.Lstat(filepath.Join(home, name))
-		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			continue
-		}
-		target, err := filepath.EvalSymlinks(filepath.Join(home, name))
-		if err != nil || !filepath.IsAbs(target) {
-			// Broken or relative-only symlink: nothing mountable.
-			continue
-		}
-		if target == canonicalHome || strings.HasPrefix(target, canonicalHome+string(os.PathSeparator)) {
-			continue
-		}
-		if reason, denied := deniedAutoMount(target); denied {
+		target, reason, ok := symlinkMountTarget(home, canonicalHome, name)
+		switch {
+		case reason != "":
 			refused = append(refused, RefusedMount{Link: filepath.Join(home, name), Target: target, Reason: reason})
-			continue
+		case ok:
+			targets = append(targets, target)
 		}
-		targets = append(targets, target)
 	}
 	sort.Slice(refused, func(i, j int) bool { return refused[i].Link < refused[j].Link })
 	return nestedFreeMounts(targets), refused
+}
+
+// symlinkMountTarget classifies one hidden home entry: it returns the
+// resolved mount target when the entry is a symlink escaping the home tree,
+// or the denylist reason when that target is a denied tree. ok is false for
+// everything else (non-symlinks, broken links, links resolving back inside
+// the home tree).
+func symlinkMountTarget(home, canonicalHome, name string) (target, reason string, ok bool) {
+	link := filepath.Join(home, name)
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", "", false
+	}
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil || !filepath.IsAbs(resolved) {
+		// Broken or relative-only symlink: nothing mountable.
+		return "", "", false
+	}
+	if resolved == canonicalHome || strings.HasPrefix(resolved, canonicalHome+string(os.PathSeparator)) {
+		return "", "", false
+	}
+	if reason, denied := deniedAutoMount(resolved); denied {
+		return resolved, reason, false
+	}
+	return resolved, "", true
 }
 
 // RefusedMount is an auto-mount candidate the denylist rejected. It is reported
@@ -133,11 +148,35 @@ func MergeAutoMounts(configured, auto []config.Mount) []config.Mount {
 }
 
 // coveredByMounts reports whether path is equal to or nested under the path
-// of any mount in the list.
+// of any mount in the list. A leading "~" in a configured mount is expanded
+// against the process home first, so "~/.config/gh" dedups against the
+// absolute auto-mounts instead of appearing twice in the argv.
 func coveredByMounts(path string, mounts []config.Mount) bool {
+	return coveredByMountsWhere(path, mounts, nil)
+}
+
+// coveredByWritableMounts reports whether path is covered by a mount that
+// grants read-write access. Coverage by a read-only mount satisfies the path
+// check but not a permission that needs to write (for example gh, whose CLI
+// writes to ~/.config/gh).
+func coveredByWritableMounts(path string, mounts []config.Mount) bool {
+	return coveredByMountsWhere(path, mounts, mountWritable)
+}
+
+// mountWritable reports whether the mount grants write access; anything that
+// is not an explicit read-only mode is read-write, matching argv emission.
+func mountWritable(mount config.Mount) bool {
+	mode := strings.ToLower(strings.TrimSpace(mount.Mode))
+	return mode != "ro" && mode != "read-only"
+}
+
+func coveredByMountsWhere(path string, mounts []config.Mount, accept func(config.Mount) bool) bool {
 	path = filepath.Clean(path)
 	for _, mount := range mounts {
-		base := filepath.Clean(strings.TrimSpace(mount.Path))
+		if accept != nil && !accept(mount) {
+			continue
+		}
+		base := filepath.Clean(expandTilde(strings.TrimSpace(mount.Path)))
 		if base == "." {
 			continue
 		}
@@ -146,4 +185,21 @@ func coveredByMounts(path string, mounts []config.Mount) bool {
 		}
 	}
 	return false
+}
+
+// expandTilde resolves a leading "~" (or "~/") against the process home
+// directory. Unexpandable forms (no home, or "~user" syntax) are returned
+// unchanged.
+func expandTilde(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		return path
+	}
+	home, err := userHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }

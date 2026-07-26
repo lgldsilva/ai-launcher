@@ -200,7 +200,6 @@ func TestChecksumFormatsAndAssetSelection(t *testing.T) {
 		fmt.Sprintf("%s  tool.tar.gz\n", hash),
 		fmt.Sprintf("tool.tar.gz %s\n", hash),
 		fmt.Sprintf("SHA256 (tool.tar.gz) = %s\n", hash),
-		fmt.Sprintf("%s\n", hash),
 	} {
 		got, err := checksumFor([]byte(value), "tool.tar.gz")
 		if err != nil || got != hash {
@@ -213,6 +212,27 @@ func TestChecksumFormatsAndAssetSelection(t *testing.T) {
 	}
 	if _, err := selectAsset(nil, "missing"); err == nil {
 		t.Fatal("selectAsset(missing) = nil error")
+	}
+}
+
+// A checksum line that is not anchored to the wanted filename must never
+// satisfy verification: a release body or checksums file mentioning the hash
+// of a DIFFERENT asset would otherwise pass.
+func TestChecksumForRejectsUnanchoredHashes(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	for _, value := range []string{
+		// Lone hash with no filename at all.
+		fmt.Sprintf("%s\n", hash),
+		// key=<sha256> pair naming nothing.
+		fmt.Sprintf("sha256=%s\n", hash),
+		// Hash anchored to a different asset.
+		fmt.Sprintf("%s  other-tool.tar.gz\n", hash),
+		// BSD form for a different asset.
+		fmt.Sprintf("SHA256 (other-tool.tar.gz) = %s\n", hash),
+	} {
+		if got, err := checksumFor([]byte(value), "tool.tar.gz"); err == nil {
+			t.Errorf("checksumFor(%q) = %q, nil; want an error for an unanchored hash", value, got)
+		}
 	}
 }
 

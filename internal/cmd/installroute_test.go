@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -44,5 +46,21 @@ func TestReleaseAssetsWinOverTheSourceURL(t *testing.T) {
 				t.Fatalf("preferReleaseInstall() = %t; want %t", got, testCase.want)
 			}
 		})
+	}
+}
+
+// Invariant 4: without a verifiable checksum the install fails, unless an
+// explicit allow_unverified: true in the recipe. The source_url path fetches
+// from a mutable URL whose only checks are an HTTPS scheme and a shebang, so
+// it must refuse unless the recipe opted in.
+func TestInstallSourceRequiresAllowUnverified(t *testing.T) {
+	trace, err := newInstallLog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := installTarget{Name: "wrapper", Command: "wrapper", SourceURL: "https://example.test/bin/wrapper"}
+	// A nil client is safe: the refusal must happen before any download.
+	if _, err := installWithoutRecipe(nil, target, "", false, io.Discard, io.Discard, trace); err == nil || !strings.Contains(err.Error(), "allow_unverified") {
+		t.Fatalf("installWithoutRecipe() err = %v; want a refusal naming allow_unverified", err)
 	}
 }

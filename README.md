@@ -89,8 +89,9 @@ Options
   [✓] ai-memory
   [ ] New workstream
   [ ] --yolo
+  [ ] --fresh
 
-Preview: ai-jail --exec --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+Preview: ai-jail --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
   ai-memory run pi --executable /usr/local/bin/pi
 ```
 
@@ -106,18 +107,19 @@ Use `--dry-run` to print argv and exit without executing. Captures below use
 placeholder paths; your output will list your real mounts and executables.
 
 ```bash
-# Full chain: jail + ai-memory + harness
+# Full chain: jail + ai-memory + harness. The directory holding the resolved
+# binary is mapped read-only so --executable is reachable inside the jail.
 ai-launcher --agent pi --dry-run
-# ai-jail --exec --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+# ai-jail --exec --map /usr/local/bin --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
 #   ai-memory run pi --executable /usr/local/bin/pi
 
 # Linux-style mounts (when default_mounts exist on the host)
-# ai-jail --exec --rw-map /storage --rw-map /storage/Projetos \
+# ai-jail --exec --map /usr/local/bin --rw-map /storage --rw-map /storage/Projetos \
 #   ai-memory run pi --executable /usr/local/bin/pi
 
 # OpenCode Presets (catalog command "oc") maps to ai-memory harness "opencode"
 ai-launcher --agent oc --dry-run
-# ai-jail --exec --rw-map … ai-memory run opencode --executable ~/.local/bin/oc
+# ai-jail --exec --map ~/.local/bin --rw-map … ai-memory run opencode --executable ~/.local/bin/oc
 
 # Continue last managed session (no harness name)
 ai-launcher --continue --dry-run
@@ -125,7 +127,7 @@ ai-launcher --continue --dry-run
 
 # Jail only (no memory layer)
 ai-launcher --agent pi --no-memory --dry-run
-# ai-jail --exec --rw-map … /usr/local/bin/pi
+# ai-jail --exec --map /usr/local/bin --rw-map … /usr/local/bin/pi
 
 # Memory only (no jail)
 ai-launcher --agent claude --no-jail --dry-run
@@ -133,7 +135,7 @@ ai-launcher --agent claude --no-jail --dry-run
 
 # Permissions are opt-in (Docker off by default — prefer enabling only when needed)
 ai-launcher --agent claude --ssh --gh --dry-run
-# ai-jail --exec --ssh --rw-map …/.config/gh ai-memory run claude
+# ai-jail --exec --ssh --rw-map …/.config/gh --map ~/.local/bin ai-memory run claude --executable ~/.local/bin/claude
 ```
 ## Installation
 
@@ -244,6 +246,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--new <name>` / `--workstream <name>` | Creates / resumes an ai-memory workstream |
 | `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
 | `--continue` | Continues the last ai-memory session of this checkout |
+| `--fresh` | Starts a new ai-memory session in the current workstream instead of resuming one (mutually exclusive with `--continue`) |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
@@ -376,6 +379,17 @@ ai-launcher --add "My Harness" --path /opt/tools/runner --command runner
 the agent), and **Profiles** (section 5, visible when at least one profile is
 saved).
 
+The fixed toggles of the **Options** section, in display order (parameter
+rows declared by the agent's catalog entry follow them):
+
+| Toggle | CLI equivalent | Notes |
+| --- | --- | --- |
+| `Jail / Sandbox` | `--sandbox` / `--no-jail` | Hidden on Windows, where ai-jail has no build |
+| `ai-memory` | `--memory` / `--no-memory` | Wraps the harness in `ai-memory run` |
+| `New workstream` | `--new <name>` | Seeds the name `new-workstream`; the value shows on a `workstream:` line under the toggles |
+| `--yolo` | `--yolo` / `--no-yolo` | Passes the agent's dangerous-mode flag |
+| `--fresh` | `--fresh` | Only shown while `ai-memory` is on — with the memory layer off the flag would toggle a no-op |
+
 | Key | Action |
 | --- | --- |
 | `Tab` / `Shift+Tab`, `1`–`5` | Cycle / jump between sections |
@@ -386,7 +400,7 @@ saved).
 | `a` / `+` / `/` | Mounts: open add-folder panel |
 | `Backspace` | Remove the selected mount (or edit path while adding) |
 | `d` / `Ctrl+D` | Dry-run (preview argv, stay open) |
-| `Ctrl+S` | Save the selection to `.ai-launch.yaml` |
+| `Ctrl+S` | Save the selection to `.ai-launch.yaml` (running with `r` also autosaves, so the next open restores it) |
 | `Ctrl+P` | Save the selection as a named profile in the global config |
 | `?` | Help (full key list) |
 | `q` / `Esc` / `Ctrl+C` | Quit without running |

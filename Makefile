@@ -14,8 +14,10 @@ LDFLAGS ?= -ldflags "-X main.version=$$(git describe --tags --always --dirty 2>/
 GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@latest
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
+SHFMT ?= $(GO) run mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
+GORELEASER ?= $(GO) run github.com/goreleaser/goreleaser/v2@v2.13.0
 
-.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
+.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
 
 build:
 	$(GO) build -buildvcs=false $(LDFLAGS) -o bin/ai-launcher ./cmd/ai-launcher
@@ -59,6 +61,14 @@ lint:
 
 lint-full:
 	$(GOLANGCI_LINT) run ./...
+
+# Gate for the distribution surface: the install script users curl-pipe and
+# the release config that ships the binaries. shellcheck comes from the host
+# (preinstalled on the CI runners); shfmt and goreleaser run via `go run`.
+lint-dist:
+	shellcheck install.sh
+	$(SHFMT) -i 2 -ci -d install.sh
+	$(GORELEASER) check
 
 sec:
 	$(GOSEC) ./...

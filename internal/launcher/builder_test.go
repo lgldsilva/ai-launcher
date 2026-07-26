@@ -62,7 +62,7 @@ func TestBuildAllOptions(t *testing.T) {
 		Yolo:          true,
 		ExtraArgs:     []string{"--model", "sonnet"},
 	})
-	want := []string{"ai-jail", "--ssh", "--rw-map", "/home/lgldsilva/.config/gh", "--docker", "--gpu", "--map", "/data", "--rw-map", "/work", "ai-memory", "run", "--new", "ws-test", "claude", "--executable", "/usr/bin/claude", "--yolo", "--model", "sonnet"}
+	want := []string{"ai-jail", "--ssh", "--rw-map", "/home/lgldsilva/.config/gh", "--docker", "--gpu", "--map", "/usr/bin", "--map", "/data", "--rw-map", "/work", "ai-memory", "run", "--new", "ws-test", "claude", "--executable", "/usr/bin/claude", "--yolo", "--model", "sonnet"}
 	if err != nil {
 		t.Fatal(err)
 	}

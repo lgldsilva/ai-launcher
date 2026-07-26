@@ -89,54 +89,26 @@ func New(homeDir string) *Installer {
 // the current platform. When force is false and the recorded install already
 // matches the latest release it is a no-op returning Status "current".
 func (i *Installer) Install(ctx context.Context, name, command, configuredPath string, release *config.GitHubRelease, force bool) (Result, error) {
-	if release == nil {
-		return Result{Name: name, Status: "unconfigured"}, fmt.Errorf("%s has no GitHub release recipe", name)
+	assetPattern, failure, err := validateInstallInputs(name, command, release, i.platform())
+	if err != nil {
+		return failure, err
 	}
-	if strings.TrimSpace(release.Repository) == "" {
-		return Result{Name: name}, errors.New("release repository is empty")
-	}
-	if strings.TrimSpace(command) == "" {
-		return Result{Name: name}, errors.New("release command is empty")
-	}
-	platform := i.platform()
-	assetPattern := strings.TrimSpace(release.Assets[platform])
-	if assetPattern == "" {
-		return Result{Name: name}, fmt.Errorf("%s has no release asset for %s", name, platform)
-	}
-
-	latest, err := i.latestRelease(ctx, release.Repository)
+	latest, asset, target, err := i.resolveInstall(ctx, name, command, configuredPath, release.Repository, assetPattern)
 	if err != nil {
 		return Result{Name: name}, err
-	}
-	asset, err := selectAsset(latest.Assets, assetPattern)
-	if err != nil {
-		return Result{Name: name}, fmt.Errorf("%s: %w", name, err)
-	}
-	target, err := i.targetPath(configuredPath, command)
-	if err != nil {
-		return Result{Name: name}, fmt.Errorf("%s: %w", name, err)
 	}
 
 	currentState, err := i.loadState()
 	if err != nil {
 		return Result{Name: name}, err
 	}
-	if !force && isExecutable(target) {
-		if saved, ok := currentState.Installs[target]; ok && saved.Repository == release.Repository && saved.Tag == latest.TagName && saved.Asset == asset.Name {
-			return Result{Name: name, Version: latest.TagName, Path: target, Status: "current"}, nil
-		}
+	if installIsCurrent(currentState, target, release.Repository, latest.TagName, asset.Name, force) {
+		return Result{Name: name, Version: latest.TagName, Path: target, Status: "current"}, nil
 	}
 
-	archiveBytes, err := i.download(ctx, asset)
+	binaryBytes, err := i.downloadVerifiedBinary(ctx, asset, latest, release, command)
 	if err != nil {
-		return Result{Name: name}, fmt.Errorf("download %s: %w", asset.Name, err)
-	}
-	if err := i.verifyChecksum(ctx, latest.Assets, asset, archiveBytes, release, latest.Body); err != nil {
-		return Result{Name: name}, fmt.Errorf("verify %s: %w", asset.Name, err)
-	}
-	binaryBytes, err := extractBinary(archiveBytes, asset.Name, release.Binary, command)
-	if err != nil {
-		return Result{Name: name}, fmt.Errorf("extract %s: %w", asset.Name, err)
+		return Result{Name: name}, err
 	}
 	if err := i.installFile(target, binaryBytes); err != nil {
 		return Result{Name: name}, fmt.Errorf("install %s: %w", name, err)
@@ -152,6 +124,71 @@ func (i *Installer) Install(ctx context.Context, name, command, configuredPath s
 		return Result{Name: name, Version: latest.TagName, Path: target}, err
 	}
 	return Result{Name: name, Version: latest.TagName, Path: target, Status: "installed"}, nil
+}
+
+// validateInstallInputs checks the release recipe and command, returning the
+// asset pattern for platform. On failure it also returns the exact Result the
+// caller must report, since each validation failure maps to a distinct one.
+func validateInstallInputs(name, command string, release *config.GitHubRelease, platform string) (string, Result, error) {
+	if release == nil {
+		return "", Result{Name: name, Status: "unconfigured"}, fmt.Errorf("%s has no GitHub release recipe", name)
+	}
+	if strings.TrimSpace(release.Repository) == "" {
+		return "", Result{Name: name}, errors.New("release repository is empty")
+	}
+	if strings.TrimSpace(command) == "" {
+		return "", Result{Name: name}, errors.New("release command is empty")
+	}
+	assetPattern := strings.TrimSpace(release.Assets[platform])
+	if assetPattern == "" {
+		return "", Result{Name: name}, fmt.Errorf("%s has no release asset for %s", name, platform)
+	}
+	return assetPattern, Result{}, nil
+}
+
+// resolveInstall locates the latest release, selects the platform asset, and
+// resolves the install target path.
+func (i *Installer) resolveInstall(ctx context.Context, name, command, configuredPath, repository, assetPattern string) (releaseResponse, Asset, string, error) {
+	latest, err := i.latestRelease(ctx, repository)
+	if err != nil {
+		return releaseResponse{}, Asset{}, "", err
+	}
+	asset, err := selectAsset(latest.Assets, assetPattern)
+	if err != nil {
+		return releaseResponse{}, Asset{}, "", fmt.Errorf("%s: %w", name, err)
+	}
+	target, err := i.targetPath(configuredPath, command)
+	if err != nil {
+		return releaseResponse{}, Asset{}, "", fmt.Errorf("%s: %w", name, err)
+	}
+	return latest, asset, target, nil
+}
+
+// installIsCurrent reports whether the recorded install already matches the
+// latest release asset, so a non-forced install can skip the download.
+func installIsCurrent(currentState state, target, repository, tag, assetName string, force bool) bool {
+	if force || !isExecutable(target) {
+		return false
+	}
+	saved, ok := currentState.Installs[target]
+	return ok && saved.Repository == repository && saved.Tag == tag && saved.Asset == assetName
+}
+
+// downloadVerifiedBinary downloads the asset, verifies its checksum, and
+// extracts the executable bytes from the archive.
+func (i *Installer) downloadVerifiedBinary(ctx context.Context, asset Asset, latest releaseResponse, release *config.GitHubRelease, command string) ([]byte, error) {
+	archiveBytes, err := i.download(ctx, asset)
+	if err != nil {
+		return nil, fmt.Errorf("download %s: %w", asset.Name, err)
+	}
+	if err := i.verifyChecksum(ctx, latest.Assets, asset, archiveBytes, release, latest.Body); err != nil {
+		return nil, fmt.Errorf("verify %s: %w", asset.Name, err)
+	}
+	binaryBytes, err := extractBinary(archiveBytes, asset.Name, release.Binary, command)
+	if err != nil {
+		return nil, fmt.Errorf("extract %s: %w", asset.Name, err)
+	}
+	return binaryBytes, nil
 }
 
 // InstallSource installs a versionless wrapper or script from a trusted HTTPS
@@ -309,31 +346,11 @@ func (i *Installer) download(ctx context.Context, asset Asset) ([]byte, error) {
 
 func (i *Installer) verifyChecksum(ctx context.Context, assets []Asset, archive Asset, data []byte, release *config.GitHubRelease, releaseBody string) error {
 	if digest := strings.TrimSpace(archive.Digest); digest != "" {
-		const prefix = "sha256:"
-		expected := strings.TrimPrefix(strings.ToLower(digest), prefix)
-		if !isSHA256(expected) {
-			return fmt.Errorf("unsupported GitHub asset digest %q", digest)
-		}
-		actual := sha256.Sum256(data)
-		if !strings.EqualFold(expected, hex.EncodeToString(actual[:])) {
-			return fmt.Errorf("sha256 mismatch: expected %s, got %s", expected, hex.EncodeToString(actual[:]))
-		}
-		return nil
+		return verifyAssetDigest(digest, data)
 	}
 	checksumAsset, ok := findChecksumAsset(assets, archive.Name, release.ChecksumAsset)
 	if !ok {
-		if expected, err := checksumFor([]byte(releaseBody), archive.Name); err == nil {
-			digest := sha256.Sum256(data)
-			actual := hex.EncodeToString(digest[:])
-			if !strings.EqualFold(expected, actual) {
-				return fmt.Errorf("sha256 mismatch: expected %s, got %s", expected, actual)
-			}
-			return nil
-		}
-		if release.AllowUnverified {
-			return nil
-		}
-		return errors.New("no checksum asset found; set allow_unverified only when the release provides another trusted integrity mechanism")
+		return verifyWithoutChecksumAsset(releaseBody, archive.Name, data, release.AllowUnverified)
 	}
 	checksumData, err := i.download(ctx, checksumAsset)
 	if err != nil {
@@ -343,6 +360,35 @@ func (i *Installer) verifyChecksum(ctx context.Context, assets []Asset, archive 
 	if err != nil {
 		return err
 	}
+	return compareSHA256(expected, data)
+}
+
+// verifyAssetDigest verifies data against the digest the GitHub API reports
+// on the asset itself, in the form "sha256:<hex>".
+func verifyAssetDigest(digest string, data []byte) error {
+	const prefix = "sha256:"
+	expected := strings.TrimPrefix(strings.ToLower(digest), prefix)
+	if !isSHA256(expected) {
+		return fmt.Errorf("unsupported GitHub asset digest %q", digest)
+	}
+	return compareSHA256(expected, data)
+}
+
+// verifyWithoutChecksumAsset handles releases with no checksum asset: the
+// release body is tried as a checksum source, and failing that the install
+// proceeds only when the recipe explicitly allows unverified installs.
+func verifyWithoutChecksumAsset(releaseBody, archiveName string, data []byte, allowUnverified bool) error {
+	if expected, err := checksumFor([]byte(releaseBody), archiveName); err == nil {
+		return compareSHA256(expected, data)
+	}
+	if allowUnverified {
+		return nil
+	}
+	return errors.New("no checksum asset found; set allow_unverified only when the release provides another trusted integrity mechanism")
+}
+
+// compareSHA256 errors unless the SHA-256 of data matches expected (hex).
+func compareSHA256(expected string, data []byte) error {
 	digest := sha256.Sum256(data)
 	actual := hex.EncodeToString(digest[:])
 	if !strings.EqualFold(expected, actual) {
@@ -371,30 +417,44 @@ func findChecksumAsset(assets []Asset, archiveName, configured string) (Asset, b
 
 func checksumFor(data []byte, filename string) (string, error) {
 	base := filepath.Base(filename)
-	var onlyHash string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.Trim(strings.TrimSpace(strings.ReplaceAll(line, "`", "")), "- ")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		if hash, ok := checksumFromBSDLine(line, filename, base); ok {
+			return hash, nil
+		}
 		fields := strings.Fields(line)
 		if hash, ok := checksumFromFields(fields, filename, base); ok {
 			return hash, nil
 		}
-		if len(fields) == 1 && isSHA256(fields[0]) {
-			onlyHash = strings.ToLower(fields[0])
-		}
-		if strings.Contains(line, "=") {
-			parts := strings.SplitN(line, "=", 2)
-			if isSHA256(strings.TrimSpace(parts[1])) {
-				return strings.ToLower(strings.TrimSpace(parts[1])), nil
-			}
-		}
 	}
-	if onlyHash != "" {
-		return onlyHash, nil
-	}
+	// No fallback: a lone hash or a key=<sha256> pair anchors to nothing, so a
+	// checksums file (or release body) mentioning the hash of a DIFFERENT
+	// asset would satisfy verification. Only filename-anchored lines count.
 	return "", fmt.Errorf("checksum for %s not found", filename)
+}
+
+// checksumFromBSDLine parses the BSD shasum format
+// "SHA256 (<name>) = <hash>" and reports the hash when the parenthesized
+// name matches the wanted filename.
+func checksumFromBSDLine(line, filename, base string) (string, bool) {
+	if !strings.HasPrefix(line, "SHA256 (") {
+		return "", false
+	}
+	name, rest, found := strings.Cut(strings.TrimPrefix(line, "SHA256 ("), ")")
+	if !found {
+		return "", false
+	}
+	hash := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "="))
+	if !isSHA256(hash) {
+		return "", false
+	}
+	if name == filename || filepath.Base(name) == base {
+		return strings.ToLower(hash), true
+	}
+	return "", false
 }
 
 // checksumFromFields locates a sha256 token on a checksum-file line and

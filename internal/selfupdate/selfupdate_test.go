@@ -316,43 +316,76 @@ type recordedRequest struct {
 // serves the bytes. files maps asset name → contents.
 func privateReleaseServer(t *testing.T, token, tag string, files map[string][]byte) (*httptest.Server, *[]recordedRequest) {
 	t.Helper()
-	requests := &[]recordedRequest{}
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
+	fixture := &privateReleaseFixture{
+		token:    token,
+		tag:      tag,
+		files:    files,
+		requests: &[]recordedRequest{},
 	}
-	sort.Strings(names)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		*requests = append(*requests, recordedRequest{path: r.URL.Path, accept: r.Header.Get("Accept"), auth: r.Header.Get("Authorization")})
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if r.URL.Path == "/releases/tags/"+tag {
-			var assets []string
-			for id, name := range names {
-				assets = append(assets, fmt.Sprintf(`{"name":%q,"url":"http://%s/assets/%d"}`, name, r.Host, id+1))
-			}
-			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"assets":[%s]}`, tag, strings.Join(assets, ",")) // #nosec G705 -- test fixture JSON served by the local httptest server
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/assets/") {
-			for id, name := range names {
-				if r.URL.Path == fmt.Sprintf("/assets/%d", id+1) {
-					if r.Header.Get("Accept") != "application/octet-stream" {
-						w.WriteHeader(http.StatusNotAcceptable)
-						return
-					}
-					_, _ = w.Write(files[name])
-					return
-				}
-			}
-		}
-		// Pretty download URLs 404 on private repos, even with a token.
-		http.NotFound(w, r)
-	}))
+	for name := range files {
+		fixture.names = append(fixture.names, name)
+	}
+	sort.Strings(fixture.names)
+	server := httptest.NewServer(http.HandlerFunc(fixture.handler))
 	t.Cleanup(server.Close)
-	return server, requests
+	return server, fixture.requests
+}
+
+// privateReleaseFixture holds the state behind the private-release test
+// server: the expected token/tag, the sorted asset names, their contents and
+// the recorded requests.
+type privateReleaseFixture struct {
+	token    string
+	tag      string
+	names    []string
+	files    map[string][]byte
+	requests *[]recordedRequest
+}
+
+func (f *privateReleaseFixture) handler(w http.ResponseWriter, r *http.Request) {
+	*f.requests = append(*f.requests, recordedRequest{path: r.URL.Path, accept: r.Header.Get("Accept"), auth: r.Header.Get("Authorization")})
+	if r.Header.Get("Authorization") != "Bearer "+f.token {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Path == "/releases/tags/"+f.tag {
+		f.serveRelease(w, r)
+		return
+	}
+	if f.serveAsset(w, r) {
+		return
+	}
+	// Pretty download URLs 404 on private repos, even with a token.
+	http.NotFound(w, r)
+}
+
+// serveRelease answers the release-by-tag API call with the asset list.
+func (f *privateReleaseFixture) serveRelease(w http.ResponseWriter, r *http.Request) {
+	var assets []string
+	for id, name := range f.names {
+		assets = append(assets, fmt.Sprintf(`{"name":%q,"url":"http://%s/assets/%d"}`, name, r.Host, id+1))
+	}
+	_, _ = fmt.Fprintf(w, `{"tag_name":%q,"assets":[%s]}`, f.tag, strings.Join(assets, ",")) // #nosec G705 -- test fixture JSON served by the local httptest server
+}
+
+// serveAsset writes the asset bytes for /assets/<id> URLs, reporting whether
+// the request was handled as an asset download.
+func (f *privateReleaseFixture) serveAsset(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, "/assets/") {
+		return false
+	}
+	for id, name := range f.names {
+		if r.URL.Path != fmt.Sprintf("/assets/%d", id+1) {
+			continue
+		}
+		if r.Header.Get("Accept") != "application/octet-stream" {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return true
+		}
+		_, _ = w.Write(f.files[name])
+		return true
+	}
+	return false
 }
 
 func privateUpdater(server *httptest.Server, token string) *Updater {

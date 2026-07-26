@@ -42,8 +42,10 @@ in triple quotes.
 coverage, and enforces a **minimum gate of 90% aggregated line coverage** on
 the logic packages: `internal/config`, `internal/catalog`, and
 `internal/launcher`. Only override `COVERAGE_MIN` for diagnosis; CI and merge
-validation use the default gate. The same boundary is in `COVER_PKGS` in
-`.ai-standards.env`, used by the commit hooks.
+validation use the default gate. The commit hooks express the same boundary as
+the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — a regex rather than a
+package list, so the hook can race-test `./...` while measuring only the logic
+packages.
 
 Go does not expose native branch coverage, so the suite explicitly targets
 both outcomes of the configuration/default decisions; a branch percentage
@@ -56,10 +58,12 @@ unit and Gherkin suites.
 Mutation tests are deliberately optional. If a developer or a dedicated CI
 image has `go-mutesting` installed, `make test-mutation` runs against
 `internal/config`; otherwise it reports an explicit, successful skip and
-never downloads tools. Suggested one-time local install:
+never downloads tools. Use the maintained Avito fork — the original
+zimmski project vendors a 2019 `golang.org/x/tools` and crashes on modern
+Go. Suggested one-time local install:
 
 ```bash
-go install github.com/zimmski/go-mutesting/cmd/go-mutesting@latest
+go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
 ```
 
 Pin that tool in a CI image before making the mutation score a merge gate. Do

@@ -53,12 +53,21 @@ func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Rea
 	defer restore()
 
 	if in != nil {
+		// Feeds host stdin into the PTY. The goroutine ends when the child
+		// exits and ptmx is closed (a pending write fails with EIO); a copy
+		// blocked *reading* a live host stdin cannot be cancelled portably,
+		// which is acceptable because Run returns — and the launcher exits —
+		// right after the child does.
 		go func() { _, _ = io.Copy(ptmx, in) }()
 	}
-	if out != nil {
-		if _, copyErr := io.Copy(out, ptmx); copyErr != nil && ctx.Err() == nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, syscall.EIO) {
-			return fmt.Errorf("read command output: %w", copyErr)
-		}
+	// A nil out discards the child's output, but the PTY must still be
+	// drained: with nothing reading it, the child blocks on a full pipe
+	// buffer and cmd.Wait below never returns.
+	if out == nil {
+		out = io.Discard
+	}
+	if _, copyErr := io.Copy(out, ptmx); copyErr != nil && ctx.Err() == nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, syscall.EIO) {
+		return fmt.Errorf("read command output: %w", copyErr)
 	}
 	if waitErr := cmd.Wait(); waitErr != nil {
 		if ctx.Err() != nil {
@@ -72,7 +81,11 @@ func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Rea
 // prepareHostTTY puts a real terminal stdin into raw mode and mirrors window
 // size into the PTY. Non-terminal readers (tests, pipes) are left alone.
 func prepareHostTTY(in io.Reader, ptmx *os.File) (restore func()) {
-	restore = func() {}
+	restore = func() {
+		// Intentionally empty: default restore when the host TTY was never
+		// touched (non-terminal input or MakeRaw failed), so the deferred
+		// restore() call in RunWithEnv is always safe.
+	}
 	f, ok := in.(*os.File)
 	if !ok || f == nil {
 		return restore

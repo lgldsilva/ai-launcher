@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -117,5 +118,51 @@ func TestUpgradePropagatesApplyError(t *testing.T) {
 func TestUpgradeUnknownFlagFails(t *testing.T) {
 	if _, err := runDryRun(t, "upgrade", "--nope"); err == nil {
 		t.Fatal("expected an error for an unknown upgrade flag")
+	}
+}
+
+// captureUpdater stubs the resolve seam and records the updater the command
+// wiring built, so tests can assert how environment variables were folded in.
+func captureUpdater(t *testing.T) **selfupdate.Updater {
+	t.Helper()
+	captured := &selfupdate.Updater{}
+	oldResolve, oldApply := upgradeResolveTag, upgradeApply
+	t.Cleanup(func() { upgradeResolveTag, upgradeApply = oldResolve, oldApply })
+	upgradeResolveTag = func(_ context.Context, updater *selfupdate.Updater, _ string) (string, error) {
+		*captured = *updater
+		return "v9.9.9", nil
+	}
+	upgradeApply = func(_ context.Context, _ *selfupdate.Updater, _ string) error { return nil }
+	return &captured
+}
+
+func TestUpgradeWithholdsTokenWhenEndpointIsOverridden(t *testing.T) {
+	captured := captureUpdater(t)
+	t.Setenv("AI_LAUNCHER_UPDATE_TOKEN", "secret-token")
+	t.Setenv("AI_LAUNCHER_UPDATE_API", "https://evil.example.com/api")
+	t.Setenv("AI_LAUNCHER_UPDATE_URL", "")
+	var out, errOut bytes.Buffer
+	if err := run([]string{"upgrade"}, strings.NewReader(""), &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if (*captured).Token != "" {
+		t.Fatalf("Token = %q; want it withheld when the endpoint is overridden", (*captured).Token)
+	}
+	if !strings.Contains(errOut.String(), "warning:") {
+		t.Fatalf("stderr %q; want a warning about the withheld token", errOut.String())
+	}
+}
+
+func TestUpgradeSendsTokenToDefaultEndpoint(t *testing.T) {
+	captured := captureUpdater(t)
+	t.Setenv("AI_LAUNCHER_UPDATE_TOKEN", "secret-token")
+	t.Setenv("AI_LAUNCHER_UPDATE_API", "")
+	t.Setenv("AI_LAUNCHER_UPDATE_URL", "")
+	var out, errOut bytes.Buffer
+	if err := run([]string{"upgrade"}, strings.NewReader(""), &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if (*captured).Token != "secret-token" {
+		t.Fatalf("Token = %q; want the configured token against the default endpoint", (*captured).Token)
 	}
 }

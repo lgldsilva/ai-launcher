@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,7 +59,7 @@ func TestCliLaunchUsesJailExecProgrammaticMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("CLI dry-run = %q; want %q", out, want)
 	}
@@ -71,7 +72,7 @@ func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + execMountArgv(t, "custom-cli") + " " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
 	}
@@ -85,7 +86,7 @@ func TestV115PermissionFlagsMapToAiJail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --display --pictures --tailscale --systemd-user --mise --worktree " +
+	want := "ai-jail --exec --display --pictures --tailscale --systemd-user --mise --worktree " + execMountArgv(t, "custom-cli") + " " +
 		defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
@@ -101,7 +102,7 @@ func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --map " + data + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " --map " + data + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q (local mounts replace default_mounts)", out, want)
 	}
@@ -139,7 +140,7 @@ default_mounts:
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --rw-map " + existing + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " --rw-map " + existing + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want missing default mounts skipped → %q", out, want)
 	}
@@ -156,7 +157,7 @@ func TestMountFlagsReplaceDefaultMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --rw-map " + custom + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " --rw-map " + custom + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q (flag mounts replace default_mounts)", out, want)
 	}
@@ -256,6 +257,33 @@ func TestRealProjectJailConfigKeepsHideConfig(t *testing.T) {
 	}
 	if strings.Contains(out, "hide-config") {
 		t.Fatalf("dry-run = %q; a real .ai-jail file keeps the ai-jail default mask", out)
+	}
+}
+
+// Disabling the project's config mask because .ai-jail is a symlink is a
+// policy downgrade: it must be announced, naming the file and the effect,
+// not applied silently.
+func TestSymlinkedProjectJailConfigWarnsWhenDisablingHideConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	target := filepath.Join(dir, "ai-jail.toml")
+	if err := os.WriteFile(target, []byte("# jail config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, ".ai-jail")); err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, dir)
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	var out, errOut bytes.Buffer
+	err := run([]string{"--config", globalPath, "--local-config", localPath, "--dry-run"}, strings.NewReader(""), &out, &errOut)
+	restore()
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	warning := errOut.String()
+	if !strings.Contains(warning, ".ai-jail") || !strings.Contains(warning, "hide-config") {
+		t.Fatalf("stderr = %q; want a warning naming .ai-jail and hide-config", warning)
 	}
 }
 

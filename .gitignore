@@ -11,3 +11,8 @@ coverage.html
 .agents/
 .codex/
 .ai-jail
+internal/**/testdata/rapid/
+.scannerwork/
+
+# Local saved launcher selection (machine-specific, written by the TUI/CLI save flow)
+.ai-launch.yaml

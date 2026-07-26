@@ -44,6 +44,9 @@ const (
 const (
 	checksumsAsset  = "checksums.txt"
 	maxDownloadSize = 512 << 20
+	// githubAPIAccept is the Accept header for GitHub API JSON endpoints
+	// (release metadata); asset downloads use application/octet-stream.
+	githubAPIAccept = "application/vnd.github+json"
 )
 
 // HTTPError represents a non-2xx response from the release host.
@@ -161,7 +164,7 @@ func (u *Updater) LatestTag(ctx context.Context) (string, error) {
 }
 
 func (u *Updater) fetchLatestFromEndpoint(ctx context.Context, url string) (string, error) {
-	body, err := u.get(ctx, url, "application/vnd.github+json")
+	body, err := u.get(ctx, url, githubAPIAccept)
 	if err != nil {
 		return "", err
 	}
@@ -176,7 +179,7 @@ func (u *Updater) fetchLatestFromEndpoint(ctx context.Context, url string) (stri
 }
 
 func (u *Updater) fetchLatestFromList(ctx context.Context, url string) (string, error) {
-	body, err := u.get(ctx, url, "application/vnd.github+json")
+	body, err := u.get(ctx, url, githubAPIAccept)
 	if err != nil {
 		return "", err
 	}
@@ -257,7 +260,7 @@ type releaseAsset struct {
 // named asset, and downloads it from its API URL (which accepts Bearer auth
 // and redirects to a signed URL that the HTTP client follows).
 func (u *Updater) assetBytesViaAPI(ctx context.Context, tag, name string) ([]byte, error) {
-	body, err := u.get(ctx, u.apiBase()+"/releases/tags/"+tag, "application/vnd.github+json")
+	body, err := u.get(ctx, u.apiBase()+"/releases/tags/"+tag, githubAPIAccept)
 	if err != nil {
 		return nil, err
 	}

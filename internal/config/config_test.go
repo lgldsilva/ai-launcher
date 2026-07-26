@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"pgregory.net/rapid"
 )
 
@@ -46,30 +47,38 @@ func TestDefaultConfigurationsExposeLauncherContract(t *testing.T) {
 func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 	global := DefaultGlobal()
 	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "grok", "zero", "devin", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}
-	available := make(map[string]bool, len(global.Agents))
+	available := make(map[string]Agent, len(global.Agents))
 	for _, agent := range global.Agents {
-		available[agent.Command] = true
+		available[agent.Command] = agent
 	}
 	for _, command := range wanted {
-		if !available[command] {
+		if _, ok := available[command]; !ok {
 			t.Errorf("default catalog does not include %q", command)
 		}
 	}
-	for _, agent := range global.Agents {
-		if agent.Command == "kilo" && !reflect.DeepEqual(agent.Aliases, []string{"kilocode", "kilo-code"}) {
-			t.Fatalf("kilo aliases = %#v", agent.Aliases)
+	aliasChecks := map[string][]string{
+		"kilo": {"kilocode", "kilo-code"},
+		"mimo": {"mimocode", "mimo-code"},
+	}
+	for command, want := range aliasChecks {
+		if got := available[command].Aliases; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s aliases = %#v; want %#v", command, got, want)
 		}
-		if agent.Command == "mimo" && !reflect.DeepEqual(agent.Aliases, []string{"mimocode", "mimo-code"}) {
-			t.Fatalf("mimo aliases = %#v", agent.Aliases)
-		}
-		if agent.Command == "pi" && (agent.Memory == nil || agent.Memory.InstallMCP || !agent.Memory.InstallHooks) {
-			t.Fatalf("Pi memory integration = %#v; want hooks-only", agent.Memory)
-		}
-		if agent.Command == "openclaw" && (agent.Memory == nil || !agent.Memory.InstallMCP || agent.Memory.InstallHooks) {
-			t.Fatalf("OpenClaw memory integration = %#v; want MCP-only", agent.Memory)
-		}
-		if agent.Command == "kimi" && (agent.Memory == nil || agent.Memory.Client != "kimi-code" || agent.Memory.Agent != "kimi-code") {
-			t.Fatalf("Kimi memory integration = %#v", agent.Memory)
+	}
+	memoryChecks := []struct {
+		command string
+		want    string
+		matches func(*MemoryIntegration) bool
+	}{
+		{"pi", "hooks-only", func(m *MemoryIntegration) bool { return m != nil && !m.InstallMCP && m.InstallHooks }},
+		{"openclaw", "MCP-only", func(m *MemoryIntegration) bool { return m != nil && m.InstallMCP && !m.InstallHooks }},
+		{"kimi", "kimi-code client/agent", func(m *MemoryIntegration) bool {
+			return m != nil && m.Client == "kimi-code" && m.Agent == "kimi-code"
+		}},
+	}
+	for _, tc := range memoryChecks {
+		if got := available[tc.command].Memory; !tc.matches(got) {
+			t.Fatalf("%s memory integration = %#v; want %s", tc.command, got, tc.want)
 		}
 	}
 }
@@ -140,15 +149,7 @@ func TestLoadGlobalMigratesLegacyMemoryServerURL(t *testing.T) {
 func TestSaveGlobalRoundTripsConfiguredAgentPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
 	want := DefaultGlobal()
-	want.Agents = append(want.Agents, Agent{
-		Name: "Xpto", Command: "xpto", Aliases: []string{"xpto-cli"}, Path: "/opt/xpto/bin/xpto", SupportsMemory: true,
-		Memory: &MemoryIntegration{Client: "xpto", Agent: "xpto", InstallMCP: true, InstallHooks: true},
-		Release: &GitHubRelease{
-			Repository: "acme/xpto",
-			Assets:     map[string]string{"linux-amd64": "xpto-linux-amd64.tar.gz"},
-			Binary:     "xpto", ChecksumAsset: "checksums.txt",
-		},
-	})
+	want.Agents = append(want.Agents, configuredRoundTripAgent())
 	want.Tools = append(want.Tools, Tool{Name: "helper", Command: "helper", Release: &GitHubRelease{Repository: "acme/helper", Assets: map[string]string{"darwin-arm64": "helper.zip"}, Binary: "helper"}})
 	if err := SaveGlobal(path, want); err != nil {
 		t.Fatalf("SaveGlobal() error = %v", err)
@@ -157,24 +158,7 @@ func TestSaveGlobalRoundTripsConfiguredAgentPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
-	var found bool
-	for _, agent := range got.Agents {
-		if agent.Name == "Xpto" {
-			found = true
-			if agent.Command != "xpto" || agent.Path != "/opt/xpto/bin/xpto" || !reflect.DeepEqual(agent.Aliases, []string{"xpto-cli"}) {
-				t.Fatalf("saved agent = %#v", agent)
-			}
-			if agent.Release == nil || agent.Release.Repository != "acme/xpto" || agent.Release.ChecksumAsset != "checksums.txt" {
-				t.Fatalf("saved release = %#v", agent.Release)
-			}
-			if agent.Memory == nil || agent.Memory.Client != "xpto" || !agent.Memory.InstallHooks {
-				t.Fatalf("saved memory integration = %#v", agent.Memory)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("saved agent was not found")
-	}
+	requireSavedConfiguredAgent(t, got.Agents)
 	if len(got.Tools) != len(want.Tools) || got.Tools[len(got.Tools)-1].Release == nil {
 		t.Fatalf("saved tools = %#v", got.Tools)
 	}
@@ -184,6 +168,41 @@ func TestSaveGlobalRoundTripsConfiguredAgentPath(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("global config mode = %04o; want 0600", info.Mode().Perm())
+	}
+}
+
+func configuredRoundTripAgent() Agent {
+	return Agent{
+		Name: "Xpto", Command: "xpto", Aliases: []string{"xpto-cli"}, Path: "/opt/xpto/bin/xpto", SupportsMemory: true,
+		Memory: &MemoryIntegration{Client: "xpto", Agent: "xpto", InstallMCP: true, InstallHooks: true},
+		Release: &GitHubRelease{
+			Repository: "acme/xpto",
+			Assets:     map[string]string{"linux-amd64": "xpto-linux-amd64.tar.gz"},
+			Binary:     "xpto", ChecksumAsset: "checksums.txt",
+		},
+	}
+}
+
+func requireSavedConfiguredAgent(t *testing.T, agents []Agent) {
+	t.Helper()
+	var saved *Agent
+	for i := range agents {
+		if agents[i].Name == "Xpto" {
+			saved = &agents[i]
+		}
+	}
+	if saved == nil {
+		t.Fatal("saved agent was not found")
+	}
+	agent := *saved
+	if agent.Command != "xpto" || agent.Path != "/opt/xpto/bin/xpto" || !reflect.DeepEqual(agent.Aliases, []string{"xpto-cli"}) {
+		t.Fatalf("saved agent = %#v", agent)
+	}
+	if agent.Release == nil || agent.Release.Repository != "acme/xpto" || agent.Release.ChecksumAsset != "checksums.txt" {
+		t.Fatalf("saved release = %#v", agent.Release)
+	}
+	if agent.Memory == nil || agent.Memory.Client != "xpto" || !agent.Memory.InstallHooks {
+		t.Fatalf("saved memory integration = %#v", agent.Memory)
 	}
 }
 
@@ -561,38 +580,8 @@ func TestProfileSummaryDescribesSelection(t *testing.T) {
 // profiles through the global config, checking every field survives.
 func TestPropertyProfileRoundTripPreservesAllFields(t *testing.T) {
 	token := rapid.StringMatching(`[a-z0-9\-_]{1,12}`)
-	boolMap := rapid.MapOf(token, rapid.Bool())
-	textMap := rapid.MapOf(token, token)
 	rapid.Check(t, func(rt *rapid.T) {
-		permissions := boolMap.Draw(rt, "permissions")
-		if len(permissions) == 0 {
-			permissions = nil
-		}
-		paramValues := textMap.Draw(rt, "paramValues")
-		if len(paramValues) == 0 {
-			paramValues = nil
-		}
-		var mounts []Mount
-		if rapid.Bool().Draw(rt, "hasMount") {
-			mounts = []Mount{{Path: "/workspace/" + token.Draw(rt, "mount"), Mode: "rw"}}
-		}
-		var extraArgs []string
-		if rapid.Bool().Draw(rt, "hasExtraArg") {
-			extraArgs = []string{"--" + token.Draw(rt, "extraArg")}
-		}
-		want := Profile{
-			Agent:       "agent-" + token.Draw(rt, "agent"),
-			Permissions: permissions,
-			Mounts:      mounts,
-			Options: &Options{
-				Jail:          rapid.Bool().Draw(rt, "jail"),
-				Memory:        rapid.Bool().Draw(rt, "memory"),
-				Yolo:          rapid.Bool().Draw(rt, "yolo"),
-				NewWorkstream: token.Draw(rt, "workstream"),
-				ExtraArgs:     extraArgs,
-				ParamValues:   paramValues,
-			},
-		}
+		want := drawGeneratedProfile(rt, token)
 		global := DefaultGlobal()
 		if err := SetProfile(&global, "generated", want); err != nil {
 			rt.Fatalf("SetProfile() error = %v", err)
@@ -609,6 +598,40 @@ func TestPropertyProfileRoundTripPreservesAllFields(t *testing.T) {
 			rt.Fatalf("profile round-trip mismatch: got %#v; want %#v", got, want)
 		}
 	})
+}
+
+// drawGeneratedProfile produces a profile with randomized fields; the draw
+// order and labels are part of the rapid shrink contract and must not change.
+func drawGeneratedProfile(rt *rapid.T, token *rapid.Generator[string]) Profile {
+	permissions := rapid.MapOf(token, rapid.Bool()).Draw(rt, "permissions")
+	if len(permissions) == 0 {
+		permissions = nil
+	}
+	paramValues := rapid.MapOf(token, token).Draw(rt, "paramValues")
+	if len(paramValues) == 0 {
+		paramValues = nil
+	}
+	var mounts []Mount
+	if rapid.Bool().Draw(rt, "hasMount") {
+		mounts = []Mount{{Path: "/workspace/" + token.Draw(rt, "mount"), Mode: "rw"}}
+	}
+	var extraArgs []string
+	if rapid.Bool().Draw(rt, "hasExtraArg") {
+		extraArgs = []string{"--" + token.Draw(rt, "extraArg")}
+	}
+	return Profile{
+		Agent:       "agent-" + token.Draw(rt, "agent"),
+		Permissions: permissions,
+		Mounts:      mounts,
+		Options: &Options{
+			Jail:          rapid.Bool().Draw(rt, "jail"),
+			Memory:        rapid.Bool().Draw(rt, "memory"),
+			Yolo:          rapid.Bool().Draw(rt, "yolo"),
+			NewWorkstream: token.Draw(rt, "workstream"),
+			ExtraArgs:     extraArgs,
+			ParamValues:   paramValues,
+		},
+	}
 }
 
 func TestTouchRecentAgentOrdersAndDedupes(t *testing.T) {
@@ -768,5 +791,349 @@ func TestJailFlagsIsZeroCoversV115Fields(t *testing.T) {
 		if flags.IsZero() {
 			t.Errorf("IsZero() = true with %s set", name)
 		}
+	}
+}
+
+// The harness lookup must trim user input and scan the whole list: dropping
+// the TrimSpace, breaking after the first entry, or flipping the comparison
+// all change which names `ai-memory run` accepts.
+func TestSupportsMemoryRunHarnessTrimsAndScansTheWholeList(t *testing.T) {
+	for _, name := range []string{"claude", "grok", "kimi", "  claude  ", "\topencode\n"} {
+		if !SupportsMemoryRunHarness(name) {
+			t.Errorf("SupportsMemoryRunHarness(%q) = false; want true", name)
+		}
+	}
+	for _, name := range []string{"", "   ", "not-a-harness", "claude-extra"} {
+		if SupportsMemoryRunHarness(name) {
+			t.Errorf("SupportsMemoryRunHarness(%q) = true; want false", name)
+		}
+	}
+}
+
+// The MRU cap is a literal contract: the list must hold exactly 32 entries,
+// newest first, with the oldest evicted beyond that.
+func TestTouchRecentAgentCapsAtExactly32Entries(t *testing.T) {
+	cfg := Global{}
+	for i := 0; i < 40; i++ {
+		TouchRecentAgent(&cfg, fmt.Sprintf("agent-%02d", i))
+	}
+	if len(cfg.RecentAgents) != 32 {
+		t.Fatalf("RecentAgents length = %d; want exactly 32", len(cfg.RecentAgents))
+	}
+	if cfg.RecentAgents[0] != "agent-39" || cfg.RecentAgents[31] != "agent-08" {
+		t.Fatalf("RecentAgents boundaries = %q ... %q; want agent-39 ... agent-08",
+			cfg.RecentAgents[0], cfg.RecentAgents[31])
+	}
+}
+
+// Re-touching an existing entry moves it to the front but must keep every
+// entry that followed it — a `continue` turned into `break` drops the tail.
+func TestTouchRecentAgentDedupesWithoutDroppingTheTail(t *testing.T) {
+	cfg := Global{RecentAgents: []string{"a", "x", "b"}}
+	TouchRecentAgent(&cfg, "x")
+	if !reflect.DeepEqual(cfg.RecentAgents, []string{"x", "a", "b"}) {
+		t.Fatalf("RecentAgents = %#v; want [x a b]", cfg.RecentAgents)
+	}
+}
+
+// SetProfile trims the agent before storing, so a padded name does not
+// poison the profile snapshot.
+func TestSetProfileTrimsAgentWhitespace(t *testing.T) {
+	global := Global{}
+	if err := SetProfile(&global, "p", Profile{Agent: "  claude  "}); err != nil {
+		t.Fatal(err)
+	}
+	if global.Profiles["p"].Agent != "claude" {
+		t.Fatalf("stored agent = %q; want trimmed %q", global.Profiles["p"].Agent, "claude")
+	}
+}
+
+// ProfileNames must come out sorted no matter how the map iterates.
+func TestProfileNamesSortsRegardlessOfMapOrder(t *testing.T) {
+	global := Global{}
+	for _, name := range []string{"delta", "alpha", "charlie", "bravo", "echo"} {
+		if err := SetProfile(&global, name, Profile{Agent: "claude"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := ProfileNames(global)
+	want := []string{"alpha", "bravo", "charlie", "delta", "echo"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ProfileNames() = %#v; want sorted %#v", got, want)
+	}
+}
+
+// Single-entry summaries are the boundary the len() > 0 checks guard: one
+// toggle, one param or one mount must each render, and an option set with no
+// toggles must not start the summary with a stray space.
+func TestProfileSummaryRendersSingleEntriesAndSkipsEmptyGroups(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile Profile
+		want    string
+	}{
+		{"one toggle", Profile{Agent: "claude", Options: &Options{Jail: true}}, "jail"},
+		{"params without toggles", Profile{Agent: "claude", Options: &Options{ParamValues: map[string]string{"model": "sonnet"}}}, "params=1"},
+		{"one mount", Profile{Agent: "claude", Mounts: []Mount{{Path: "/a"}}}, "mounts=1"},
+		{"single toggle with single mount", Profile{Agent: "claude", Mounts: []Mount{{Path: "/a"}}, Options: &Options{Memory: true}}, "memory mounts=1"},
+	}
+	for _, tc := range cases {
+		if got := ProfileSummary(tc.profile); got != tc.want {
+			t.Errorf("%s: ProfileSummary() = %q; want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A padded path must be cleaned before the stat and stored in trimmed form.
+func TestExistingPathsTrimsSurroundingWhitespace(t *testing.T) {
+	present := filepath.Join(t.TempDir(), "present")
+	if err := os.MkdirAll(present, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	got := ExistingPaths([]string{"  " + present + "\t"})
+	if !reflect.DeepEqual(got, []string{present}) {
+		t.Fatalf("ExistingPaths = %#v; want [%q]", got, present)
+	}
+}
+
+// The transitive closure must converge regardless of declaration order: with
+// the chain declared leaf-first, one pass is not enough, so a dropped
+// `changed = true` leaves the middle of the chain unmarked.
+func TestJailDependentIDsResolvesTransitiveChainInAnyOrder(t *testing.T) {
+	permissions := []Permission{
+		{ID: "gpu", Requires: []string{"docker"}},
+		{ID: "docker", Requires: []string{"jail"}},
+		{ID: "jail"},
+	}
+	dependent := JailDependentIDs(permissions)
+	for _, id := range []string{"jail", "docker", "gpu"} {
+		if !dependent[id] {
+			t.Errorf("JailDependentIDs() missing %q with leaf-first declaration order", id)
+		}
+	}
+}
+
+// A document that neither the list form nor the scalar form can decode must
+// surface an error instead of silently producing a zero Options.
+func TestOptionsUnmarshalRejectsUndecodableDocuments(t *testing.T) {
+	var options Options
+	if err := yaml.Unmarshal([]byte("- 1\n- 2\n"), &options); err == nil {
+		t.Fatal("UnmarshalYAML(sequence) = nil; want the list-form error")
+	}
+
+	// The scalar fallback only applies when the list form fails: a mapping
+	// with a scalar extra_args decodes through the second attempt.
+	var scalar Options
+	if err := yaml.Unmarshal([]byte("jail: true\nextra_args: --model sonnet\n"), &scalar); err != nil {
+		t.Fatalf("UnmarshalYAML(scalar extra_args) error = %v", err)
+	}
+	if !reflect.DeepEqual(scalar.ExtraArgs, []string{"--model", "sonnet"}) || !scalar.Jail {
+		t.Fatalf("scalar form decoded to %#v", scalar)
+	}
+}
+
+// Both save paths must stamp the schema version into the file itself, not
+// just into the in-memory struct.
+func TestSaveFunctionsStampCurrentVersionIntoTheFile(t *testing.T) {
+	readVersion := func(t *testing.T, path string) string {
+		t.Helper()
+		raw, err := os.ReadFile(path) // #nosec G304 -- test-written file
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string]any
+		if err := yaml.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
+		}
+		version, _ := document["version"].(string)
+		return version
+	}
+
+	globalPath := filepath.Join(t.TempDir(), "global.yaml")
+	if err := SaveGlobal(globalPath, Global{Version: "stale", Agents: []Agent{{Name: "X", Command: "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readVersion(t, globalPath); got != CurrentVersion {
+		t.Fatalf("saved global version = %q; want %q", got, CurrentVersion)
+	}
+
+	localPath := filepath.Join(t.TempDir(), "local.yaml")
+	if err := SaveLocal(localPath, Local{Version: "stale", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readVersion(t, localPath); got != CurrentVersion {
+		t.Fatalf("saved local version = %q; want %q", got, CurrentVersion)
+	}
+}
+
+// SaveRecentAgents is a surgical update: it stamps the version and the MRU
+// list while leaving every other key in the document untouched.
+func TestSaveRecentAgentsPreservesOtherKeysAndStampsTheDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	body := "version: '1.0'\nmemory_server_url: https://example.test\nagents:\n  - name: Claude\n    command: claude\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRecentAgents(path, []string{"kimi", "claude"}); err != nil {
+		t.Fatalf("SaveRecentAgents() error = %v", err)
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- test-written file
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["version"] != CurrentVersion {
+		t.Fatalf("version = %#v; want %q", document["version"], CurrentVersion)
+	}
+	if document["memory_server_url"] != "https://example.test" {
+		t.Fatalf("memory_server_url = %#v; the untouched key must survive", document["memory_server_url"])
+	}
+	agents, ok := document["agents"].([]any)
+	if !ok || len(agents) != 1 {
+		t.Fatalf("agents = %#v; the untouched list must survive", document["agents"])
+	}
+	recent, ok := document["recent_agents"].([]any)
+	if !ok || len(recent) != 2 || recent[0] != "kimi" || recent[1] != "claude" {
+		t.Fatalf("recent_agents = %#v; want [kimi claude]", document["recent_agents"])
+	}
+}
+
+// An empty existing file decodes to a nil document; the save must treat it
+// like a missing file instead of choking on the nil map.
+func TestSaveRecentAgentsHandlesAnEmptyExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRecentAgents(path, []string{"claude"}); err != nil {
+		t.Fatalf("SaveRecentAgents(empty file) error = %v", err)
+	}
+	loaded, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	if !reflect.DeepEqual(loaded.RecentAgents, []string{"claude"}) {
+		t.Fatalf("RecentAgents = %#v; want [claude]", loaded.RecentAgents)
+	}
+}
+
+// An empty memory_server_url inherits the default, while a single configured
+// tool must not be replaced by the built-in pair.
+func TestLoadGlobalDefaultsEmptyMemoryURLAndKeepsConfiguredTools(t *testing.T) {
+	tempDir := t.TempDir()
+	emptyURL := filepath.Join(tempDir, "empty-url.yaml")
+	if err := os.WriteFile(emptyURL, []byte("agents:\n  - name: Test\n    command: test-agent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadGlobal(emptyURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MemoryServerURL != DefaultMemoryServerURL {
+		t.Fatalf("MemoryServerURL = %q; want default %q", got.MemoryServerURL, DefaultMemoryServerURL)
+	}
+	if len(got.Tools) != len(DefaultGlobal().Tools) {
+		t.Fatalf("Tools = %#v; omitted tools must fall back to the built-ins", got.Tools)
+	}
+
+	customTool := filepath.Join(tempDir, "custom-tool.yaml")
+	body := "tools:\n  - name: mine\n    command: mine\n"
+	if err := os.WriteFile(customTool, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadGlobal(customTool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].Command != "mine" {
+		t.Fatalf("Tools = %#v; a configured tool list must be kept as-is", got.Tools)
+	}
+}
+
+// UpsertAgent trims the identifying fields before validating and storing, so
+// a padded entry does not slip past the required-field checks or get
+// persisted with whitespace.
+func TestUpsertAgentTrimsNameCommandAndPath(t *testing.T) {
+	global := Global{}
+	if err := UpsertAgent(&global, Agent{Name: "  Xpto  ", Command: " xpto ", Path: " /opt/xpto "}); err != nil {
+		t.Fatal(err)
+	}
+	stored := global.Agents[0]
+	if stored.Name != "Xpto" || stored.Command != "xpto" || stored.Path != "/opt/xpto" {
+		t.Fatalf("stored agent = %#v; want all fields trimmed", stored)
+	}
+	// A padded re-upsert of the same command must update, not duplicate.
+	if err := UpsertAgent(&global, Agent{Name: "Xpto", Command: "  xpto", Path: "/new"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(global.Agents) != 1 || global.Agents[0].Path != "/new" {
+		t.Fatalf("agents after padded re-upsert = %#v", global.Agents)
+	}
+}
+
+// The upsert match is on name OR command: dropping the name side of the
+// disjunction turns a rename into a duplicate entry.
+func TestUpsertAgentMatchesOnNameAlone(t *testing.T) {
+	global := Global{Agents: []Agent{{Name: "Xpto", Command: "xpto", Path: "/old"}}}
+	if err := UpsertAgent(&global, Agent{Name: "Xpto", Command: "renamed-xpto", Path: "/new"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(global.Agents) != 1 || global.Agents[0].Command != "renamed-xpto" || global.Agents[0].Path != "/new" {
+		t.Fatalf("agents = %#v; want the existing entry updated in place", global.Agents)
+	}
+}
+
+// A user list with exactly one entry must still be merged, not mistaken for
+// an empty list and replaced by the defaults.
+func TestMergePermissionsSingletonUserListIsMerged(t *testing.T) {
+	defaults := DefaultGlobal().Permissions
+	custom := Permission{ID: "custom", Name: "Custom", Default: true}
+	got := mergePermissions(defaults, []Permission{custom})
+	byID := make(map[string]Permission, len(got))
+	for _, permission := range got {
+		byID[permission.ID] = permission
+	}
+	if !byID["custom"].Default {
+		t.Fatalf("singleton user permission was dropped: %#v", got)
+	}
+	if _, ok := byID["jail"]; !ok {
+		t.Fatalf("built-in defaults were dropped: %#v", got)
+	}
+}
+
+// A user entry that overrides a built-in must appear exactly once, whether or
+// not the built-in is the first entry of the defaults list.
+func TestMergePermissionsDoesNotDuplicateOverriddenDefaults(t *testing.T) {
+	defaults := DefaultGlobal().Permissions
+	user := []Permission{
+		{ID: "jail", Name: "Custom Jail", Default: true, Locked: true},
+		{ID: "ssh", Name: "Custom SSH", Default: true, Requires: []string{"jail"}},
+	}
+	got := mergePermissions(defaults, user)
+	counts := make(map[string]int, len(got))
+	for _, permission := range got {
+		counts[permission.ID]++
+	}
+	for _, id := range []string{"jail", "ssh"} {
+		if counts[id] != 1 {
+			t.Fatalf("permission %q appears %d times; want exactly 1", id, counts[id])
+		}
+	}
+}
+
+// The merged slice must grow past the built-in length when the user defines
+// many custom permissions (the capacity hint is len(defaults)+len(user)).
+func TestMergePermissionsUserListLongerThanDefaults(t *testing.T) {
+	defaults := []Permission{{ID: "jail", Default: true, Locked: true}}
+	user := []Permission{
+		{ID: "jail", Name: "Custom Jail", Default: true, Locked: true},
+		{ID: "one"}, {ID: "two"}, {ID: "three"},
+	}
+	got := mergePermissions(defaults, user)
+	if len(got) != 4 {
+		t.Fatalf("mergePermissions() = %#v; want the override plus 3 customs", got)
 	}
 }

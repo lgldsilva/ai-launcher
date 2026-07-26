@@ -125,10 +125,13 @@ generate fragile, fake tests. What really cannot break is the pure logic:
 config persistence, safe defaults, argv composition.
 
 **How.** `make test-coverage` (and the CI `test` job) filter the profile with
-`awk` and fail below 90% on the filtered total; `COVER_PKGS` in
-`.ai-standards.env` repeats the same boundary for the hooks. TUI, installer,
-and executor are covered by `go test -race -shuffle=on ./...` (race-only) and
-by the Gherkin contract suite.
+`awk` and fail below 90% on the filtered total; the CI job calls
+`make test-coverage` instead of repeating it. The `COVERAGE_EXCLUDE` regex in
+`.ai-standards.env` states the same boundary for the commit hooks, and
+`sonar.coverage.exclusions` for SonarCloud — three statements of one boundary,
+which have to be changed together. TUI, installer, and executor are covered by
+`go test -race -shuffle=on ./...` (race-only) and by the Gherkin contract
+suite.
 
 **Trade-offs.** Interaction bugs (keys, terminal) depend on race tests and
 manual verification. It is the honest split: a gate where the metric means
@@ -181,6 +184,25 @@ the jail, so the agent can read the token (already noted in the README security
 section). `ai-memory run --config <PATH>` is an upstream-supported alternative
 that would keep it out of the environment entirely; evaluating it is the
 natural next step for this entry.
+
+## Catalog boolean flags are trusted, but never silent
+
+**Decision.** A catalog param declared with `takes_value: false` injects its
+`flag` verbatim into the argv when any truthy `param_values` entry enables
+it. The global catalog (`~/.config/ai-launch/config.yaml`) is the trusted
+location — unlike the workspace-local `.ai-launch.yaml`, which is treated as
+attacker-supplied input and gated by the trust check — so there is no
+allowlist of injectable flags. Instead, pre-flight emits a
+`catalog-flag-param` warning naming every catalog-declared boolean flag that
+fires, so a hand-edited declaration is visible at launch time.
+
+**Why a warning and not an allowlist.** An allowlist would either duplicate
+the catalog (a second list of "approved" flags to keep in sync) or block
+legitimate operator-declared flags until a code change ships. The threat is a
+config the operator did not notice editing; making the injection visible on
+every launch answers it without taking the catalog's extensibility away. The
+built-in catalog declares no boolean params, so the warning only fires for
+operator-added declarations.
 
 ## What we are NOT doing (yet)
 
