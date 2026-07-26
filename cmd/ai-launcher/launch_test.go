@@ -18,7 +18,7 @@ func TestDecideLaunchAction(t *testing.T) {
 
 func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--continue", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--continue", "--no-jail", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -29,7 +29,7 @@ func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
 
 func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
 		"--workspace", "acme", "--project", "billing", "--workstream", "release-1", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -42,7 +42,7 @@ func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
 
 func TestNewWorkstreamStillCreates(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--new", "fresh", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--new", "fresh", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -210,7 +210,7 @@ func TestSymlinkAutoMountsSkippedWithoutJail(t *testing.T) {
 	}
 	t.Setenv("HOME", fakeHome)
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}

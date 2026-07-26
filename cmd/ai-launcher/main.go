@@ -202,6 +202,93 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 	return nil
 }
 
+// resolveAgentSelection picks the agent (the --agent flag wins over the local
+// config) and records what the workspace file asked for, so the trust check can
+// tell an operator's choice from a repository's. An unresolved agent is still
+// synthesized here; enforceLocalConfigTrust decides whether it may be used.
+func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) (catalog.AgentStatus, localTrust) {
+	selected := flagAgent
+	if selected == "" {
+		selected = local.Agent
+	}
+	status, err := catalogue.Resolve(selected)
+	trust := localTrust{
+		agent:      local.Agent,
+		agentKnown: err == nil,
+		fromFile:   flagAgent == "",
+		jail:       local.Options.Jail,
+		mounts:     local.Mounts,
+	}
+	if err != nil {
+		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}, trust
+	}
+	if status.ResolvedCommand != "" {
+		// Keep the configured catalog name for display, but invoke the alias
+		// that was actually found on this machine (for example kilocode).
+		status.Agent.Command = status.ResolvedCommand
+	}
+	return status, trust
+}
+
+// localTrust captures the security-relevant values a workspace-local
+// .ai-launch.yaml supplied, before CLI flags are layered on top of them.
+type localTrust struct {
+	agent      string
+	agentKnown bool
+	// fromFile is false once --agent was given: the operator's own choice.
+	fromFile bool
+	jail     bool
+	mounts   []config.Mount
+}
+
+// enforceLocalConfigTrust refuses a workspace-local config that lowers the
+// security posture on its own. A .ai-launch.yaml travels with the repository,
+// so for any checkout the operator did not write it is attacker-supplied
+// input: left unchecked it picks the executed binary, turns the sandbox off,
+// and mounts whatever it likes. What the operator types on the command line
+// stays fully trusted — the boundary is around the file, not around the user.
+//
+// Refusal rather than a prompt: a launcher run is routinely non-interactive
+// (scripts, CI, the --dry-run diagnostic), and the plan requires those to
+// refuse. Each refusal names the explicit opt-in that accepts the risk.
+func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust localTrust) error {
+	if trust.fromFile && strings.TrimSpace(trust.agent) != "" && !trust.agentKnown {
+		return fmt.Errorf("local config selects agent %q, which the catalog cannot resolve; "+
+			"run it explicitly with --agent %s, or register it in the global catalog with --add",
+			trust.agent, trust.agent)
+	}
+	if globalRequiresJail(global) && !trust.jail &&
+		!flagsWasSet(flags, "no-jail") && !flagsWasSet(flags, "sandbox") {
+		return errors.New("local config disables the sandbox (options.jail: false) " +
+			"while the global catalog defaults it on; pass --no-jail to accept that explicitly")
+	}
+	for _, mount := range trust.mounts {
+		path := strings.TrimSpace(mount.Path)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("local config mount %q is not an absolute path", path)
+		}
+		if filepath.Clean(path) == string(filepath.Separator) {
+			return fmt.Errorf("local config mount %q would expose the filesystem root", path)
+		}
+	}
+	return nil
+}
+
+// globalRequiresJail reports whether the trusted global catalog defaults the
+// sandbox on. An operator who turned it off globally is not being downgraded
+// by a local config that agrees with them.
+func globalRequiresJail(global config.Global) bool {
+	for _, permission := range global.Permissions {
+		if permission.ID == "jail" {
+			return permission.Default
+		}
+	}
+	return true
+}
+
 // reportPreflight prints every pre-flight issue and reports whether any of them
 // is fatal. Warnings are labelled as such; anything else blocks the launch.
 func reportPreflight(errOut io.Writer, issues []launcher.Issue) bool {
@@ -323,18 +410,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	positionalArgs := append([]string(nil), flags.Args()...)
 
-	selectedAgent := opts.agent
-	if selectedAgent == "" {
-		selectedAgent = local.Agent
-	}
-	status, resolveErr := catalogue.Resolve(selectedAgent)
-	if resolveErr != nil {
-		status = catalog.AgentStatus{Agent: config.Agent{Name: selectedAgent, Command: selectedAgent}}
-	} else if status.ResolvedCommand != "" {
-		// Keep the configured catalog name for display, but invoke the alias
-		// that was actually found on this machine (for example kilocode).
-		status.Agent.Command = status.ResolvedCommand
-	}
+	status, trust := resolveAgentSelection(catalogue, opts.agent, local)
 	permissions := catalogue.NormalizePermissions(local.Permissions)
 	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
 	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
@@ -346,6 +422,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	applyBoolFlag(flags, "systemd-user", permissions, "systemd-user", opts.systemdUser)
 	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
 	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
+	if err := enforceLocalConfigTrust(flags, global, trust); err != nil {
+		return err
+	}
 	mountConfig, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
 	if err != nil {
 		return err

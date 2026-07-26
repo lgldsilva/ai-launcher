@@ -21,7 +21,8 @@ func runCapture(t *testing.T, args ...string) (stdout, stderr string, err error)
 func TestDryRunReportsPreflightIssues(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
-	stdout, stderr, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--ssh", "--dry-run")
+	stdout, stderr, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--ssh", "--dry-run")
 	if err == nil {
 		t.Fatal("run() = nil; a fatal pre-flight issue must fail the dry-run")
 	}

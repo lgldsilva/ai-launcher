@@ -124,7 +124,7 @@ func runDryRun(t *testing.T, args ...string) (string, error) {
 
 func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "review", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "review", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 
 func TestExplicitFlagsOverrideProfile(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
 		"--profile", "review", "--agent", "codex", "--param", "model=v2", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -150,7 +150,7 @@ func TestExplicitFlagsOverrideProfile(t *testing.T) {
 
 func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "minimal", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "minimal", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -161,7 +161,7 @@ func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
 
 func TestSaveProfilePersistsMergedSelectionWithoutLaunching(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
 		"--save-profile", "saved", "--param", "model=v9", "--yolo")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)

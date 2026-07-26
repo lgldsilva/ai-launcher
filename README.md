@@ -427,6 +427,21 @@ permissions that depend on it. To run sandboxed from Windows, use WSL2.
 | `~/.config/ai-launch/install.log` | Global | Install log (0600, no tokens) |
 | `~/.local/share/ai-launcher/bin/ai-memory` | Global | Managed ai-memory native runner (exported as `AI_MEMORY_NATIVE_BIN`) |
 
+### The workspace config is not trusted
+
+`.ai-launch.yaml` travels with the repository, so for any checkout you did not
+write yourself it is somebody else's input. It cannot lower your security
+posture on its own — the launcher refuses, naming the explicit opt-in:
+
+| The file tries to | Result |
+| --- | --- |
+| Select an `agent` the catalog cannot resolve | Refused. Run it with `--agent <name>`, or register it in the **global** catalog with `--add` |
+| Set `options.jail: false` while the global catalog defaults the sandbox on | Refused. Pass `--no-jail` to accept it |
+| Declare a relative mount, or mount `/` | Refused |
+
+What you type on the command line stays fully trusted: the boundary is around
+the file, not around you.
+
 The full schema (fields, defaults, ai-jail `jail_flags`) is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Docker passthrough is **opt-in**
 via the Docker permission / `--docker` (aligned with recent ai-jail defaults:

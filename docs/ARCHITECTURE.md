@@ -79,6 +79,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    the Gherkin suite locks regressions out.
 2. **Selection precedence**: built-in defaults < local `.ai-launch.yaml` <
    profile < explicit flags. Profiles only replace the blocks they define.
+2b. **The local config is untrusted input**: `.ai-launch.yaml` ships with the
+   repository, so `enforceLocalConfigTrust` refuses one that selects an
+   unresolvable agent, disables the sandbox while the global catalog defaults
+   it on, or declares a relative mount or a filesystem root. Global config,
+   profiles and command-line flags are trusted; the boundary is around the
+   workspace file.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
 4. **Mandatory checksum on installs**: without a verifiable checksum the
    install fails, unless an explicit `allow_unverified: true` in the recipe.

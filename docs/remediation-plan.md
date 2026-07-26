@@ -125,7 +125,7 @@ see **Progress** below for what each closed item shipped.
 | ID | Title | Severity | Phase | Status |
 | --- | --- | --- | --- | --- |
 | C1 | `permissions: {jail: true}` turns the sandbox off | critical | 1 | done |
-| C2 | Repo-supplied `.ai-launch.yaml` picks the binary and disables the sandbox | critical | 1 | open |
+| C2 | Repo-supplied `.ai-launch.yaml` picks the binary and disables the sandbox | critical | 1 | done |
 | S1 | ai-memory installed with no checksum from a mutable ref | high | 1 | done |
 | I1 | 14 of 24 catalog agents break under the default config | high | 1 | done |
 | I4 | `--dry-run` prints before validating | medium | 1 | done |
@@ -150,10 +150,11 @@ see **Progress** below for what each closed item shipped.
 
 Phase 3 was executed before Phase 1, inverting the risk ordering below. Phase 1
 has since been worked in its documented order (I4 first, so the rest is visible
-in `--dry-run`); **C2 is the one critical still open**.
+in `--dry-run`) and is now **complete**. Phase 2 is the remaining work.
 
 | ID | What shipped | What is still missing |
 | --- | --- | --- |
+| C2 | `enforceLocalConfigTrust` draws a boundary around file-supplied configuration: a local config cannot select an agent the catalog fails to resolve, cannot disable the sandbox while the global catalog defaults it on, and cannot declare a relative mount or a filesystem root. Every refusal names the explicit opt-in (`--agent`, `--add`, `--no-jail`) and what the operator types stays fully trusted | the refusal is unconditional rather than a TTY confirmation prompt (the item allows either; non-interactive runs had to refuse regardless). `jail_flags` weakening `seccomp` / `landlock` / `rlimits` / `hide_config` is not yet part of the comparison |
 | I4 | `--dry-run` validates before printing. The argv is still printed when issues exist, warnings exit 0, a fatal issue exits non-zero. Issues are now labelled `error:` / `warning:` instead of calling everything a warning. The CLI fixtures gained PATH stubs for the harness and both upstream CLIs, so the suite validates a realistic configuration and stays hermetic | nothing |
 | C1 | Presence of `options.jail` / `options.memory` comes from the parsed document (`declaredOptionKeys`) instead of a substring search. `hasOptionKey` / `hasSectionKey` are gone | nothing |
 | S1 | `preferReleaseInstall` routes any recipe with release assets to the checksum-verified path; `source_url` is a fallback for recipes that publish none | nothing |
