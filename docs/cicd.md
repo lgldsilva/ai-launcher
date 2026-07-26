@@ -23,8 +23,10 @@ Triggers: push to `main` and every pull request. All jobs run on
 The `test` job's coverage gate replicates `make test-coverage`: it measures
 only `internal/config`, `internal/catalog`, and `internal/launcher`, excludes
 the PTY executor (`executor.go`) and the per-platform `replace_*.go` files,
-and compares the filtered total against 90%. The boundary is the same as
-`COVER_PKGS` in `.ai-standards.env` — details in
+and compares the filtered total against 90%. The CI job runs
+`make test-coverage` rather than repeating the command, so the two can never
+report different numbers on the same commit. The commit hooks state the same
+boundary as the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — details in
 [test-strategy.md](test-strategy.md).
 
 The `sonar` job is **gated on the `SONAR_TOKEN` secret**: every step skips

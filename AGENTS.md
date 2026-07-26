@@ -22,9 +22,10 @@ canonical chain is `ai-jail [jail flags] ai-memory run [wrapper flags]
 `internal/launcher` (excluding `executor.go` and `replace_*.go`); the minimum
 is 90% (`COVERAGE_MIN`). `internal/tui`, `internal/installer`, and the PTY
 executor stay **out of the denominator** — they are covered by `go test -race
--shuffle=on ./...` (race-only). The same boundary is in `COVER_PKGS` in
-`.ai-standards.env`, read by the commit hooks. Do not move UI/execution
-packages into the gate.
+-shuffle=on ./...` (race-only). The commit hooks read the same boundary from
+the `COVERAGE_EXCLUDE` regex in `.ai-standards.env`, and SonarCloud from
+`sonar.coverage.exclusions`; change the three together. Do not move
+UI/execution packages into the gate.
 
 ## Git and hooks (ai-standards)
 

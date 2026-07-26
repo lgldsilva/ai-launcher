@@ -125,10 +125,13 @@ generate fragile, fake tests. What really cannot break is the pure logic:
 config persistence, safe defaults, argv composition.
 
 **How.** `make test-coverage` (and the CI `test` job) filter the profile with
-`awk` and fail below 90% on the filtered total; `COVER_PKGS` in
-`.ai-standards.env` repeats the same boundary for the hooks. TUI, installer,
-and executor are covered by `go test -race -shuffle=on ./...` (race-only) and
-by the Gherkin contract suite.
+`awk` and fail below 90% on the filtered total; the CI job calls
+`make test-coverage` instead of repeating it. The `COVERAGE_EXCLUDE` regex in
+`.ai-standards.env` states the same boundary for the commit hooks, and
+`sonar.coverage.exclusions` for SonarCloud — three statements of one boundary,
+which have to be changed together. TUI, installer, and executor are covered by
+`go test -race -shuffle=on ./...` (race-only) and by the Gherkin contract
+suite.
 
 **Trade-offs.** Interaction bugs (keys, terminal) depend on race tests and
 manual verification. It is the honest split: a gate where the metric means

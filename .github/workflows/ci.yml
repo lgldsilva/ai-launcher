@@ -25,20 +25,11 @@ jobs:
         run: go build ./...
       - name: Tests (race + shuffle)
         run: go test -race -shuffle=on ./...
-      # Same logic as `make test-coverage`: cover only config/catalog/launcher,
-      # drop the PTY executor and platform-specific replace_*.go files, and
-      # fail when the filtered total is below 90%.
+      # The Makefile owns the coverage boundary. Duplicating the command here
+      # let the two drift: CI and `make test-coverage` could report different
+      # numbers on the same commit.
       - name: Coverage gate
-        run: |
-          go test -covermode=atomic \
-            -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher \
-            -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher
-          logic_profile=$(mktemp)
-          trap 'rm -f "$logic_profile"' EXIT
-          awk 'NR == 1 || $1 !~ /internal\/launcher\/(executor|replace_.*)\.go:/' coverage.out > "$logic_profile"
-          go tool cover -func="$logic_profile"
-          coverage=$(go tool cover -func="$logic_profile" | awk '/^total:/{gsub("%", "", $3); print $3}')
-          awk -v coverage="$coverage" -v minimum="$COVERAGE_MIN" 'BEGIN { if (coverage + 0 < minimum + 0) { printf "FAIL: logic coverage %.1f%% is below %.1f%%\n", coverage, minimum; exit 1 } printf "PASS: logic coverage %.1f%% meets %.1f%% gate\n", coverage, minimum }'
+        run: make test-coverage
 
   lint:
     name: Lint

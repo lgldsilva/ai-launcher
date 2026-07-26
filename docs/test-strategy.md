@@ -42,8 +42,10 @@ in triple quotes.
 coverage, and enforces a **minimum gate of 90% aggregated line coverage** on
 the logic packages: `internal/config`, `internal/catalog`, and
 `internal/launcher`. Only override `COVERAGE_MIN` for diagnosis; CI and merge
-validation use the default gate. The same boundary is in `COVER_PKGS` in
-`.ai-standards.env`, used by the commit hooks.
+validation use the default gate. The commit hooks express the same boundary as
+the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — a regex rather than a
+package list, so the hook can race-test `./...` while measuring only the logic
+packages.
 
 Go does not expose native branch coverage, so the suite explicitly targets
 both outcomes of the configuration/default decisions; a branch percentage
