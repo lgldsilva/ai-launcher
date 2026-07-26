@@ -33,6 +33,14 @@ at `ai-memory run`; without memory the harness runs directly. On Windows
 ai-jail does not exist — the launcher disables the sandbox with a warning and
 runs the rest.
 
+`ai-memory run` accepts a fixed harness list — `claude`, `codex`, `opencode`,
+`pi`, `crush`, `omp`, `kimi`, `grok` — and rejects anything else. A catalog
+agent outside that list either declares `memory.run_harness` to map onto one of
+them (as `oc` does onto `opencode`) or declares `supports_memory: false`;
+pre-flight fails with `memory-harness-unsupported` rather than letting the
+rejection surface as an opaque error inside the sandbox. `--no-memory` runs any
+harness under the jail alone.
+
 When the managed ai-memory native binary exists
 (`~/.local/share/ai-launcher/bin/ai-memory`, provisioned by `--install` /
 `--upgrade` from the verified release assets), the launcher exports
@@ -182,8 +190,7 @@ make build-release  # Linux/macOS/Windows binaries (amd64/arm64) in dist/
 ### Managed tools (ai-jail, ai-memory, harnesses)
 
 The launcher installs the tools it orchestrates from GitHub releases, with
-SHA-256 checksum verification on every release asset (see **Security** for the
-one recipe shape that currently bypasses it):
+mandatory SHA-256 checksum verification:
 
 ```bash
 ai-launcher --install                     # everything that has a recipe in the catalog
@@ -243,7 +250,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--extra-args "<args>"` / `--args` | Extra arguments forwarded to the harness (`--args` is an alias) |
 | `--profile <name>` | Loads a saved profile as the base selection |
 | `--config <path>` / `--local-config <path>` | Alternative paths for the global / local config |
-| `--dry-run` | Prints the generated command without executing |
+| `--dry-run` | Runs pre-flight validation, prints the generated command, and exits without executing. Warnings go to stderr and still exit 0; a fatal issue reports the problem, still prints the argv, and exits non-zero |
 | `--version` | Prints the binary version and exits |
 | `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
 
@@ -459,13 +466,12 @@ Layers of defense:
   (`ai-jail-version-too-old` / `ai-memory-version-too-old`) when the installed
   binary is older. It is a separate command on purpose — pre-flight validation
   never execs the upstream binaries, so a launch costs no extra processes.
-- Installs from a GitHub **release asset** are SHA-256 checksum-verified
+- Every install from a GitHub release asset is SHA-256 checksum-verified
   (`.sha256`, `.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release
   body); `allow_unverified: true` exists, but it is an explicit operator
-  choice. A tool whose recipe declares `source_url` currently takes the source
-  path instead on Linux and macOS, which validates only the HTTPS scheme and a
-  `#!` shebang — ai-memory is installed this way today. Tracked as item S1 in
-  [docs/remediation-plan.md](docs/remediation-plan.md).
+  choice. A recipe that publishes release assets always installs from them —
+  the unverified `source_url` path (HTTPS scheme and a `#!` shebang, from a
+  mutable branch) is only a fallback for recipes with no assets at all.
 - Self-update (`ai-launcher upgrade`) and the `install.sh` curl installer are
   stricter: the release `checksums.txt` is mandatory and there is no
   `allow_unverified` escape hatch. The managed ai-memory native runner comes
@@ -519,9 +525,9 @@ Documentation and UI strings in this repository are **English**.
 
 - [x] Interactive TUI with real execution (`r` / Ctrl+Enter runs; Space/Enter select)
 - [x] Named profiles and harness-declared parameters
-- [x] Installer with SHA-256 checksum verification for release assets
+- [x] Installer with mandatory SHA-256 checksum
 - [x] Full ai-jail v1.15 capability surface (tri-state auto / force-on / force-off)
-- [ ] Checksum-verified install for tools that ship a `source_url` (today ai-memory takes the unverified source path — see [docs/remediation-plan.md](docs/remediation-plan.md) item S1)
+- [x] `--dry-run` runs pre-flight validation before printing the command
 - [x] Windows as a first-class citizen without jail
 - [x] Gherkin contract suite against ai-jail/ai-memory drift
 - [x] Automated release pipeline (autotag semver + GoReleaser: archives, `checksums.txt`, SBOM)

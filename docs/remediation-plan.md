@@ -124,11 +124,11 @@ see **Progress** below for what each closed item shipped.
 
 | ID | Title | Severity | Phase | Status |
 | --- | --- | --- | --- | --- |
-| C1 | `permissions: {jail: true}` turns the sandbox off | critical | 1 | open |
+| C1 | `permissions: {jail: true}` turns the sandbox off | critical | 1 | done |
 | C2 | Repo-supplied `.ai-launch.yaml` picks the binary and disables the sandbox | critical | 1 | open |
-| S1 | ai-memory installed with no checksum from a mutable ref | high | 1 | open |
-| I1 | 14 of 24 catalog agents break under the default config | high | 1 | open |
-| I4 | `--dry-run` prints before validating | medium | 1 | open |
+| S1 | ai-memory installed with no checksum from a mutable ref | high | 1 | done |
+| I1 | 14 of 24 catalog agents break under the default config | high | 1 | done |
+| I4 | `--dry-run` prints before validating | medium | 1 | done |
 | I2 | `--continue` drops workstream, yolo and extra args | medium | 2 | open |
 | I3 | CLI permission flags skip normalization | medium | 2 | open |
 | I7 | Spurious `jail-options-without-jail` warning | medium | 2 | open |
@@ -148,12 +148,16 @@ see **Progress** below for what each closed item shipped.
 
 ## Progress
 
-Phase 3 was executed before Phase 1, which inverts the risk ordering below:
-both fail-open criticals are still live in `main`. Treat Phase 1 as the next
-work, not as backlog.
+Phase 3 was executed before Phase 1, inverting the risk ordering below. Phase 1
+has since been worked in its documented order (I4 first, so the rest is visible
+in `--dry-run`); **C2 is the one critical still open**.
 
 | ID | What shipped | What is still missing |
 | --- | --- | --- |
+| I4 | `--dry-run` validates before printing. The argv is still printed when issues exist, warnings exit 0, a fatal issue exits non-zero. Issues are now labelled `error:` / `warning:` instead of calling everything a warning. The CLI fixtures gained PATH stubs for the harness and both upstream CLIs, so the suite validates a realistic configuration and stays hermetic | nothing |
+| C1 | Presence of `options.jail` / `options.memory` comes from the parsed document (`declaredOptionKeys`) instead of a substring search. `hasOptionKey` / `hasSectionKey` are gone | nothing |
+| S1 | `preferReleaseInstall` routes any recipe with release assets to the checksum-verified path; `source_url` is a fallback for recipes that publish none | nothing |
+| I1 | `config.MemoryRunHarnesses` declares the eight harnesses `ai-memory run` accepts, in one place. Pre-flight fails with `memory-harness-unsupported` naming the `--no-memory` escape, and the 14 catalog agents that cannot map onto the list now declare `supports_memory: false` | the harness token is still derived from the resolved alias rather than the agent identity (point 3 of the item); the catalog only avoids it by declaring `run_harness` |
 | S6 | `config.MinAIJailVersion` / `MinAIMemoryVersion` pin the floor in one place; `ai-launcher --doctor` probes `--version` on both upstreams and reports anything below it. The probe is deliberately **not** in `Validator.Validate` — that runs on every launch and inside the TUI update loop | nothing |
 | F2 | `--mask-except`, `--deny-path-except`, `--hide-dotdir`, `--status-bar=STYLE`, and the `display` / `pictures` / `tailscale` / `systemd-user` / `mise` / `worktree` passthroughs. `JailFlags` booleans now mirror ai-jail's own auto / force-on / force-off model instead of suppressing the positive form, so `jail_flags.gpu: true` stops being a silent no-op | `ro_maps` (a declarative read-only mount key; `--mount PATH:ro` already covers the behavior) |
 | I6 | `mergePermissions` merges the built-in permission catalog with the user's by ID, so a new release's permissions appear without clobbering customizations | `cfg.Agents` is still replaced wholesale, losing `Memory.RunHarness` / `YoloFlag` / `Params`; `SaveGlobal` still runs on every launch with the error ignored |

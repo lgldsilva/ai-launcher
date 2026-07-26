@@ -557,3 +557,33 @@ Feature: Launcher command contract
       --status-bar=pastel
       claude
       """
+
+  Scenario: Rejects a harness ai-memory run does not accept
+    Given a validation configuration
+      """
+      agent: gemini
+      goos: linux
+      jail: false
+      memory: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-harness-unsupported
+      """
+
+  Scenario: Accepts a harness from the ai-memory run list
+    Given a validation configuration
+      """
+      agent: opencode
+      goos: linux
+      jail: false
+      memory: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """

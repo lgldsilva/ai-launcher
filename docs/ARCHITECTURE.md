@@ -80,18 +80,24 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
 2. **Selection precedence**: built-in defaults < local `.ai-launch.yaml` <
    profile < explicit flags. Profiles only replace the blocks they define.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
-4. **Mandatory checksum on release-asset installs**: without a verifiable
-   checksum the install fails, unless an explicit `allow_unverified: true` in
-   the recipe. The invariant has a live hole: a recipe declaring `source_url`
-   routes to `InstallSource` on Linux and macOS, which validates only the
-   HTTPS scheme and a `#!` shebang. ai-memory ships that way today — tracked
-   as item S1 in [remediation-plan.md](remediation-plan.md).
+4. **Mandatory checksum on installs**: without a verifiable checksum the
+   install fails, unless an explicit `allow_unverified: true` in the recipe.
+   A recipe that publishes release assets always installs from them; the
+   unverified `source_url` path is reserved for recipes with no assets.
 5. **Strict checksum on self-update**: `ai-launcher upgrade` and `install.sh`
    require the release `checksums.txt`; a missing file, a missing entry, or a
    mismatch is a hard error with no `allow_unverified` escape hatch, because
    the flow overwrites the executable you will run.
 6. **Safe defaults**: omitted `jail` and `memory` mean `true`; an explicit
    `false` is preserved (tested contract — see docs/test-strategy.md).
+   "Omitted" is decided from the **parsed** document, never from a substring
+   search over the raw bytes: `jail:` also occurs inside `permissions`, inside
+   comments and inside mount paths, and a false positive there skips the
+   default and leaves the sandbox off.
+6b. **Harness must be one ai-memory accepts**: `ai-memory run` takes a fixed
+   list (`config.MemoryRunHarnesses`). Pre-flight fails with
+   `memory-harness-unsupported` instead of emitting an argv whose rejection
+   would surface as an opaque clap error inside the jail.
 7. **Token via environment only**: `AI_MEMORY_AUTH_TOKEN` goes into the child
    process env and never into logs or argv. The same holds for
    `AI_LAUNCHER_UPDATE_TOKEN` in the self-update flow.

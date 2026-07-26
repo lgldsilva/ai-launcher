@@ -202,6 +202,23 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 	return nil
 }
 
+// reportPreflight prints every pre-flight issue and reports whether any of them
+// is fatal. Warnings are labelled as such; anything else blocks the launch.
+func reportPreflight(errOut io.Writer, issues []launcher.Issue) bool {
+	fatal := false
+	for _, issue := range issues {
+		label := "error:"
+		if issue.Warning {
+			label = "warning:"
+		}
+		_, _ = fmt.Fprintln(errOut, label, issue)
+		if !issue.Warning {
+			fatal = true
+		}
+	}
+	return fatal
+}
+
 // reportInfoFlags handles the flags that only print information and exit,
 // before any configuration is loaded. handled is true when one of them ran.
 func reportInfoFlags(opts cliOptions, out io.Writer) (bool, error) {
@@ -590,20 +607,20 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 	if err != nil {
 		return err
 	}
-	if decideLaunchAction(opts.dryRun) == actionPrint {
-		_, _ = fmt.Fprintln(out, shellJoin(argv))
-		return nil
-	}
+	// Validate before printing: --dry-run is the advertised diagnostic surface,
+	// so it must not present a command pre-flight would reject. The argv is
+	// still printed when there are issues — seeing what would run is the point.
+	printOnly := decideLaunchAction(opts.dryRun) == actionPrint
 	issues := launcher.NewValidator().WithPermissions(global.Permissions).Validate(launchConfig)
-	fatal := false
-	for _, issue := range issues {
-		_, _ = fmt.Fprintln(errOut, "warning:", issue)
-		if !issue.Warning {
-			fatal = true
-		}
+	fatal := reportPreflight(errOut, issues)
+	if printOnly {
+		_, _ = fmt.Fprintln(out, shellJoin(argv))
 	}
 	if fatal {
 		return errors.New("pre-flight validation failed")
+	}
+	if printOnly {
+		return nil
 	}
 	// Remember the harness for the TUI MRU list (best-effort; never block launch).
 	if !launchConfig.ContinueSession {

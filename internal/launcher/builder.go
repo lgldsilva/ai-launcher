@@ -548,6 +548,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		if _, err := lookPath("ai-memory"); err != nil {
 			issues = append(issues, Issue{Code: "memory-not-found", Message: "ai-memory is required when memory integration is enabled"})
 		}
+		issues = append(issues, memoryHarnessIssues(cfg)...)
 	}
 	issues = append(issues, mountIssues(cfg, stat)...)
 	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
@@ -578,6 +579,26 @@ func agentIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Issu
 		return []Issue{{Code: "agent-not-found", Message: fmt.Sprintf("%q is not available in PATH", cfg.Agent.Command)}}
 	}
 	return nil
+}
+
+// memoryHarnessIssues rejects a harness `ai-memory run` does not accept. Without
+// it the launcher emits a valid-looking argv and the failure surfaces as an
+// opaque clap error inside the jail, long after the point of diagnosis. A
+// continue session carries no harness at all, so there is nothing to check.
+func memoryHarnessIssues(cfg LaunchConfig) []Issue {
+	if cfg.ContinueSession {
+		return nil
+	}
+	harness := memoryRunHarness(cfg.Agent)
+	if config.SupportsMemoryRunHarness(harness) {
+		return nil
+	}
+	return []Issue{{
+		Code: "memory-harness-unsupported",
+		Message: fmt.Sprintf(
+			"ai-memory run does not accept harness %q (accepted: %s); relaunch with --no-memory, or declare memory.run_harness in the catalog",
+			harness, strings.Join(config.MemoryRunHarnesses(), ", ")),
+	}}
 }
 
 // jailIssues checks the ai-jail dependency, degrading to warnings where the

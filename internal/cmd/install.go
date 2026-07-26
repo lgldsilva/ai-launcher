@@ -143,16 +143,21 @@ func InstallConfigured(global config.Global, selected string, home string, force
 	return nil
 }
 
+// preferReleaseInstall reports whether a target installs from its GitHub
+// release assets. Release assets are the only path with SHA-256 verification,
+// so they win whenever the recipe publishes them. The source_url path validates
+// nothing beyond an HTTPS scheme and a shebang, and it points at a mutable
+// branch; it is a fallback for recipes that publish no assets at all.
+func preferReleaseInstall(target installTarget) bool {
+	return target.Release != nil
+}
+
 // installOne installs a single target and returns the resulting executable
 // path. A target without a usable recipe is only a failure when it was
 // explicitly selected; otherwise it is reported as a warning.
 func installOne(client *installer.Installer, target installTarget, selected string, force bool, home string, out, errOut io.Writer, trace *installLog) (string, error) {
 	trace.Printf("target name=%q command=%q aliases=%v source=%t release=%t", target.Name, target.Command, target.Aliases, target.SourceURL != "", target.Release != nil)
-	// The source_url wrapper stays the primary install path; the native
-	// release assets are preferred only where the wrapper does not apply
-	// (Windows).
-	preferRelease := target.Release != nil && (target.SourceURL == "" || isWindows())
-	if !preferRelease {
+	if !preferReleaseInstall(target) {
 		return installWithoutRecipe(client, target, selected, force, out, errOut, trace)
 	}
 	installPath := target.Path
