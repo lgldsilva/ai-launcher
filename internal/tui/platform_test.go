@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,9 +95,22 @@ func TestNonWindowsKeepsJailToggle(t *testing.T) {
 	}
 }
 
+// stubPATHBin installs an empty executable named name on PATH so pre-flight
+// LookPath succeeds in CI (where ai-memory / ai-jail may be missing).
+func stubPATHBin(t *testing.T, name string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestContinueRowSelectsAndLaunchesAiMemoryRun(t *testing.T) {
+	// confirmRun validates PATH for ai-memory; CI images often lack the binary.
+	stubPATHBin(t, "ai-memory")
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
-		// Jail off: tests often run on /Volumes where jail+cwd is blocked by design.
 		UseJail:     false,
 		UseMemory:   true,
 		Permissions: map[string]bool{},
