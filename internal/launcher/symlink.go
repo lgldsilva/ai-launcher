@@ -23,10 +23,10 @@ import (
 //
 // Symlinks that resolve back inside the home tree are skipped: ai-jail
 // already passes the relevant dotdirs through, so they keep resolving.
-func HomeSymlinkMounts(home string) []config.Mount {
+func HomeSymlinkMounts(home string) ([]config.Mount, []RefusedMount) {
 	home = strings.TrimSpace(home)
 	if home == "" {
-		return nil
+		return nil, nil
 	}
 	canonicalHome, err := filepath.EvalSymlinks(home)
 	if err != nil {
@@ -34,9 +34,10 @@ func HomeSymlinkMounts(home string) []config.Mount {
 	}
 	entries, err := os.ReadDir(home)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	targets := make([]string, 0, len(entries))
+	refused := make([]RefusedMount, 0)
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, ".") {
@@ -54,9 +55,51 @@ func HomeSymlinkMounts(home string) []config.Mount {
 		if target == canonicalHome || strings.HasPrefix(target, canonicalHome+string(os.PathSeparator)) {
 			continue
 		}
+		if reason, denied := deniedAutoMount(target); denied {
+			refused = append(refused, RefusedMount{Link: filepath.Join(home, name), Target: target, Reason: reason})
+			continue
+		}
 		targets = append(targets, target)
 	}
-	return nestedFreeMounts(targets)
+	sort.Slice(refused, func(i, j int) bool { return refused[i].Link < refused[j].Link })
+	return nestedFreeMounts(targets), refused
+}
+
+// RefusedMount is an auto-mount candidate the denylist rejected. It is reported
+// rather than dropped: a hidden symlink silently granting or silently losing
+// access are both surprises.
+type RefusedMount struct {
+	Link   string
+	Target string
+	Reason string
+}
+
+// autoMountDenylist are the trees a single hidden symlink must never expose
+// read-write to a sandboxed agent. The whole point of the jail is that these
+// stay outside it, and the auto-mount path is not an operator decision — it
+// triggers on whatever the home directory happens to contain.
+// Entries are compared against the *resolved* target, so the macOS forms are
+// listed too: there, /etc and /var are themselves symlinks into /private.
+var autoMountDenylist = []string{
+	"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc",
+	"/sys", "/var", "/tmp", "/opt", "/root", "/System", "/Library", "/Applications",
+	"/private", "/private/etc", "/private/var", "/private/tmp", "/Volumes",
+}
+
+// deniedAutoMount reports whether target is a filesystem root or one of the
+// system trees on the denylist. A path *beneath* a denied tree is allowed: the
+// concern is handing over the tree itself.
+func deniedAutoMount(target string) (string, bool) {
+	clean := filepath.Clean(target)
+	if clean == string(filepath.Separator) {
+		return "the filesystem root", true
+	}
+	for _, denied := range autoMountDenylist {
+		if clean == denied {
+			return "the system directory " + denied, true
+		}
+	}
+	return "", false
 }
 
 // nestedFreeMounts sorts the targets and drops duplicates and targets already

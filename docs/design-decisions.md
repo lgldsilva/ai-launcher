@@ -153,6 +153,35 @@ path that only prints.
 `launcher.Validator` with stable issue codes and non-fatal warnings (e.g.
 jail on Windows), instead of fail-fast on the first problem.
 
+## The child inherits the environment, minus the AI_MEMORY_* we own
+
+**Decision.** The launched process inherits the parent environment as-is. The
+launcher only takes ownership of the variables it configures — today
+`AI_MEMORY_SERVER_URL`, `AI_MEMORY_AUTH_TOKEN` and `AI_MEMORY_NATIVE_BIN` —
+and for those, *unconfigured means unset*: `upsertEnv` removes the inherited
+entry rather than forwarding it.
+
+**Why the removal matters.** Returning early on an empty value looked harmless
+and was not. A stale `AI_MEMORY_AUTH_TOKEN`, or an `AI_MEMORY_SERVER_URL`
+exported by direnv, a `.envrc` or a wrapper script, would reach the sandboxed
+agent and point it at somebody else's memory server — with the launcher
+reporting nothing, because from its point of view it had configured nothing.
+
+**What we are deliberately not doing.** There is no allowlist. Everything else
+in the parent environment — `GITHUB_TOKEN`, cloud credentials,
+`AI_LAUNCHER_UPDATE_TOKEN` — crosses into the jail. An allowlist is the right
+long-term answer, but it breaks the agents themselves (they need `PATH`,
+`HOME`, `TERM`, proxy settings, language runtime variables, and whatever the
+user's shell adds for their toolchain), so it needs a curated list and a way
+for the operator to extend it. Until then this is a known, recorded exposure,
+not an oversight.
+
+The same applies to `AI_MEMORY_AUTH_TOKEN` itself: env vars are readable inside
+the jail, so the agent can read the token (already noted in the README security
+section). `ai-memory run --config <PATH>` is an upstream-supported alternative
+that would keep it out of the environment entirely; evaluating it is the
+natural next step for this entry.
+
 ## What we are NOT doing (yet)
 
 - **Native sandbox on Windows.** Depends on upstream (ai-jail "probably

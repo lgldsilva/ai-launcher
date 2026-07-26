@@ -132,8 +132,10 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 	if flagsWasSet(flags, "memory") {
 		local.Options.Memory = o.memory
 	}
-	if flagsWasSet(flags, "no-memory") && o.noMemory {
-		local.Options.Memory = false
+	// Same semantic as --no-jail and --no-yolo: the flag inverts. Special-casing
+	// this one to "only ever disable" made --no-memory=false silently inert.
+	if flagsWasSet(flags, "no-memory") {
+		local.Options.Memory = !o.noMemory
 	}
 	if flagsWasSet(flags, "yolo") {
 		local.Options.Yolo = o.yolo
@@ -153,22 +155,9 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 	if flagsWasSet(flags, "project") {
 		local.Options.Project = o.project
 	}
-	mountConfig := append([]config.Mount(nil), local.Mounts...)
-	if flagsWasSet(flags, "mount") || flagsWasSet(flags, "map") || flagsWasSet(flags, "rw-map") {
-		mountConfig = nil
-		for _, value := range o.mounts {
-			mountConfig = append(mountConfig, parseMount(value, "ro"))
-		}
-		for _, value := range o.rwMounts {
-			mountConfig = append(mountConfig, parseMount(value, "rw"))
-		}
-	} else if len(mountConfig) == 0 {
-		// Built-in / catalog default_mounts are suggestions. Skip paths that
-		// do not exist on this host so a Linux layout on macOS (or an
-		// unplugged external volume) does not fail pre-flight validation.
-		for _, value := range config.ExistingPaths(defaultMounts) {
-			mountConfig = append(mountConfig, parseMount(value, "rw"))
-		}
+	mountConfig, err := o.buildMountConfig(flags, local.Mounts, defaultMounts)
+	if err != nil {
+		return nil, err
 	}
 	if flagsWasSet(flags, "extra-args") || flagsWasSet(flags, "args") {
 		parsed, err := splitArgs(o.extraArgs)
@@ -411,7 +400,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	positionalArgs := append([]string(nil), flags.Args()...)
 
 	status, trust := resolveAgentSelection(catalogue, opts.agent, local)
-	permissions := catalogue.NormalizePermissions(local.Permissions)
+	// Normalization resolves permission dependencies (gpu requires docker) and
+	// drops ids the catalog does not declare. It has to run *after* every input
+	// is merged: normalizing first left a dependency pulled in by a CLI flag
+	// unresolved, so --gpu produced an argv without --docker while the TUI,
+	// which re-normalizes on each toggle, produced the right one.
+	permissions := copyPermissions(local.Permissions)
 	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
 	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
 	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
@@ -422,6 +416,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	applyBoolFlag(flags, "systemd-user", permissions, "systemd-user", opts.systemdUser)
 	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
 	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
+	permissions = catalogue.NormalizePermissions(permissions)
 	if err := enforceLocalConfigTrust(flags, global, trust); err != nil {
 		return err
 	}
@@ -462,12 +457,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		_, _ = fmt.Fprintln(errOut, "warning:", issue)
 	}
 	if launchConfig.UseJail {
-		// ai-jail recreates home dotfile symlinks inside the sandbox without
-		// their targets; mount the resolved targets so they keep resolving.
-		launchConfig.Mounts = launcher.MergeAutoMounts(launchConfig.Mounts, launcher.HomeSymlinkMounts(home))
-		if launchConfig.JailFlags.HideConfig == nil {
-			launchConfig.JailFlags.HideConfig = symlinkedProjectJailConfig()
-		}
+		launchConfig = applyJailAutoDetection(launchConfig, home, errOut)
 	}
 	if opts.saveProfile != "" {
 		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
@@ -673,8 +663,8 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 			},
 		})
 		if err != nil {
-			// Cancelled or empty result — quiet exit, no "failed to start".
-			return nil
+			// A cancellation is a quiet exit; any other failure is reported.
+			return classifyTUIError(err)
 		}
 		launchConfig = confirmed
 	} else if err := saveIfRequested(opts.save, opts.localPath, local, launchConfig); err != nil {
@@ -701,11 +691,13 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 	if printOnly {
 		return nil
 	}
-	// Remember the harness for the TUI MRU list (best-effort; never block launch).
+	// Remember the harness for the TUI MRU list (best-effort; never block
+	// launch). Only the MRU list is persisted: writing the whole merged catalog
+	// on every launch froze that release's built-ins into the user's config.
 	if !launchConfig.ContinueSession {
 		if cmd := strings.TrimSpace(launchConfig.Agent.Command); cmd != "" {
 			config.TouchRecentAgent(&global, cmd)
-			_ = config.SaveGlobal(opts.globalPath, global)
+			_ = config.SaveRecentAgents(opts.globalPath, global.RecentAgents)
 		}
 	}
 	label := launchConfig.Agent.Command
@@ -791,12 +783,109 @@ func symlinkedProjectJailConfig() *bool {
 	return &disable
 }
 
-func parseMount(value, defaultMode string) config.Mount {
-	parts := strings.Split(value, ":")
-	if len(parts) >= 2 && (parts[len(parts)-1] == "ro" || parts[len(parts)-1] == "rw" || parts[len(parts)-1] == "read-only") {
-		return config.Mount{Path: strings.Join(parts[:len(parts)-1], ":"), Mode: parts[len(parts)-1]}
+// applyJailAutoDetection adds the mounts and flags the launcher infers from the
+// host, announcing each one. ai-jail recreates home dotfile symlinks inside the
+// sandbox without their targets, so the resolved targets are mounted to keep
+// them resolving; bwrap cannot mask a symlinked .ai-jail, so config masking is
+// turned off for such a project. Both are automatic, which is exactly why they
+// are printed: a silent widening of the sandbox is one an operator will trust.
+func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Writer) launcher.LaunchConfig {
+	auto, refused := launcher.HomeSymlinkMounts(home)
+	for _, entry := range refused {
+		_, _ = fmt.Fprintf(errOut, "warning: not auto-mounting %s -> %s (%s)\n", entry.Link, entry.Target, entry.Reason)
 	}
-	return config.Mount{Path: value, Mode: defaultMode}
+	for _, mount := range auto {
+		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), a home symlink target outside $HOME\n", mount.Path, mount.Mode)
+	}
+	cfg.Mounts = launcher.MergeAutoMounts(cfg.Mounts, auto)
+	if cfg.JailFlags.HideConfig != nil {
+		return cfg
+	}
+	if hide := symlinkedProjectJailConfig(); hide != nil {
+		_, _ = fmt.Fprintln(errOut, "warning: .ai-jail in this project is a symlink; ai-jail config masking is disabled for this launch (--no-hide-config)")
+		cfg.JailFlags.HideConfig = hide
+	}
+	return cfg
+}
+
+// buildMountConfig resolves the effective mount list: explicit --mount / --map
+// / --rw-map flags replace the configured list entirely; otherwise the
+// configured mounts stand, falling back to the catalog default_mounts.
+func (o *cliOptions) buildMountConfig(flags *flag.FlagSet, configured []config.Mount, defaultMounts []string) ([]config.Mount, error) {
+	if flagsWasSet(flags, "mount") || flagsWasSet(flags, "map") || flagsWasSet(flags, "rw-map") {
+		mounts, err := parseMounts(o.mounts, "ro")
+		if err != nil {
+			return nil, err
+		}
+		writable, err := parseMounts(o.rwMounts, "rw")
+		if err != nil {
+			return nil, err
+		}
+		return append(mounts, writable...), nil
+	}
+	if len(configured) > 0 {
+		return append([]config.Mount(nil), configured...), nil
+	}
+	// Built-in / catalog default_mounts are suggestions. Skip paths that do not
+	// exist on this host so a Linux layout on macOS (or an unplugged external
+	// volume) does not fail pre-flight validation.
+	return parseMounts(config.ExistingPaths(defaultMounts), "rw")
+}
+
+// parseMounts parses every value with the same default mode, failing on the
+// first invalid entry.
+func parseMounts(values []string, defaultMode string) ([]config.Mount, error) {
+	mounts := make([]config.Mount, 0, len(values))
+	for _, value := range values {
+		mount, err := parseMount(value, defaultMode)
+		if err != nil {
+			return nil, err
+		}
+		mounts = append(mounts, mount)
+	}
+	return mounts, nil
+}
+
+// copyPermissions clones the map so the CLI flag pass never mutates the loaded
+// local config, which is still needed unchanged for --save.
+func copyPermissions(permissions map[string]bool) map[string]bool {
+	clone := make(map[string]bool, len(permissions))
+	for id, enabled := range permissions {
+		clone[id] = enabled
+	}
+	return clone
+}
+
+// parseMount splits "PATH[:MODE]" from the last colon only, so a directory
+// whose final element is literally "ro" keeps it. The path must be absolute —
+// a relative mount is ambiguous once the sandbox changes the working
+// directory — and is cleaned, matching what the TUI mount manager already does.
+func parseMount(value, defaultMode string) (config.Mount, error) {
+	path, mode := value, defaultMode
+	if index := strings.LastIndex(value, ":"); index >= 0 {
+		switch suffix := value[index+1:]; suffix {
+		case "ro", "rw", "read-only":
+			path, mode = value[:index], suffix
+		}
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return config.Mount{}, fmt.Errorf("mount %q has no path", value)
+	}
+	if !filepath.IsAbs(path) {
+		return config.Mount{}, fmt.Errorf("mount %q is not an absolute path", value)
+	}
+	return config.Mount{Path: filepath.Clean(path), Mode: mode}, nil
+}
+
+// classifyTUIError maps a TUI result to a process outcome. Only a deliberate
+// cancellation is a quiet exit; anything else (a terminal that cannot be
+// initialized, for example) is a real failure and must not exit 0 in silence.
+func classifyTUIError(err error) error {
+	if err == nil || errors.Is(err, tui.ErrCancelled) {
+		return nil
+	}
+	return err
 }
 
 func applyBoolFlag(flags *flag.FlagSet, name string, permissions map[string]bool, id string, value bool) {

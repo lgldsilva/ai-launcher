@@ -47,7 +47,7 @@ func TestHomeSymlinkMountsDetectsOutsideTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mounts := HomeSymlinkMounts(home)
+	mounts, _ := HomeSymlinkMounts(home)
 	if len(mounts) != 2 {
 		t.Fatalf("mounts = %#v; want exactly .cache and .npm targets", mounts)
 	}
@@ -80,17 +80,17 @@ func TestHomeSymlinkMountsDropsTargetsCoveredByAnother(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mounts := HomeSymlinkMounts(home)
+	mounts, _ := HomeSymlinkMounts(home)
 	if len(mounts) != 1 || mounts[0].Path != outside {
 		t.Fatalf("mounts = %#v; want only the covering target %s", mounts, outside)
 	}
 }
 
 func TestHomeSymlinkMountsHandlesMissingHome(t *testing.T) {
-	if mounts := HomeSymlinkMounts(""); mounts != nil {
+	if mounts, _ := HomeSymlinkMounts(""); mounts != nil {
 		t.Fatalf("empty home = %#v; want nil", mounts)
 	}
-	if mounts := HomeSymlinkMounts(filepath.Join(t.TempDir(), "missing")); mounts != nil {
+	if mounts, _ := HomeSymlinkMounts(filepath.Join(t.TempDir(), "missing")); mounts != nil {
 		t.Fatalf("missing home = %#v; want nil", mounts)
 	}
 }

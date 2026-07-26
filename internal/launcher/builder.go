@@ -63,12 +63,13 @@ func managedNativeRunnerPath(home string) string {
 	return path
 }
 
-// upsertEnv replaces or appends a KEY=value entry when value is non-empty,
-// returning env unchanged otherwise.
+// upsertEnv replaces or appends a KEY=value entry, and removes the key when
+// value is empty. Removal matters: the child inherits the parent environment,
+// so returning early on an empty value forwarded whatever the parent happened
+// to have — a stale AI_MEMORY_AUTH_TOKEN or an AI_MEMORY_SERVER_URL from
+// direnv would silently point the sandboxed agent at another server.
+// "Not configured" has to mean "not set".
 func upsertEnv(env []string, key, value string) []string {
-	if value == "" {
-		return env
-	}
 	prefix := key + "="
 	filtered := env[:0]
 	for _, entry := range env {
@@ -76,6 +77,9 @@ func upsertEnv(env []string, key, value string) []string {
 			continue
 		}
 		filtered = append(filtered, entry)
+	}
+	if value == "" {
+		return filtered
 	}
 	return append(filtered, prefix+value)
 }
@@ -122,11 +126,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	if cfg.UseMemory {
 		command = append(command, "ai-memory", "run")
 		command = appendMemoryScope(command, cfg)
-		if cfg.NewWorkstream != "" {
-			command = append(command, "--new", cfg.NewWorkstream)
-		} else if cfg.Workstream != "" {
-			command = append(command, "--workstream", cfg.Workstream)
-		}
+		command = appendWorkstreamSelection(command, cfg)
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
@@ -146,35 +146,49 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	return command, nil
 }
 
-// memoryRunHarness is the token after `ai-memory run`. Prefer an explicit
-// Memory.RunHarness; otherwise fall back to known wrapper remaps, then Command.
+// memoryRunHarness is the token after `ai-memory run`: an explicit
+// Memory.RunHarness when the catalog declares one, otherwise the command
+// itself. The wrapper remap used to be hardcoded here because a user config
+// listing any agent replaced the whole built-in list and lost run_harness;
+// config.mergeAgents now merges per entry, so the catalog is the only source.
 func memoryRunHarness(agent config.Agent) string {
 	if agent.Memory != nil {
-		if h := strings.TrimSpace(agent.Memory.RunHarness); h != "" {
-			return h
+		if harness := strings.TrimSpace(agent.Memory.RunHarness); harness != "" {
+			return harness
 		}
-	}
-	// Built-in remaps for catalog wrappers when the user's config.yaml still
-	// lacks run_harness (configs are not deep-merged with defaults per agent).
-	switch strings.TrimSpace(agent.Command) {
-	case "oc":
-		return "opencode"
 	}
 	return agent.Command
 }
 
 // buildContinue composes "ai-memory run" without a harness, which auto-resumes
 // the most recent session of the checkout, jail-wrapped when the jail is on.
+// Every wrapper flag `ai-memory run` accepts without a harness is emitted:
+// only the harness token and its native arguments are dropped, and the
+// validator reports that so nothing disappears silently.
 func buildContinue(cfg LaunchConfig) ([]string, error) {
 	if !cfg.UseMemory {
 		return nil, errors.New("continuing a session requires ai-memory")
 	}
-	command := make([]string, 0, 8)
+	command := make([]string, 0, 10)
 	if cfg.UseJail {
 		command = appendJailArgs(command, cfg)
 	}
 	command = append(command, "ai-memory", "run")
-	return appendMemoryScope(command, cfg), nil
+	command = appendMemoryScope(command, cfg)
+	command = appendWorkstreamSelection(command, cfg)
+	return appendYoloFlag(command, cfg), nil
+}
+
+// appendWorkstreamSelection emits the workstream flags in ai-memory's own
+// precedence: creating a new one wins over resuming a named one.
+func appendWorkstreamSelection(command []string, cfg LaunchConfig) []string {
+	if cfg.NewWorkstream != "" {
+		return append(command, "--new", cfg.NewWorkstream)
+	}
+	if cfg.Workstream != "" {
+		return append(command, "--workstream", cfg.Workstream)
+	}
+	return command
 }
 
 // appendMemoryScope appends the ai-memory run scoping wrapper flags.
@@ -553,6 +567,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues = append(issues, mountIssues(cfg, stat)...)
 	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
 	issues = append(issues, undeclaredParamIssues(cfg)...)
+	issues = append(issues, continueIssues(cfg)...)
 	return issues
 }
 
@@ -613,10 +628,37 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 		}
 		return nil
 	}
-	if !cfg.JailFlags.IsZero() || cfg.JailExec {
+	// JailExec is not a user choice: it is set for every non-TUI launch, so
+	// including it here fired the warning on plain --no-jail runs where no jail
+	// option had been configured at all.
+	if !cfg.JailFlags.IsZero() {
 		return []Issue{{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true}}
 	}
 	return nil
+}
+
+// continueIssues reports the input a continue session cannot carry. `ai-memory
+// run` without a harness takes the wrapper flags but has nowhere to put
+// harness-native arguments or catalog params, so they are dropped — visibly.
+func continueIssues(cfg LaunchConfig) []Issue {
+	if !cfg.ContinueSession {
+		return nil
+	}
+	dropped := make([]string, 0, 2)
+	if len(cfg.ExtraArgs) > 0 {
+		dropped = append(dropped, "extra args")
+	}
+	if len(cfg.ParamValues) > 0 {
+		dropped = append(dropped, "harness params")
+	}
+	if len(dropped) == 0 {
+		return nil
+	}
+	return []Issue{{
+		Code:    "continue-ignores-harness-input",
+		Message: "a continue session runs ai-memory without a harness; " + strings.Join(dropped, " and ") + " will be ignored",
+		Warning: true,
+	}}
 }
 
 // jailMemoryVolumeIssues warns when Jail + ai-memory run on an external-volume
@@ -729,6 +771,11 @@ func unsupportedPlatformIssues(cfg LaunchConfig, goos string, catalog []config.P
 // undeclaredParamIssues reports param_values whose names are not declared in
 // the resolved agent's params block, in sorted order for stable output.
 func undeclaredParamIssues(cfg LaunchConfig) []Issue {
+	// A continue session has no harness to declare params; continueIssues
+	// reports the drop as a warning instead of failing on every name.
+	if cfg.ContinueSession {
+		return nil
+	}
 	declared := make(map[string]bool, len(cfg.Agent.Params))
 	for _, param := range cfg.Agent.Params {
 		declared[param.Name] = true
