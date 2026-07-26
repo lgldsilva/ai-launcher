@@ -96,6 +96,9 @@ func runValidationScenario(t *testing.T, scenario featureScenario) bool {
 	if err := yaml.Unmarshal([]byte(step.doc), &spec); err != nil {
 		t.Fatalf("parse validation configuration: %v", err)
 	}
+	if spec.ClearHome {
+		t.Setenv("HOME", "")
+	}
 	missing := make(map[string]bool, len(spec.Missing))
 	for _, command := range spec.Missing {
 		missing[command] = true

@@ -137,8 +137,30 @@ func MergeAutoMounts(configured, auto []config.Mount) []config.Mount {
 // against the process home first, so "~/.config/gh" dedups against the
 // absolute auto-mounts instead of appearing twice in the argv.
 func coveredByMounts(path string, mounts []config.Mount) bool {
+	return coveredByMountsWhere(path, mounts, nil)
+}
+
+// coveredByWritableMounts reports whether path is covered by a mount that
+// grants read-write access. Coverage by a read-only mount satisfies the path
+// check but not a permission that needs to write (for example gh, whose CLI
+// writes to ~/.config/gh).
+func coveredByWritableMounts(path string, mounts []config.Mount) bool {
+	return coveredByMountsWhere(path, mounts, mountWritable)
+}
+
+// mountWritable reports whether the mount grants write access; anything that
+// is not an explicit read-only mode is read-write, matching argv emission.
+func mountWritable(mount config.Mount) bool {
+	mode := strings.ToLower(strings.TrimSpace(mount.Mode))
+	return mode != "ro" && mode != "read-only"
+}
+
+func coveredByMountsWhere(path string, mounts []config.Mount, accept func(config.Mount) bool) bool {
 	path = filepath.Clean(path)
 	for _, mount := range mounts {
+		if accept != nil && !accept(mount) {
+			continue
+		}
 		base := filepath.Clean(expandTilde(strings.TrimSpace(mount.Path)))
 		if base == "." {
 			continue

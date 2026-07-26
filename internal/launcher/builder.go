@@ -608,6 +608,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	issues = append(issues, mountIssues(cfg, stat)...)
 	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
+	issues = append(issues, permissionMountIssues(cfg)...)
 	issues = append(issues, undeclaredParamIssues(cfg)...)
 	issues = append(issues, catalogBooleanParamIssues(cfg)...)
 	issues = append(issues, continueIssues(cfg)...)
@@ -697,6 +698,40 @@ func allowTCPPortIssues(cfg LaunchConfig) []Issue {
 		Message: "allow_tcp_ports only takes effect with lockdown enabled; ai-jail ignores --allow-tcp-port otherwise",
 		Warning: true,
 	}}
+}
+
+// permissionMountIssues surfaces the two ways an enabled home-mount
+// permission (gh) can silently lose its effect: the mount is omitted because
+// no home directory is known, or a configured read-only mount covers the path
+// and the dedup keeps the weaker mode. Both keep the operator's explicit
+// choice — the warning is what was missing.
+func permissionMountIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail {
+		return nil
+	}
+	var issues []Issue
+	for _, permission := range jailPermissions() {
+		if permission.mountHome == "" || !cfg.Permissions[permission.id] {
+			continue
+		}
+		mount, ok := homeMountPath(cfg.HomeDir, permission.mountHome)
+		if !ok {
+			issues = append(issues, Issue{
+				Code:    "permission-mount-without-home",
+				Message: fmt.Sprintf("permission %q needs a mount under the home directory, but no home is known; the mount was omitted", permission.id),
+				Warning: true,
+			})
+			continue
+		}
+		if coveredByMounts(mount, cfg.Mounts) && !coveredByWritableMounts(mount, cfg.Mounts) {
+			issues = append(issues, Issue{
+				Code:    "permission-mount-downgraded",
+				Message: fmt.Sprintf("permission %q needs read-write access to %s, but a configured mount covers it read-only; make that mount rw or narrower", permission.id, mount),
+				Warning: true,
+			})
+		}
+	}
+	return issues
 }
 
 // freshIssues rejects asking to resume and to start fresh at the same time.

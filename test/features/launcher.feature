@@ -794,3 +794,41 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       """
+
+  Scenario: Warns when a read-only mount downgrades an enabled permission
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      home: /home/tester
+      permissions:
+        gh: true
+      mounts:
+        - path: /home/tester/.config
+          mode: ro
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      mount-not-found
+      permission-mount-downgraded
+      """
+
+  Scenario: Warns when a permission mount is omitted without a home
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      clear_home: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-mount-without-home
+      """
