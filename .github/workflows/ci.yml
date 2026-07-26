@@ -68,7 +68,7 @@ jobs:
           cache: true
       - name: ShellCheck + shfmt + goreleaser check
         run: |
-          command -v shellcheck >/dev/null 2>&1 || sudo apt-get install -y shellcheck
+          command -v shellcheck >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y shellcheck; }
           make lint-dist
 
   vuln:
