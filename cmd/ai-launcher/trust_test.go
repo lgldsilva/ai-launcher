@@ -116,11 +116,11 @@ func TestTamperedSavedConfigIsRefusedAgain(t *testing.T) {
 	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
 		t.Fatalf("saveLocalSelection() error = %v", err)
 	}
-	b, err := os.ReadFile(localPath) // #nosec G304 G703 -- test fixture path built by t.TempDir()
+	b, err := os.ReadFile(localPath) // #nosec G304 -- test fixture path built by t.TempDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(localPath, append(b, []byte("# touched after save\n")...), 0o600); err != nil { // #nosec G304 G703 -- test fixture path built by t.TempDir()
+	if err := os.WriteFile(localPath, append(b, []byte("# touched after save\n")...), 0o600); err != nil { // #nosec G703 -- test fixture path built by t.TempDir()
 		t.Fatal(err)
 	}
 	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run"); err == nil {
