@@ -371,30 +371,44 @@ func findChecksumAsset(assets []Asset, archiveName, configured string) (Asset, b
 
 func checksumFor(data []byte, filename string) (string, error) {
 	base := filepath.Base(filename)
-	var onlyHash string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.Trim(strings.TrimSpace(strings.ReplaceAll(line, "`", "")), "- ")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		if hash, ok := checksumFromBSDLine(line, filename, base); ok {
+			return hash, nil
+		}
 		fields := strings.Fields(line)
 		if hash, ok := checksumFromFields(fields, filename, base); ok {
 			return hash, nil
 		}
-		if len(fields) == 1 && isSHA256(fields[0]) {
-			onlyHash = strings.ToLower(fields[0])
-		}
-		if strings.Contains(line, "=") {
-			parts := strings.SplitN(line, "=", 2)
-			if isSHA256(strings.TrimSpace(parts[1])) {
-				return strings.ToLower(strings.TrimSpace(parts[1])), nil
-			}
-		}
 	}
-	if onlyHash != "" {
-		return onlyHash, nil
-	}
+	// No fallback: a lone hash or a key=<sha256> pair anchors to nothing, so a
+	// checksums file (or release body) mentioning the hash of a DIFFERENT
+	// asset would satisfy verification. Only filename-anchored lines count.
 	return "", fmt.Errorf("checksum for %s not found", filename)
+}
+
+// checksumFromBSDLine parses the BSD shasum format
+// "SHA256 (<name>) = <hash>" and reports the hash when the parenthesized
+// name matches the wanted filename.
+func checksumFromBSDLine(line, filename, base string) (string, bool) {
+	if !strings.HasPrefix(line, "SHA256 (") {
+		return "", false
+	}
+	name, rest, found := strings.Cut(strings.TrimPrefix(line, "SHA256 ("), ")")
+	if !found {
+		return "", false
+	}
+	hash := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "="))
+	if !isSHA256(hash) {
+		return "", false
+	}
+	if name == filename || filepath.Base(name) == base {
+		return strings.ToLower(hash), true
+	}
+	return "", false
 }
 
 // checksumFromFields locates a sha256 token on a checksum-file line and
