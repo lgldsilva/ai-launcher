@@ -123,6 +123,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
     the resolved binary read-only (`--map <dir>`), unless a configured mount
     already covers it. Read-only is sufficient: the agent executes the
     binary, it never writes it.
+11. **`--exec` marks programmatic launches**: the launcher passes ai-jail's
+    `--exec` (direct exec without the PTY proxy or status bar) whenever the
+    invocation carries arguments — agent selection, flags, `--dry-run`.
+    Bare `ai-launcher` opens the TUI, and the TUI launch omits `--exec` so
+    ai-jail's defaults keep charge of the terminal (`JailExec` in
+    `cmd/ai-launcher/main.go` is exactly `len(args) > 0`).
 
 ## Configuration (summary)
 
@@ -157,7 +163,7 @@ ai-jail (all require `UseJail` when on):
 | Permission id | Argv contribution |
 | --- | --- |
 | `ssh` | `--ssh` |
-| `gh` | `--rw-map $HOME/.config/gh` (config mount only; does not LookPath `gh`) |
+| `gh` | `--rw-map $HOME/.config/gh` (config mount only; does not LookPath `gh`; omitted when no home is known or a configured mount already covers it) |
 | `docker` | `--docker` |
 | `gpu` | `--gpu` |
 | `display` | `--display` (Linux only) |

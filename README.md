@@ -90,7 +90,7 @@ Options
   [ ] New workstream
   [ ] --yolo
 
-Preview: ai-jail --exec --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+Preview: ai-jail --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
   ai-memory run pi --executable /usr/local/bin/pi
 ```
 
