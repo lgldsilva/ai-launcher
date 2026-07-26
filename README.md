@@ -39,6 +39,66 @@ When the managed ai-memory native binary exists
 `AI_MEMORY_NATIVE_BIN` into the launched process so the memory wrapper uses it
 directly — nothing is downloaded inside the jail.
 
+## Screenshots
+
+The interface is terminal-native. The frames below are text reproductions of
+what you see when running `ai-launcher` without arguments.
+
+### Interactive TUI
+
+```text
+┌────────────────────────────────────────────┐
+│ AI Agent Launcher                          │
+│ Current directory: /storage/Projetos/myapp │
+└────────────────────────────────────────────┘
+
+❯ Agent
+  [●] Anthropic Claude Code (claude)
+  [ ] OpenAI Codex CLI (codex)
+  [ ] Moonshot Kimi Code (kimi)
+  [ ] OpenCode (opencode)
+  [ ] Pi Coding Agent (pi)
+  [ ] Charmbracelet Crush (crush)
+
+❯ Permissions
+  [X] ai-jail (sandbox isolation)
+  [X] ai-memory (memory / workstream)
+  [ ] SSH
+  [ ] GitHub CLI
+  [ ] Docker socket
+
+❯ Mounts
+  [X] /storage
+  [X] /storage/Projetos
+  [ ] /storage/cache
+  [ ] + add custom path
+
+❯ Options
+  [X] --yolo (autonomous mode)
+  [ ] --new workstream
+
+Preview:
+ai-jail --rw-map /storage --rw-map /storage/Projetos ai-memory run claude
+```
+
+### Command confirmation / dry-run
+
+```text
+┌────────────────────── Confirmation ──────────────────────┐
+│ Command generated:                                       │
+│                                                          │
+│ $ ai-jail --rw-map /storage ai-memory run opencode       │
+│   --executable /home/user/.local/bin/opencode --yolo     │
+└──────────────────────────────────────────────────────────┘
+```
+
+Use `--dry-run` anywhere to print the argv and exit without executing:
+
+```bash
+ai-launcher --agent claude --ssh --dry-run
+# ai-jail --exec --ssh --rw-map /home/user/.config/gh ai-memory run claude
+```
+
 ## Installation
 
 ### Curl installer (recommended)
@@ -144,6 +204,12 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--continue` | Continues the last ai-memory session of this checkout |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
+
+When no mount is given by flags, local config, or profile, the global
+`default_mounts` are suggested (rw by default). With the jail enabled, every
+home dotfile symlink that resolves outside `$HOME` (for example
+`~/.cache -> /storage/cache`) is also auto-mounted rw, because ai-jail
+recreates those symlinks inside the sandbox without their targets.
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
 | `--extra-args "<args>"` / `--args` | Extra arguments forwarded to the harness (`--args` is an alias) |
 | `--profile <name>` | Loads a saved profile as the base selection |
