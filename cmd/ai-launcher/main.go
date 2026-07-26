@@ -808,6 +808,10 @@ func launch(req launchRequest) error {
 	return req.execute(argv)
 }
 
+// runTUI is the interactive selection loop; a variable so tests can confirm
+// a selection without a terminal.
+var runTUI = tui.RunWithHooks
+
 // confirmSelection runs the interactive TUI when the launch came from one, or
 // persists the selection for a CLI invocation. proceed is false when the flow
 // ends here (a --save run, a TUI cancellation, or a TUI error).
@@ -818,7 +822,7 @@ func (r *launchRequest) confirmSelection() (bool, error) {
 		}
 		return !r.opts.save, nil
 	}
-	confirmed, err := tui.RunWithHooks(r.global, r.launchConfig, tui.Hooks{
+	confirmed, err := runTUI(r.global, r.launchConfig, tui.Hooks{
 		Save: func(updated launcher.LaunchConfig) error {
 			return saveLocalSelection(r.opts.globalPath, true, r.opts.localPath, r.local, updated)
 		},
@@ -834,6 +838,13 @@ func (r *launchRequest) confirmSelection() (bool, error) {
 		return false, classifyTUIError(err)
 	}
 	r.launchConfig = confirmed
+	// Autosave: running a selection means wanting it back on the next open —
+	// with provenance recorded, or the trust boundary would refuse the file
+	// the launcher itself wrote. Best-effort: a failed save never blocks a
+	// launch, it warns.
+	if err := saveLocalSelection(r.opts.globalPath, true, r.opts.localPath, r.local, confirmed); err != nil {
+		_, _ = fmt.Fprintf(r.errOut, "warning: could not save the selection to %s: %v\n", r.opts.localPath, err)
+	}
 	return true, nil
 }
 
