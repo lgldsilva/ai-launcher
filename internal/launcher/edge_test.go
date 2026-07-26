@@ -86,6 +86,27 @@ func TestFilepathOrEmptySupportsMissingHome(t *testing.T) {
 	}
 }
 
+func TestValidatorWarnsOnCatalogBooleanFlagInjection(t *testing.T) {
+	v := Validator{
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+	}
+	agent := config.Agent{Command: "kimi", Params: []config.Param{
+		{Name: "danger", Flag: "--allow-everything", TakesValue: false},
+		{Name: "model", Flag: "--model", TakesValue: true},
+	}}
+	issues := v.Validate(LaunchConfig{
+		Agent:       agent,
+		ParamValues: map[string]string{"danger": "true", "model": "k2"},
+	})
+	if len(issues) != 1 || issues[0].Code != "catalog-flag-param" || !issues[0].Warning {
+		t.Fatalf("issues = %#v; want one catalog-flag-param warning", issues)
+	}
+	if !strings.Contains(issues[0].Message, "--allow-everything") {
+		t.Fatalf("warning must name the injected flag: %q", issues[0].Message)
+	}
+}
+
 func TestValidatorWarnsOnUndeclaredParamsInSortedOrder(t *testing.T) {
 	v := Validator{
 		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },

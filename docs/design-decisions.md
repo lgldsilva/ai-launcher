@@ -185,6 +185,25 @@ section). `ai-memory run --config <PATH>` is an upstream-supported alternative
 that would keep it out of the environment entirely; evaluating it is the
 natural next step for this entry.
 
+## Catalog boolean flags are trusted, but never silent
+
+**Decision.** A catalog param declared with `takes_value: false` injects its
+`flag` verbatim into the argv when any truthy `param_values` entry enables
+it. The global catalog (`~/.config/ai-launch/config.yaml`) is the trusted
+location — unlike the workspace-local `.ai-launch.yaml`, which is treated as
+attacker-supplied input and gated by the trust check — so there is no
+allowlist of injectable flags. Instead, pre-flight emits a
+`catalog-flag-param` warning naming every catalog-declared boolean flag that
+fires, so a hand-edited declaration is visible at launch time.
+
+**Why a warning and not an allowlist.** An allowlist would either duplicate
+the catalog (a second list of "approved" flags to keep in sync) or block
+legitimate operator-declared flags until a code change ships. The threat is a
+config the operator did not notice editing; making the injection visible on
+every launch answers it without taking the catalog's extensibility away. The
+built-in catalog declares no boolean params, so the warning only fires for
+operator-added declarations.
+
 ## What we are NOT doing (yet)
 
 - **Native sandbox on Windows.** Depends on upstream (ai-jail "probably

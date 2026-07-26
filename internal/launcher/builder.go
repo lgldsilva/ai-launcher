@@ -602,6 +602,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues = append(issues, mountIssues(cfg, stat)...)
 	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
 	issues = append(issues, undeclaredParamIssues(cfg)...)
+	issues = append(issues, catalogBooleanParamIssues(cfg)...)
 	issues = append(issues, continueIssues(cfg)...)
 	issues = append(issues, freshIssues(cfg)...)
 	return issues
@@ -830,6 +831,36 @@ func unsupportedPlatformIssues(cfg LaunchConfig, goos string, catalog []config.P
 		issues = append(issues, Issue{
 			Code:    "unsupported-platform",
 			Message: fmt.Sprintf("permission %s is not supported on %s", id, goos),
+			Warning: true,
+		})
+	}
+	return issues
+}
+
+// catalogBooleanParamIssues warns when a takes_value: false catalog param is
+// enabled. For those params the emitted flag comes verbatim from the global
+// catalog rather than from the operator, so a hand-edited config can declare
+// a dangerous flag and have any truthy param_values entry inject it. The
+// global config is the trusted location, so this is a visibility warning,
+// not a refusal: a launch shows exactly which catalog-declared flags fire.
+func catalogBooleanParamIssues(cfg LaunchConfig) []Issue {
+	if cfg.ContinueSession {
+		return nil
+	}
+	issues := make([]Issue, 0)
+	for _, param := range cfg.Agent.Params {
+		if param.TakesValue {
+			continue
+		}
+		value, ok := cfg.ParamValues[param.Name]
+		if !ok || !flagEnabled(value) {
+			continue
+		}
+		issues = append(issues, Issue{
+			Code: "catalog-flag-param",
+			Message: fmt.Sprintf(
+				"param %q injects the catalog-declared flag %q; review the global catalog if this is unexpected",
+				param.Name, param.Flag),
 			Warning: true,
 		})
 	}
