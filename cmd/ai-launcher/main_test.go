@@ -130,6 +130,23 @@ func runDryRun(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+func TestCorruptLocalConfigWarnsAndContinues(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "options: [not, valid")
+	var out, errOut bytes.Buffer
+	err := run([]string{"--config", globalPath, "--local-config", localPath,
+		"--agent", "codex", "--no-jail", "--no-memory", "--dry-run"},
+		strings.NewReader(""), &out, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v; a corrupt local config must degrade like a corrupt global one", err)
+	}
+	if !strings.Contains(errOut.String(), "warning:") || !strings.Contains(errOut.String(), "local config") {
+		t.Fatalf("stderr %q; want a warning naming the local config parse failure", errOut.String())
+	}
+	if !strings.Contains(out.String(), "codex") {
+		t.Fatalf("dry-run = %q; want the launch to proceed with defaults", out.String())
+	}
+}
+
 func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "review", "--dry-run")

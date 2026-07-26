@@ -386,9 +386,13 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if opts.deleteProfile != "" {
 		return deleteProfile(opts.globalPath, global, opts.deleteProfile, out)
 	}
+	// A corrupt local config degrades exactly like a corrupt global one:
+	// warn and continue with safe defaults. LoadLocal already returns
+	// DefaultLocal() on error, so blocking every launch on a broken
+	// .ai-launch.yaml was pure asymmetry, not extra safety.
 	local, localErr := config.LoadLocal(opts.localPath)
 	if localErr != nil {
-		return localErr
+		_, _ = fmt.Fprintln(errOut, "warning:", localErr)
 	}
 	if opts.profile != "" {
 		profile, ok := global.Profiles[opts.profile]
