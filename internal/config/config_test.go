@@ -1063,3 +1063,55 @@ func TestUpsertAgentMatchesOnNameAlone(t *testing.T) {
 		t.Fatalf("agents = %#v; want the existing entry updated in place", global.Agents)
 	}
 }
+
+// A user list with exactly one entry must still be merged, not mistaken for
+// an empty list and replaced by the defaults.
+func TestMergePermissionsSingletonUserListIsMerged(t *testing.T) {
+	defaults := DefaultGlobal().Permissions
+	custom := Permission{ID: "custom", Name: "Custom", Default: true}
+	got := mergePermissions(defaults, []Permission{custom})
+	byID := make(map[string]Permission, len(got))
+	for _, permission := range got {
+		byID[permission.ID] = permission
+	}
+	if !byID["custom"].Default {
+		t.Fatalf("singleton user permission was dropped: %#v", got)
+	}
+	if _, ok := byID["jail"]; !ok {
+		t.Fatalf("built-in defaults were dropped: %#v", got)
+	}
+}
+
+// A user entry that overrides a built-in must appear exactly once, whether or
+// not the built-in is the first entry of the defaults list.
+func TestMergePermissionsDoesNotDuplicateOverriddenDefaults(t *testing.T) {
+	defaults := DefaultGlobal().Permissions
+	user := []Permission{
+		{ID: "jail", Name: "Custom Jail", Default: true, Locked: true},
+		{ID: "ssh", Name: "Custom SSH", Default: true, Requires: []string{"jail"}},
+	}
+	got := mergePermissions(defaults, user)
+	counts := make(map[string]int, len(got))
+	for _, permission := range got {
+		counts[permission.ID]++
+	}
+	for _, id := range []string{"jail", "ssh"} {
+		if counts[id] != 1 {
+			t.Fatalf("permission %q appears %d times; want exactly 1", id, counts[id])
+		}
+	}
+}
+
+// The merged slice must grow past the built-in length when the user defines
+// many custom permissions (the capacity hint is len(defaults)+len(user)).
+func TestMergePermissionsUserListLongerThanDefaults(t *testing.T) {
+	defaults := []Permission{{ID: "jail", Default: true, Locked: true}}
+	user := []Permission{
+		{ID: "jail", Name: "Custom Jail", Default: true, Locked: true},
+		{ID: "one"}, {ID: "two"}, {ID: "three"},
+	}
+	got := mergePermissions(defaults, user)
+	if len(got) != 4 {
+		t.Fatalf("mergePermissions() = %#v; want the override plus 3 customs", got)
+	}
+}

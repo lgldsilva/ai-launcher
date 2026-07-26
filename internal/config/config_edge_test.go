@@ -1,11 +1,24 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// stubCreateTempFailure forces the temporary-file creation step to fail with
+// a deterministic error, independent of filesystem permissions — a chmod-based
+// read-only directory does not fail under root or on Windows.
+func stubCreateTempFailure(t *testing.T) {
+	t.Helper()
+	original := createTempFile
+	createTempFile = func(string, string) (*os.File, error) {
+		return nil, errors.New("forced temp-file failure")
+	}
+	t.Cleanup(func() { createTempFile = original })
+}
 
 func TestLoadGlobalRejectsUnreadableDirectoryAndUnsupportedVersion(t *testing.T) {
 	tempDir := t.TempDir()
@@ -56,17 +69,9 @@ func TestSaveLocalRejectsEmptyAndDirectoryDestination(t *testing.T) {
 	if err := SaveLocal(filepath.Join(parentFile, "config.yaml"), DefaultLocal()); err == nil || !strings.Contains(err.Error(), "create config directory") {
 		t.Fatalf("SaveLocal(file parent) error = %v; want mkdir error", err)
 	}
-	readOnlyDir := filepath.Join(t.TempDir(), "readonly")
-	if err := os.MkdirAll(readOnlyDir, 0o750); err != nil { //nolint:gosec // test directory, intentionally tightened later
-		t.Fatal(err)
-	}
-	//nolint:gosec // test intentionally creates a read-only parent to force a temp-file error
-	if err := os.Chmod(readOnlyDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chmod(readOnlyDir, 0o750) }() //nolint:gosec // restore test dir permissions for cleanup
-	if err := SaveLocal(filepath.Join(readOnlyDir, "config.yaml"), DefaultLocal()); err == nil || !strings.Contains(err.Error(), "create temporary config") {
-		t.Fatalf("SaveLocal(readonly dir) error = %v; want temp-file error", err)
+	stubCreateTempFailure(t)
+	if err := SaveLocal(filepath.Join(t.TempDir(), "config.yaml"), DefaultLocal()); err == nil || !strings.Contains(err.Error(), "create temporary config") {
+		t.Fatalf("SaveLocal(temp-file failure) error = %v; want temp-file error", err)
 	}
 }
 
@@ -111,19 +116,6 @@ func TestSaveGlobalReportsEachWriteStageAndCleansUp(t *testing.T) {
 		t.Fatalf("SaveGlobal(file parent) error = %v; want mkdir error", err)
 	}
 
-	readOnlyDir := filepath.Join(t.TempDir(), "readonly")
-	if err := os.MkdirAll(readOnlyDir, 0o750); err != nil { //nolint:gosec // test directory, intentionally tightened later
-		t.Fatal(err)
-	}
-	//nolint:gosec // test intentionally creates a read-only directory to force a temp-file error
-	if err := os.Chmod(readOnlyDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chmod(readOnlyDir, 0o750) }() //nolint:gosec // restore test dir permissions for cleanup
-	if err := SaveGlobal(filepath.Join(readOnlyDir, "config.yaml"), DefaultGlobal()); err == nil || !strings.Contains(err.Error(), "create temporary global config") {
-		t.Fatalf("SaveGlobal(readonly dir) error = %v; want temp-file error", err)
-	}
-
 	scratch := t.TempDir()
 	destination := filepath.Join(scratch, "target")
 	if err := os.MkdirAll(destination, 0o750); err != nil {
@@ -138,6 +130,11 @@ func TestSaveGlobalReportsEachWriteStageAndCleansUp(t *testing.T) {
 	}
 	if len(leftovers) != 0 {
 		t.Fatalf("failed save leaked temporary files: %#v", leftovers)
+	}
+
+	stubCreateTempFailure(t)
+	if err := SaveGlobal(filepath.Join(t.TempDir(), "config.yaml"), DefaultGlobal()); err == nil || !strings.Contains(err.Error(), "create temporary global config") {
+		t.Fatalf("SaveGlobal(temp-file failure) error = %v; want temp-file error", err)
 	}
 }
 

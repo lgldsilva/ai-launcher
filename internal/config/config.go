@@ -32,6 +32,11 @@ const DefaultMemoryServerURL = "https://aimemory.internal.lgldsilva.com.br"
 // Memory.RunHarness) or declares SupportsMemory false.
 var memoryRunHarnesses = []string{"claude", "codex", "opencode", "pi", "crush", "omp", "kimi", "grok"}
 
+// createTempFile is an indirection over os.CreateTemp so tests can force the
+// temporary-file creation step to fail deterministically — a chmod-based
+// read-only directory does not fail under root or on Windows.
+var createTempFile = os.CreateTemp
+
 // MemoryRunHarnesses returns the harnesses `ai-memory run` accepts.
 func MemoryRunHarnesses() []string {
 	return append([]string(nil), memoryRunHarnesses...)
@@ -672,7 +677,7 @@ func writeGlobalAtomically(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create global config directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ai-launch-global-*.tmp")
+	tmp, err := createTempFile(filepath.Dir(path), ".ai-launch-global-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary global config: %w", err)
 	}
@@ -783,7 +788,7 @@ func SaveLocal(path string, cfg Local) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".ai-launch-*.tmp")
+	tmp, err := createTempFile(filepath.Dir(path), ".ai-launch-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary config: %w", err)
 	}
