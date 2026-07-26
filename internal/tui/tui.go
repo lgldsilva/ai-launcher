@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -45,6 +46,7 @@ type Model struct {
 	launch          launcher.LaunchConfig
 	hooks           Hooks
 	agents          []catalog.AgentStatus
+	recentTop       string // command of the most-recently-used agent, if any
 	permissionIDs   []string
 	profiles        map[string]config.Profile
 	profileNames    []string
@@ -55,6 +57,7 @@ type Model struct {
 	mountDir        string
 	mountEntries    []string
 	mountCursor     int
+	mountFilter     string // basename prefix used to filter browser rows
 	mountTyped      bool
 	inputActive     bool
 	textInputActive bool
@@ -76,17 +79,23 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	if launch.Permissions == nil {
 		launch.Permissions = make(map[string]bool)
 	}
+	recentTop := ""
+	if len(global.RecentAgents) > 0 {
+		recentTop = global.RecentAgents[0]
+	}
 	model := Model{
 		catalog:       c,
 		launch:        launch,
-		agents:        c.Agents(),
+		agents:        visibleAgents(c.Agents(), global.RecentAgents, launch),
+		recentTop:     recentTop,
 		permissionIDs: make([]string, 0, len(global.Permissions)),
 		profiles:      global.Profiles,
 		profileNames:  config.ProfileNames(global),
-		mountMode:     "ro",
+		mountMode:     "rw",
 	}
-	// ai-jail has no Windows build: the jail permission and everything that
-	// requires it are not offered there.
+	// ai-jail has no Windows build: hide the jail permission and everything
+	// that requires it there. On macOS (including /Volumes) the jail stays
+	// available — sandbox-exec is a supported backend.
 	jailDependent := config.JailDependentIDs(global.Permissions)
 	for _, permission := range global.Permissions {
 		if isWindows() && jailDependent[permission.ID] {
@@ -97,7 +106,11 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	if isWindows() {
 		model.launch.UseJail = false
 	}
-	model.status = "Tab: section · Space: toggle · /: add mount · Enter: run · d: dry-run · q: quit"
+	// Put the cursor on the already-selected agent (not on "Continue"), so the
+	// first Enter runs what the user is looking at instead of silently switching
+	// to "Continue last session".
+	model.cursor = cursorForLaunch(model.agents, model.launch)
+	model.status = model.sectionHint()
 	return model
 }
 
@@ -156,28 +169,41 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab", "ctrl+j":
 		m.section = (m.section + 1) % m.sectionCount()
 		m.cursor = 0
+		m.status = m.sectionHint()
 	case "shift+tab", "ctrl+k":
 		m.section = (m.section + m.sectionCount() - 1) % m.sectionCount()
 		m.cursor = 0
+		m.status = m.sectionHint()
 	case "1", "2", "3", "4", "5":
 		if section := int(key.String()[0] - '1'); section < m.sectionCount() {
 			m.section = section
 			m.cursor = 0
+			m.status = m.sectionHint()
 		}
 	case "up", "k":
 		m.moveCursor(-1)
 	case "down", "j":
 		m.moveCursor(1)
 	case "space", " ":
-		m.toggleCurrent()
-	case "/":
+		if m.section == 0 {
+			m.selectHighlightedAgent()
+		} else {
+			m.toggleCurrent()
+		}
+	case "/", "a", "+":
+		// a / + are obvious "add" keys; / is the historical shortcut.
 		if m.section == 2 {
 			m.startMountBrowser()
 		}
 	case "backspace":
 		m.removeMount()
 	case "d", "ctrl+d":
-		m.preview(true)
+		m.confirmRun(true)
+	case "r", "ctrl+enter":
+		// Explicit RUN — never bound to plain Enter on Agent (that only selects).
+		if m.confirmRun(false) {
+			return m, tea.Quit
+		}
 	case "?":
 		m.helpOpen = true
 	case "ctrl+s":
@@ -185,17 +211,45 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+p":
 		m.startProfileInput()
 	case "enter":
-		if m.section == 2 && len(m.launch.Mounts) == 0 {
-			m.startMountBrowser()
-		} else if m.section == 3 && m.cursor >= len(m.optionRows()) {
-			m.startParamInput()
-		} else if m.section == 4 && m.cursor < len(m.profileNames) {
-			m.loadProfile(m.profileNames[m.cursor])
-		} else if m.preview(false) {
-			return m, tea.Quit
+		// Enter = confirm local action, never an accidental launch from Agent.
+		//  - Agent: SELECT only (stay open)
+		//  - Options param: edit
+		//  - Profiles: load
+		//  - elsewhere: no-op (use r to run)
+		switch m.section {
+		case 0:
+			m.selectHighlightedAgent()
+		case 3:
+			if m.cursor >= len(m.optionRows()) {
+				m.startParamInput()
+			}
+		case 4:
+			if m.cursor < len(m.profileNames) {
+				m.loadProfile(m.profileNames[m.cursor])
+			}
 		}
 	}
 	return m, nil
+}
+
+// sectionHint returns the always-visible footer for the active section so the
+// user does not have to guess which keys apply.
+func (m Model) sectionHint() string {
+	base := "[r] RUN · [?] help · [q] quit"
+	switch m.section {
+	case 0:
+		return "Agent · ↑/↓ · Space/Enter SELECT · " + base
+	case 1:
+		return "Permissions · Space on/off · Tab next · " + base
+	case 2:
+		return "Mounts · a/+// ADD folder · Space ro/rw · Backspace remove · " + base
+	case 3:
+		return "Options · Space toggle · Enter edit value · " + base
+	case 4:
+		return "Profiles · Enter/Space load · " + base
+	default:
+		return base
+	}
 }
 
 // sectionCount reports how many sections the layout currently has; the
@@ -296,30 +350,92 @@ func (m Model) View() string {
 
 func (m Model) agentsView(b *strings.Builder) {
 	b.WriteString("\n\nAgent\n")
+	b.WriteString(mutedStyle.Render("  (installed only · most recently used first · Space/Enter select · r RUN)") + "\n")
+	// Selected line (what will launch) vs cursor (what ↑/↓ is on).
+	selectedLabel := "none"
+	if m.launch.ContinueSession {
+		selectedLabel = "Continue last session"
+	} else if cmd := strings.TrimSpace(m.launch.Agent.Command); cmd != "" {
+		selectedLabel = m.launch.Agent.Name
+		if selectedLabel == "" {
+			selectedLabel = cmd
+		}
+		selectedLabel += " (" + cmd + ")"
+	}
+	b.WriteString(goodStyle.Render("  Selected: "+selectedLabel) + "\n")
+
 	pointer := "  "
 	if m.section == 0 && m.cursor == 0 {
 		pointer = "❯ "
 	}
-	mark := "  "
+	sel := "[ ]"
 	if m.launch.ContinueSession {
-		mark = "❯ "
+		sel = goodStyle.Render("[●]")
 	}
-	fmt.Fprintf(b, "%s%s%-22s (%s)\n", pointer, mark, "Continue last session", "ai-memory run")
+	fmt.Fprintf(b, "%s%s %-22s (%s)\n", pointer, sel, "Continue last session", "ai-memory run")
+	if len(m.agents) == 0 {
+		b.WriteString(badStyle.Render("  (no installed agents found — install one or check PATH)") + "\n")
+	}
 	for i, status := range m.agents {
 		pointer := "  "
 		if m.section == 0 && i+1 == m.cursor {
 			pointer = "❯ "
 		}
-		state := badStyle.Render("[not found]")
-		if status.Installed {
-			state = goodStyle.Render("[installed]")
-		}
 		command := status.Agent.Command
 		if status.ResolvedCommand != "" && status.ResolvedCommand != status.Agent.Command {
 			command += " via " + status.ResolvedCommand
 		}
-		fmt.Fprintf(b, "%s%-18s (%s) %s\n", pointer, status.Agent.Name, command, state)
+		sel := "[ ]"
+		if !m.launch.ContinueSession && agentMatchesLaunch(status, m.launch) {
+			sel = goodStyle.Render("[●]")
+		}
+		tag := mutedStyle.Render("· ready")
+		if !status.Installed {
+			tag = badStyle.Render("· not installed")
+		} else if m.recentTop != "" && status.Agent.Command == m.recentTop {
+			tag = goodStyle.Render("· last used")
+		}
+		fmt.Fprintf(b, "%s%s %-18s (%s) %s\n", pointer, sel, status.Agent.Name, command, tag)
 	}
+}
+
+// visibleAgents returns the agents shown in the TUI: installed ones only
+// (plus the currently selected agent if it is missing, so the selection is
+// never invisible), ordered most-recently-used first, then catalog order.
+func visibleAgents(all []catalog.AgentStatus, recent []string, launch launcher.LaunchConfig) []catalog.AgentStatus {
+	selected := strings.TrimSpace(launch.Agent.Command)
+	byCommand := make(map[string]catalog.AgentStatus, len(all))
+	for _, status := range all {
+		byCommand[status.Agent.Command] = status
+	}
+	seen := make(map[string]bool, len(all))
+	out := make([]catalog.AgentStatus, 0, len(all))
+	appendOne := func(status catalog.AgentStatus) {
+		cmd := status.Agent.Command
+		if seen[cmd] {
+			return
+		}
+		if !status.Installed && cmd != selected {
+			return
+		}
+		seen[cmd] = true
+		out = append(out, status)
+	}
+	for _, cmd := range recent {
+		if status, ok := byCommand[cmd]; ok {
+			appendOne(status)
+		}
+	}
+	for _, status := range all {
+		appendOne(status)
+	}
+	// Ensure the active selection is present even if it was filtered out.
+	if selected != "" && !seen[selected] {
+		if status, ok := byCommand[selected]; ok {
+			out = append([]catalog.AgentStatus{status}, out...)
+		}
+	}
+	return out
 }
 
 func (m Model) permissionsView(b *strings.Builder) {
@@ -343,35 +459,101 @@ func (m Model) permissionsView(b *strings.Builder) {
 
 func (m Model) mountsView(b *strings.Builder) {
 	b.WriteString("\nMounts\n")
-	if len(m.launch.Mounts) == 0 {
-		b.WriteString("  (none; press / to add)\n")
+	// Always visible (not only when the section is focused) so the user never
+	// has to guess how to add folders.
+	if !m.inputActive {
+		b.WriteString(titleStyle.Render("  Tips") + "\n")
+		b.WriteString(goodStyle.Render("    a  or  +  or  /     add a folder") + "\n")
+		b.WriteString(mutedStyle.Render("    Space                toggle read-only ↔ read-write") + "\n")
+		b.WriteString(mutedStyle.Render("    Backspace            remove highlighted mount") + "\n")
+		b.WriteString(goodStyle.Render("    r                    RUN the selected agent") + "\n")
+	}
+	if len(m.launch.Mounts) == 0 && !m.inputActive {
+		b.WriteString(goodStyle.Render("  (empty — press a to add a folder, or r to run without extra mounts)") + "\n")
 	}
 	for i, mount := range m.launch.Mounts {
 		pointer := "  "
-		if m.section == 2 && i == m.cursor {
+		if m.section == 2 && i == m.cursor && !m.inputActive {
 			pointer = "❯ "
 		}
 		mode := mount.Mode
 		if mode == "" {
 			mode = "rw"
 		}
-		fmt.Fprintf(b, "%s%s [%s]\n", pointer, mount.Path, mode)
+		modeLabel := "read-write"
+		if strings.EqualFold(mode, "ro") || strings.EqualFold(mode, "read-only") {
+			modeLabel = "read-only"
+		}
+		fmt.Fprintf(b, "%s%s  (%s)\n", pointer, mount.Path, modeLabel)
 	}
 	if m.inputActive {
-		fmt.Fprintf(b, "  Add mount (%s): %s█\n", m.mountMode, m.mountInput)
-		b.WriteString("  Browser: " + m.mountDir + "\n")
-		if len(m.mountEntries) == 0 {
-			b.WriteString("    (no readable subdirectories; type a path)\n")
-		} else {
-			for i, entry := range m.mountEntries {
-				pointer := "    "
-				if i == m.mountCursor {
-					pointer = "  ❯ "
-				}
-				b.WriteString(pointer + entry + "/\n")
+		m.mountBrowserView(b)
+	}
+}
+
+// mountBrowserView renders the add-mount panel with a fixed key legend so the
+// user never has to guess bindings (status lines are easy to miss / overwrite).
+func (m Model) mountBrowserView(b *strings.Builder) {
+	modeLabel := "read-write (agent can edit files)"
+	if m.mountMode == "ro" {
+		modeLabel = "read-only (agent can only read)"
+	}
+	b.WriteString("\n")
+	b.WriteString(titleStyle.Render("  ── Add a folder to the jail ──") + "\n")
+	fmt.Fprintf(b, "  Path: %s█\n", m.mountInput)
+	fmt.Fprintf(b, "  Mode: %s\n", modeLabel)
+	fmt.Fprintf(b, "  Looking in: %s\n", m.mountDir)
+	willAdd := m.mountCommitPath()
+	if willAdd != "" {
+		b.WriteString(goodStyle.Render("  → Enter will add: "+willAdd) + "\n")
+	} else {
+		b.WriteString(badStyle.Render("  → Enter will add: (nothing selected — type a path or pick a folder)") + "\n")
+	}
+	b.WriteString(mutedStyle.Render("  Folders:") + "\n")
+	if len(m.mountEntries) == 0 {
+		b.WriteString("    (no folders match — type more of the path, or Tab to autocomplete)\n")
+	} else {
+		const maxVisible = 10
+		start := 0
+		if m.mountCursor >= maxVisible {
+			start = m.mountCursor - maxVisible + 1
+		}
+		end := start + maxVisible
+		if end > len(m.mountEntries) {
+			end = len(m.mountEntries)
+		}
+		if start > 0 {
+			b.WriteString(mutedStyle.Render(fmt.Sprintf("    … %d above\n", start)))
+		}
+		for i := start; i < end; i++ {
+			pointer := "    "
+			if i == m.mountCursor {
+				pointer = "  ❯ "
 			}
+			label := m.mountEntries[i] + "/"
+			if m.mountEntries[i] == ".." {
+				label = "..  (parent folder)"
+			}
+			b.WriteString(pointer + label + "\n")
+		}
+		if end < len(m.mountEntries) {
+			b.WriteString(mutedStyle.Render(fmt.Sprintf("    … %d more\n", len(m.mountEntries)-end)))
 		}
 	}
+	b.WriteString(mutedStyle.Render("  Keys:  ↑/↓ move   → open folder   ← parent   Tab autocomplete") + "\n")
+	b.WriteString(mutedStyle.Render("         type a path   Ctrl+T mode   Enter ADD   Esc cancel") + "\n")
+}
+
+// mountCommitPath is the path Enter would add right now (for the on-screen hint).
+func (m Model) mountCommitPath() string {
+	input := strings.TrimSpace(m.mountInput)
+	if m.shouldAddBrowserSelection(input) {
+		return m.selectedMountPath()
+	}
+	if input == "" {
+		return ""
+	}
+	return filepath.Clean(expandMountPath(input))
 }
 
 func (m Model) optionsView(b *strings.Builder) {
@@ -653,89 +835,253 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputActive = false
 		m.status = "Mount addition cancelled"
 	case "enter":
+		// When the input is empty or only reflects the current browser
+		// directory (after →/l navigation), add the highlighted entry.
+		// Otherwise add the typed path as-is.
 		path := strings.TrimSpace(m.mountInput)
-		if path == "" && len(m.mountEntries) > 0 {
+		if m.shouldAddBrowserSelection(path) {
 			path = m.selectedMountPath()
 		}
 		m.addMount(path)
-	case "right", "l", "left", "h", "up", "k", "down", "j":
-		// While a path is being typed, the j/k/l/h letters are input runes,
-		// not navigation keys; arrow keys stay browser-only no-ops.
-		if m.mountTyped && key.Type == tea.KeyRunes {
-			m.mountInput += string(key.Runes)
-			break
-		}
-		m.navigateMountBrowser(key.String())
 	case "tab":
+		// Tab completes directory names (shell-style). Mode toggle is Ctrl+T.
+		m.completeMountPath()
+	case "ctrl+t":
 		if m.mountMode == "ro" {
 			m.mountMode = "rw"
 		} else {
 			m.mountMode = "ro"
 		}
 		m.status = "Mount mode: " + m.mountMode
+	case "right":
+		// Arrows always drive the browser, even while a path is being typed.
+		m.enterSelectedMountDir()
+	case "left":
+		m.mountBrowserUp()
+	case "up":
+		m.moveMountCursor(-1)
+	case "down":
+		m.moveMountCursor(1)
+	case "l", "h", "k", "j":
+		// While typing a path, letters (including j/k/l/h) go into the input.
+		// When browsing with an empty input they navigate the directory list.
+		if m.mountTyped || key.Type == tea.KeyRunes && m.mountInput != "" {
+			if key.Type == tea.KeyRunes {
+				m.appendMountInput(string(key.Runes))
+			}
+			break
+		}
+		switch key.String() {
+		case "l":
+			m.enterSelectedMountDir()
+		case "h":
+			m.mountBrowserUp()
+		case "k":
+			m.moveMountCursor(-1)
+		case "j":
+			m.moveMountCursor(1)
+		}
 	case "backspace":
 		if m.mountInput != "" {
 			runes := []rune(m.mountInput)
 			m.mountInput = string(runes[:len(runes)-1])
 		}
-		if m.mountInput == "" {
+		if strings.TrimSpace(m.mountInput) == "" {
 			m.mountTyped = false
+			m.mountFilter = ""
+			m.refreshMountEntries()
+		} else {
+			m.syncMountBrowserFromInput()
 		}
 	default:
 		if key.Type == tea.KeyRunes {
-			m.mountInput += string(key.Runes)
-			m.mountTyped = true
+			m.appendMountInput(string(key.Runes))
 		}
 	}
 	return *m, nil
 }
 
-// navigateMountBrowser handles the browser-only movement keys. It is a no-op
-// while the user is typing a path manually (mountTyped).
-func (m *Model) navigateMountBrowser(key string) {
-	if m.mountTyped {
+func (m *Model) appendMountInput(text string) {
+	m.mountInput += text
+	m.mountTyped = true
+	m.syncMountBrowserFromInput()
+}
+
+// shouldAddBrowserSelection reports whether Enter should commit the
+// highlighted browser row instead of the raw path input.
+func (m Model) shouldAddBrowserSelection(input string) bool {
+	if len(m.mountEntries) == 0 {
+		return false
+	}
+	if strings.TrimSpace(input) == "" {
+		return true
+	}
+	cleaned := filepath.Clean(expandMountPath(input))
+	return cleaned == filepath.Clean(m.mountDir)
+}
+
+func (m *Model) moveMountCursor(delta int) {
+	if len(m.mountEntries) == 0 {
 		return
 	}
-	switch key {
-	case "right", "l":
-		if len(m.mountEntries) == 0 {
-			return
-		}
-		path := m.selectedMountPath()
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			m.mountDir = path
-			m.refreshMountEntries()
-			m.status = "Directory opened; Enter adds, ←/h goes up"
-		}
-	case "left", "h":
-		parent := filepath.Dir(m.mountDir)
-		if parent != m.mountDir {
-			m.mountDir = parent
-			m.refreshMountEntries()
-			m.status = "Parent directory opened"
-		}
-	case "up", "k":
-		if len(m.mountEntries) > 0 {
-			m.mountCursor = (m.mountCursor + len(m.mountEntries) - 1) % len(m.mountEntries)
-		}
-	case "down", "j":
-		if len(m.mountEntries) > 0 {
-			m.mountCursor = (m.mountCursor + 1) % len(m.mountEntries)
-		}
+	m.mountCursor = (m.mountCursor + delta + len(m.mountEntries)) % len(m.mountEntries)
+}
+
+// enterSelectedMountDir opens the highlighted browser row: ".." goes up,
+// directories become the new browser root and are written into the path input
+// with a trailing separator so further typing continues from there.
+func (m *Model) enterSelectedMountDir() {
+	if len(m.mountEntries) == 0 {
+		return
 	}
+	name := m.mountEntries[m.mountCursor]
+	if name == ".." {
+		m.mountBrowserUp()
+		return
+	}
+	path := filepath.Join(m.mountDir, name)
+	if !isDirectory(path) {
+		m.status = "Not a directory: " + path
+		return
+	}
+	m.mountDir = path
+	m.mountInput = pathWithTrailingSep(path)
+	m.mountTyped = true
+	m.mountFilter = ""
+	m.refreshMountEntries()
+	m.status = "Directory opened · Tab completes · Enter adds · Ctrl+T toggles ro/rw"
+}
+
+func (m *Model) mountBrowserUp() {
+	parent := filepath.Dir(m.mountDir)
+	if parent == m.mountDir {
+		return
+	}
+	m.mountDir = parent
+	if m.mountTyped || m.mountInput != "" {
+		m.mountInput = pathWithTrailingSep(parent)
+		m.mountTyped = true
+	}
+	m.mountFilter = ""
+	m.refreshMountEntries()
+	m.status = "Parent directory opened"
 }
 
 func (m *Model) startMountBrowser() {
 	m.inputActive = true
 	m.mountInput = ""
 	m.mountTyped = false
-	m.mountMode = "ro"
+	m.mountFilter = ""
+	m.mountMode = "rw"
 	m.mountDir = mustWorkingDirectory()
 	m.refreshMountEntries()
-	m.status = "↑/↓ select · →/l enter · ←/h go up · Enter add · Tab toggle ro/rw · Esc cancel"
+	m.status = "Pick a folder below (or type a path). Enter adds it. Esc cancels."
+}
+
+// syncMountBrowserFromInput re-points the browser at the directory implied by
+// the typed path and filters entries by the unfinished basename prefix.
+func (m *Model) syncMountBrowserFromInput() {
+	dir, prefix := m.inputDirAndPrefix()
+	if dir != "" {
+		m.mountDir = dir
+	}
+	m.mountFilter = prefix
+	m.refreshMountEntries()
+}
+
+// completeMountPath is shell-style Tab completion against directories under the
+// path currently being typed (or under the browser root when the input is empty).
+func (m *Model) completeMountPath() {
+	dir, prefix := m.inputDirAndPrefix()
+	matches := directoryMatches(dir, prefix)
+	if len(matches) == 0 {
+		m.status = "No directory matches for " + quotePrefix(prefix)
+		return
+	}
+	if len(matches) == 1 {
+		m.applyMountCompletion(dir, matches[0])
+		return
+	}
+	lcp := longestCommonPrefix(matches)
+	// Extend when the shared prefix is longer, or when it only differs by case
+	// from what the user typed (macOS/Windows case-insensitive volumes).
+	if len(lcp) > len(prefix) || (lcp != prefix && strings.EqualFold(lcp, prefix)) {
+		m.mountInput = joinMountInput(dir, lcp)
+		m.mountTyped = true
+		m.syncMountBrowserFromInput()
+		m.status = fmt.Sprintf("%d matches — Tab again to cycle", len(matches))
+		return
+	}
+	// Cycle through matches, putting each full path into the input.
+	if len(m.mountEntries) == 0 {
+		return
+	}
+	// Advance past ".." if present so cycling stays on real matches.
+	for range len(m.mountEntries) {
+		m.mountCursor = (m.mountCursor + 1) % len(m.mountEntries)
+		if m.mountEntries[m.mountCursor] != ".." {
+			break
+		}
+	}
+	name := m.mountEntries[m.mountCursor]
+	if name == ".." {
+		return
+	}
+	full := filepath.Join(dir, name)
+	if isDirectory(full) {
+		m.mountInput = pathWithTrailingSep(full)
+	} else {
+		m.mountInput = full
+	}
+	m.mountTyped = true
+	m.syncMountBrowserFromInput()
+	m.status = fmt.Sprintf("Match %d/%d: %s", indexOfMatch(matches, name)+1, len(matches), name)
+}
+
+func (m *Model) applyMountCompletion(dir, name string) {
+	full := filepath.Join(dir, name)
+	if isDirectory(full) {
+		m.mountDir = full
+		m.mountInput = pathWithTrailingSep(full)
+		m.mountFilter = ""
+		m.mountTyped = true
+		m.refreshMountEntries()
+		m.status = "Completed: " + full
+		return
+	}
+	m.mountInput = full
+	m.mountTyped = true
+	m.syncMountBrowserFromInput()
+	m.status = "Completed: " + full
+}
+
+// inputDirAndPrefix splits the typed path into the directory to list and the
+// unfinished basename used as a completion/filter prefix.
+func (m Model) inputDirAndPrefix() (dir, prefix string) {
+	raw := m.mountInput
+	if strings.TrimSpace(raw) == "" {
+		return m.mountDir, ""
+	}
+	expanded := expandMountPath(raw)
+	trailing := strings.HasSuffix(raw, "/") || strings.HasSuffix(raw, string(filepath.Separator))
+	if !filepath.IsAbs(expanded) {
+		base := m.mountDir
+		if base == "" {
+			base = mustWorkingDirectory()
+		}
+		expanded = filepath.Join(base, expanded)
+	}
+	if trailing {
+		return filepath.Clean(expanded), ""
+	}
+	return filepath.Dir(expanded), filepath.Base(expanded)
 }
 
 func (m *Model) refreshMountEntries() {
+	previous := ""
+	if m.mountCursor < len(m.mountEntries) {
+		previous = m.mountEntries[m.mountCursor]
+	}
 	entries, err := os.ReadDir(m.mountDir)
 	if err != nil {
 		m.mountEntries = nil
@@ -743,31 +1089,51 @@ func (m *Model) refreshMountEntries() {
 		return
 	}
 	m.mountEntries = m.mountEntries[:0]
-	if parent := filepath.Dir(m.mountDir); parent != m.mountDir {
-		m.mountEntries = append(m.mountEntries, "..")
+	if m.mountFilter == "" {
+		if parent := filepath.Dir(m.mountDir); parent != m.mountDir {
+			m.mountEntries = append(m.mountEntries, "..")
+		}
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
-			m.mountEntries = append(m.mountEntries, entry.Name())
+		name := entry.Name()
+		if m.mountFilter != "" && !hasPathPrefixFold(name, m.mountFilter) {
+			continue
 		}
+		if !entryIsDir(m.mountDir, entry) {
+			continue
+		}
+		m.mountEntries = append(m.mountEntries, name)
 	}
 	sort.Strings(m.mountEntries)
 	m.mountCursor = 0
+	if previous != "" {
+		for i, name := range m.mountEntries {
+			if name == previous {
+				m.mountCursor = i
+				break
+			}
+		}
+	}
 }
 
 func (m Model) selectedMountPath() string {
 	if m.mountCursor >= len(m.mountEntries) {
 		return ""
 	}
-	return filepath.Join(m.mountDir, m.mountEntries[m.mountCursor])
+	name := m.mountEntries[m.mountCursor]
+	if name == ".." {
+		return filepath.Dir(m.mountDir)
+	}
+	return filepath.Join(m.mountDir, name)
 }
 
 func (m *Model) addMount(path string) {
-	path = strings.TrimSpace(path)
+	path = expandMountPath(strings.TrimSpace(path))
 	if path == "" {
 		m.status = "Mount path cannot be empty"
 		return
 	}
+	path = filepath.Clean(path)
 	for _, mount := range m.launch.Mounts {
 		if mount.Path == path {
 			m.inputActive = false
@@ -778,7 +1144,13 @@ func (m *Model) addMount(path string) {
 	m.launch.Mounts = append(m.launch.Mounts, config.Mount{Path: path, Mode: m.mountMode})
 	m.cursor = len(m.launch.Mounts) - 1
 	m.inputActive = false
-	m.status = "Mount added"
+	m.mountTyped = false
+	m.mountFilter = ""
+	modeLabel := "read-write"
+	if m.mountMode == "ro" {
+		modeLabel = "read-only"
+	}
+	m.status = "Added " + path + " (" + modeLabel + "). r = RUN · a = add another · Space = ro/rw · Backspace = remove"
 }
 
 func mustWorkingDirectory() string {
@@ -787,6 +1159,115 @@ func mustWorkingDirectory() string {
 		return "."
 	}
 	return path
+}
+
+// expandMountPath expands a leading ~ to the user home directory.
+func expandMountPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+		return path
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func pathWithTrailingSep(path string) string {
+	if path == "" {
+		return string(filepath.Separator)
+	}
+	if strings.HasSuffix(path, string(filepath.Separator)) {
+		return path
+	}
+	return path + string(filepath.Separator)
+}
+
+func joinMountInput(dir, name string) string {
+	if dir == "" || dir == "." {
+		return name
+	}
+	return filepath.Join(dir, name)
+}
+
+func directoryMatches(dir, prefix string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	matches := make([]string, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if prefix != "" && !hasPathPrefixFold(name, prefix) {
+			continue
+		}
+		if !entryIsDir(dir, entry) {
+			continue
+		}
+		matches = append(matches, name)
+	}
+	sort.Strings(matches)
+	return matches
+}
+
+func entryIsDir(parent string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	// Symlinks to directories report as non-dir via DirEntry.IsDir(); Stat.
+	if entry.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	return isDirectory(filepath.Join(parent, entry.Name()))
+}
+
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func hasPathPrefixFold(name, prefix string) bool {
+	return strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix))
+}
+
+func longestCommonPrefix(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	prefix := values[0]
+	for _, value := range values[1:] {
+		for !strings.HasPrefix(value, prefix) {
+			if prefix == "" {
+				return ""
+			}
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	return prefix
+}
+
+func indexOfMatch(matches []string, name string) int {
+	for i, match := range matches {
+		if match == name {
+			return i
+		}
+	}
+	return 0
+}
+
+func quotePrefix(prefix string) string {
+	if prefix == "" {
+		return "(any)"
+	}
+	return strconv.Quote(prefix)
 }
 
 func (m *Model) removeMount() {
@@ -803,47 +1284,71 @@ func (m *Model) removeMount() {
 
 func (m Model) helpView() string {
 	return titleStyle.Render("ai-launcher · help") + "\n\n" +
-		"Tab / Shift+Tab   next/previous section\n" +
-		"1-5               jump to a section\n" +
-		"↑↓ / j k          navigate\n" +
-		"Space             toggle selection / load profile\n" +
-		"/                 open the mount browser\n" +
-		"→ / l             enter directory\n" +
-		"← / h             go up to the parent directory\n" +
-		"Enter             add directory, edit parameter or run\n" +
-		"Backspace         remove mount\n" +
-		"Ctrl+D / d        dry-run\n" +
-		"Ctrl+S            save .ai-launch.yaml\n" +
-		"Ctrl+P            save as a named profile\n" +
-		"q / Esc           quit\n\n" +
+		"How to launch (5 steps)\n" +
+		"  1. ↑/↓   highlight an agent (e.g. Pi)\n" +
+		"  2. Space or Enter   SELECT it (interface stays open)\n" +
+		"  3. (optional) Tab   Permissions / Mounts / Options\n" +
+		"  4. r     RUN  (only then the UI closes and the agent starts)\n" +
+		"  5. If RUN fails, errors stay on screen — fix and press r again\n\n" +
+		"Everywhere\n" +
+		"  Tab / Shift+Tab   next / previous section\n" +
+		"  1-5               jump to a section\n" +
+		"  r / Ctrl+Enter    RUN selected agent\n" +
+		"  d / Ctrl+D        dry-run (preview argv, stay open)\n" +
+		"  ?                 this help\n" +
+		"  q / Esc           quit without running\n\n" +
+		"Agent\n" +
+		"  Space / Enter     select highlighted row (does NOT run)\n\n" +
+		"Mounts\n" +
+		"  a / + / /         open add-folder panel\n" +
+		"  Space             toggle read-only ↔ read-write\n" +
+		"  Backspace         remove mount\n\n" +
+		"Add-folder panel\n" +
+		"  ↑↓ → ← Tab type   browse / complete path\n" +
+		"  Ctrl+T            read-write ↔ read-only\n" +
+		"  Enter             ADD folder · Esc cancel\n\n" +
+		"Other\n" +
+		"  Space             toggle permission / option\n" +
+		"  Ctrl+S            save .ai-launch.yaml\n" +
+		"  Ctrl+P            save as a named profile\n\n" +
 		mutedStyle.Render("Press any key to close")
 }
 
-func (m *Model) preview(dryRun bool) bool {
+// selectHighlightedAgent applies the Agent-section cursor to launch config
+// and stays in the TUI. It does not build argv or quit.
+func (m *Model) selectHighlightedAgent() {
+	if err := m.applyAgentCursorSelection(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	if m.launch.ContinueSession {
+		m.status = "Selected: Continue last session — press r to RUN"
+		return
+	}
+	name := m.launch.Agent.Name
+	if name == "" {
+		name = m.launch.Agent.Command
+	}
+	m.status = "Selected: " + name + " (" + m.launch.Agent.Command + ") — press r to RUN"
+}
+
+// confirmRun builds argv, validates pre-flight inside the TUI, and either
+// keeps the UI open with errors or returns true so the caller can tea.Quit.
+// dryRun only prints the command into the status line.
+func (m *Model) confirmRun(dryRun bool) bool {
+	// If nothing is selected yet but the cursor is on an agent row, adopt it.
+	if !m.launch.ContinueSession && strings.TrimSpace(m.launch.Agent.Command) == "" && m.section == 0 {
+		if err := m.applyAgentCursorSelection(); err != nil {
+			m.status = err.Error()
+			return false
+		}
+	}
+	// When the user is on Agent and presses r, prefer the highlighted row so
+	// "highlight Pi + r" works without a separate Space.
 	if m.section == 0 {
-		if m.cursor == 0 {
-			// The first row continues the most recent ai-memory session of the
-			// checkout ("ai-memory run" without a harness).
-			if !m.launch.ContinueSession {
-				m.launch.ContinueSession = true
-				m.launch.Agent = config.Agent{}
-				m.launch.Executable = ""
-				m.status = "Continue last session selected; press Enter again to run"
-				return false
-			}
-		} else if m.cursor-1 < len(m.agents) {
-			selected := m.agents[m.cursor-1]
-			selectedAgent := selected.Agent
-			if selected.ResolvedCommand != "" {
-				selectedAgent.Command = selected.ResolvedCommand
-			}
-			if m.launch.ContinueSession || m.launch.Agent.Command != selectedAgent.Command {
-				m.launch.ContinueSession = false
-				m.launch.Agent = selectedAgent
-				m.launch.Executable = selected.Path
-				m.status = "Agent selected; press Enter again to run"
-				return false
-			}
+		if err := m.applyAgentCursorSelection(); err != nil {
+			m.status = err.Error()
+			return false
 		}
 	}
 	argv, err := launcher.Build(m.launch)
@@ -855,6 +1360,96 @@ func (m *Model) preview(dryRun bool) bool {
 		m.status = "dry-run: " + strings.Join(argv, " ")
 		return false
 	}
+	issues := launcher.NewValidator().Validate(m.launch)
+	fatal := make([]string, 0)
+	warns := make([]string, 0)
+	for _, issue := range issues {
+		if issue.Warning {
+			warns = append(warns, issue.Error())
+		} else {
+			fatal = append(fatal, issue.Error())
+		}
+	}
+	if len(fatal) > 0 {
+		// Multi-line so long pre-flight messages are not truncated mid-word
+		// on a narrow terminal (the previous single-line form cut at "th…").
+		m.status = badStyle.Render("Cannot run — fix these first:") + "\n  · " + strings.Join(fatal, "\n  · ")
+		if len(warns) > 0 {
+			m.status += "\n" + mutedStyle.Render(strings.Join(warns, " · "))
+		}
+		return false
+	}
+	if m.launch.ContinueSession {
+		m.status = goodStyle.Render("Starting: Continue last session…")
+	} else {
+		m.status = goodStyle.Render("Starting: " + m.launch.Agent.Name + " (" + m.launch.Agent.Command + ")…")
+	}
+	if len(warns) > 0 {
+		m.status += "\n" + mutedStyle.Render(strings.Join(warns, " · "))
+	}
 	m.result = argv
 	return true
+}
+
+// applyAgentCursorSelection copies the highlighted Agent-section row into
+// launch (Continue vs a concrete harness).
+func (m *Model) applyAgentCursorSelection() error {
+	if m.section != 0 {
+		// Selection is only driven by the Agent list cursor.
+		return nil
+	}
+	if m.cursor == 0 {
+		m.launch.ContinueSession = true
+		m.launch.Agent = config.Agent{}
+		m.launch.Executable = ""
+		return nil
+	}
+	index := m.cursor - 1
+	if index < 0 || index >= len(m.agents) {
+		return errors.New("no agent under the cursor")
+	}
+	selected := m.agents[index]
+	selectedAgent := selected.Agent
+	if selected.ResolvedCommand != "" {
+		selectedAgent.Command = selected.ResolvedCommand
+	}
+	m.launch.ContinueSession = false
+	m.launch.Agent = selectedAgent
+	m.launch.Executable = selected.Path
+	return nil
+}
+
+// agentMatchesLaunch reports whether a catalog row is the currently selected
+// harness (by primary command, resolved command, or alias).
+func agentMatchesLaunch(status catalog.AgentStatus, launch launcher.LaunchConfig) bool {
+	cmd := strings.TrimSpace(launch.Agent.Command)
+	if cmd == "" {
+		return false
+	}
+	if status.Agent.Command == cmd || status.ResolvedCommand == cmd {
+		return true
+	}
+	for _, alias := range status.Agent.Aliases {
+		if alias == cmd {
+			return true
+		}
+	}
+	return false
+}
+
+// cursorForLaunch places the cursor on Continue or on the matching agent row
+// so the highlighted line matches "Selected:" at startup.
+func cursorForLaunch(agents []catalog.AgentStatus, launch launcher.LaunchConfig) int {
+	if launch.ContinueSession {
+		return 0
+	}
+	for i, status := range agents {
+		if agentMatchesLaunch(status, launch) {
+			return i + 1
+		}
+	}
+	if len(agents) > 0 {
+		return 1
+	}
+	return 0
 }

@@ -17,7 +17,7 @@ func TestDecideLaunchAction(t *testing.T) {
 }
 
 func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--continue", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -28,7 +28,7 @@ func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
 }
 
 func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
 		"--workspace", "acme", "--project", "billing", "--workstream", "release-1", "--dry-run")
 	if err != nil {
@@ -41,7 +41,7 @@ func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
 }
 
 func TestNewWorkstreamStillCreates(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--new", "fresh", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -53,12 +53,12 @@ func TestNewWorkstreamStillCreates(t *testing.T) {
 
 func TestCliLaunchUsesJailExecProgrammaticMode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	globalPath, localPath, mounts := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --rw-map /storage --rw-map /storage/Projetos --rw-map /storage/cache custom-cli"
+	want := "ai-jail --exec " + defaultMountArgv(mounts) + " custom-cli"
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("CLI dry-run = %q; want %q", out, want)
 	}
@@ -66,12 +66,12 @@ func TestCliLaunchUsesJailExecProgrammaticMode(t *testing.T) {
 
 func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  jail_flags:\n    lockdown: true\n    status_bar: false\n    browser: soft\n    mask: [/etc/secrets]\n")
+	globalPath, localPath, mounts := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  jail_flags:\n    lockdown: true\n    status_bar: false\n    browser: soft\n    mask: [/etc/secrets]\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft --rw-map /storage --rw-map /storage/Projetos --rw-map /storage/cache custom-cli"
+	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + defaultMountArgv(mounts) + " custom-cli"
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
 	}
@@ -79,7 +79,7 @@ func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 
 func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: /data\n    mode: ro\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: /data\n    mode: ro\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -90,9 +90,49 @@ func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	}
 }
 
+func TestMissingDefaultMountsAreSkipped(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "present")
+	if err := os.MkdirAll(existing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "absent")
+	globalYAML := `agents:
+  - name: Custom
+    command: custom-cli
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+default_mounts:
+  - ` + existing + `
+  - ` + missing + `
+`
+	globalPath := filepath.Join(dir, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localPath := filepath.Join(dir, "local.yaml")
+	if err := os.WriteFile(localPath, []byte("agent: custom-cli\noptions:\n  jail: true\n  memory: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	want := "ai-jail --exec --rw-map " + existing + " custom-cli"
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("dry-run = %q; want missing default mounts skipped → %q", out, want)
+	}
+	if strings.Contains(out, missing) {
+		t.Fatalf("dry-run = %q; must not mount missing path %s", out, missing)
+	}
+}
+
 func TestMountFlagsReplaceDefaultMounts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--rw-map", "/custom", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -121,7 +161,7 @@ func TestHomeSymlinkTargetsAreAutoMounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", fakeHome)
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -150,7 +190,7 @@ func TestSymlinkAutoMountsSkippedWithoutJail(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", fakeHome)
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -171,7 +211,7 @@ func TestSymlinkedProjectJailConfigDisablesHideConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	restore := chdir(t, dir)
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	restore()
 	if err != nil {
@@ -189,7 +229,7 @@ func TestRealProjectJailConfigKeepsHideConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	restore := chdir(t, dir)
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	restore()
 	if err != nil {

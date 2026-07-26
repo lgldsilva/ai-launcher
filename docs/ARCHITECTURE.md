@@ -109,13 +109,14 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | Key | Type | Purpose |
 | --- | --- | --- |
 | `version` | string | Schema (`2.0`; accepts `1`/`1.0`) |
-| `memory_server_url` | string | ai-memory server (default `https://aimemory.raspberrypi.lan`) |
+| `memory_server_url` | string | ai-memory server (default `https://aimemory.internal.lgldsilva.com.br`) |
 | `memory_auth_token` | string | Bearer token, forwarded via env only |
 | `agents[]` | list | `name`, `command`, `aliases`, `path`, `supports_memory`, `supports_yolo`, `yolo_flag`, `params[]` (`name`/`flag`/`takes_value`), `release` (GitHub recipe), `memory` (MCP/hooks adapter), `source_url` |
 | `tools[]` | list | Auxiliary tool recipes (ai-jail, ai-memory) |
 | `permissions[]` | list | `id`, `name`, `default`, `locked`, `requires` |
-| `default_mounts[]` | list | Mounts suggested when neither the local config/profile nor `--mount`/`--map`/`--rw-map` define any; read-write by default, with the same optional `:ro`/`:rw` suffix as `--mount`. Pre-selected in the TUI mount manager (removable) |
+| `default_mounts[]` | list | Mounts suggested when neither the local config/profile nor `--mount`/`--map`/`--rw-map` define any; read-write by default, with the same optional `:ro`/`:rw` suffix as `--mount`. Built-in candidates are OS-specific (Linux: `/storage…`; macOS: `/Volumes/MSD512…`); only paths that exist on the host are applied. Pre-selected in the TUI mount manager (removable) |
 | `profiles{}` | map | Named selection snapshots (`agent`, `permissions`, `mounts`, `options`) |
+| `recent_agents[]` | list | Most-recently-used agent commands (newest first); the TUI lists installed agents in this order |
 
 Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
 (`path`/`mode`), and `options`: `jail`, `memory`, `yolo`, `new_workstream`,

@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,8 +22,12 @@ func TestDefaultConfigurationsExposeLauncherContract(t *testing.T) {
 	if local.Agent != "claude" || !local.Options.Jail || !local.Options.Memory {
 		t.Fatalf("unsafe local defaults: %#v", local)
 	}
-	if len(global.Agents) == 0 || len(global.Permissions) == 0 || len(global.DefaultMounts) == 0 {
-		t.Fatalf("global catalog must have agents, permissions, and mounts: %#v", global)
+	if len(global.Agents) == 0 || len(global.Permissions) == 0 {
+		t.Fatalf("global catalog must have agents and permissions: %#v", global)
+	}
+	wantMounts := DefaultMountCandidates(runtime.GOOS)
+	if !reflect.DeepEqual(global.DefaultMounts, wantMounts) {
+		t.Fatalf("default mounts = %#v; want platform candidates %#v", global.DefaultMounts, wantMounts)
 	}
 	if global.MemoryServerURL != DefaultMemoryServerURL {
 		t.Fatalf("default ai-memory URL = %q; want %q", global.MemoryServerURL, DefaultMemoryServerURL)
@@ -93,6 +99,33 @@ func TestLoadGlobalUsesDefaultsAndMergesOmittedSections(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Permissions, DefaultGlobal().Permissions) || !reflect.DeepEqual(got.DefaultMounts, DefaultGlobal().DefaultMounts) {
 		t.Fatalf("omitted global sections were not defaulted: %#v", got)
+	}
+}
+
+func TestLoadGlobalMigratesLegacyMemoryServerURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	body := "memory_server_url: " + legacyMemoryServerURL + "\nagents:\n  - name: Test\n    command: test-agent\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	if got.MemoryServerURL != DefaultMemoryServerURL {
+		t.Fatalf("MemoryServerURL = %q; want migrated default %q", got.MemoryServerURL, DefaultMemoryServerURL)
+	}
+	// Explicit non-legacy override must be kept.
+	custom := "https://aimemory.example.test"
+	if err := os.WriteFile(path, []byte("memory_server_url: "+custom+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal(custom) error = %v", err)
+	}
+	if got.MemoryServerURL != custom {
+		t.Fatalf("custom MemoryServerURL = %q; want %q", got.MemoryServerURL, custom)
 	}
 }
 
@@ -565,4 +598,52 @@ func TestPropertyProfileRoundTripPreservesAllFields(t *testing.T) {
 			rt.Fatalf("profile round-trip mismatch: got %#v; want %#v", got, want)
 		}
 	})
+}
+
+func TestTouchRecentAgentOrdersAndDedupes(t *testing.T) {
+	cfg := Global{}
+	TouchRecentAgent(&cfg, "claude")
+	TouchRecentAgent(&cfg, "codex")
+	TouchRecentAgent(&cfg, "claude")
+	TouchRecentAgent(&cfg, "  ")
+	TouchRecentAgent(nil, "x")
+	if !reflect.DeepEqual(cfg.RecentAgents, []string{"claude", "codex"}) {
+		t.Fatalf("RecentAgents = %#v; want claude then codex", cfg.RecentAgents)
+	}
+	for i := 0; i < recentAgentsMax+5; i++ {
+		TouchRecentAgent(&cfg, fmt.Sprintf("agent-%d", i))
+	}
+	if len(cfg.RecentAgents) != recentAgentsMax {
+		t.Fatalf("RecentAgents length = %d; want cap %d", len(cfg.RecentAgents), recentAgentsMax)
+	}
+}
+
+func TestDefaultMountCandidatesByGOOS(t *testing.T) {
+	cases := map[string][]string{
+		"linux":   {"/storage", "/storage/Projetos", "/storage/cache"},
+		"darwin":  {"/Volumes/MSD512", "/Volumes/MSD512/Projetos"},
+		"windows": nil,
+		"freebsd": nil,
+	}
+	for goos, want := range cases {
+		if got := DefaultMountCandidates(goos); !reflect.DeepEqual(got, want) {
+			t.Errorf("DefaultMountCandidates(%q) = %#v; want %#v", goos, got, want)
+		}
+	}
+}
+
+func TestExistingPathsKeepsOnlyPresentEntries(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "present")
+	if err := os.MkdirAll(present, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing")
+	got := ExistingPaths([]string{"", "  ", missing, present, present + "-gone"})
+	if !reflect.DeepEqual(got, []string{present}) {
+		t.Fatalf("ExistingPaths = %#v; want only %q", got, present)
+	}
+	if ExistingPaths(nil) != nil {
+		t.Fatal("ExistingPaths(nil) must return nil")
+	}
 }

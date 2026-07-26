@@ -17,6 +17,36 @@ func TestBuildMinimalWithMemory(t *testing.T) {
 	}
 }
 
+func TestBuildRemapsOcWrapperToOpencodeHarness(t *testing.T) {
+	// Catalog command is "oc" (preset selector); ai-memory only accepts "opencode".
+	got, err := Build(LaunchConfig{
+		Agent:      config.Agent{Command: "oc"},
+		Executable: "/Users/me/.local/bin/oc",
+		UseJail:    false,
+		UseMemory:  true,
+	})
+	want := []string{"ai-memory", "run", "opencode", "--executable", "/Users/me/.local/bin/oc"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build(oc) = %#v, %v; want %#v", got, err, want)
+	}
+	// Explicit RunHarness wins over the built-in remap.
+	got, err = Build(LaunchConfig{
+		Agent: config.Agent{
+			Command: "oc",
+			Memory:  &config.MemoryIntegration{RunHarness: "opencode"},
+		},
+		UseMemory: true,
+	})
+	if err != nil || !reflect.DeepEqual(got, []string{"ai-memory", "run", "opencode"}) {
+		t.Fatalf("Build(oc+run_harness) = %#v, %v", got, err)
+	}
+	// Without memory, still invoke the wrapper binary directly.
+	got, err = Build(LaunchConfig{Agent: config.Agent{Command: "oc"}, Executable: "/bin/oc", UseMemory: false})
+	if err != nil || !reflect.DeepEqual(got, []string{"/bin/oc"}) {
+		t.Fatalf("Build(oc no-memory) = %#v, %v", got, err)
+	}
+}
+
 func TestBuildAllOptions(t *testing.T) {
 	got, err := Build(LaunchConfig{
 		Agent:         config.Agent{Command: "claude"},
@@ -100,10 +130,42 @@ func TestValidatorFindsIssues(t *testing.T) {
 		Stat: func(path string) (os.FileInfo, error) {
 			return nil, errors.New("missing")
 		},
+		Getwd: func() (string, error) { return "/home/dev/project", nil },
+		GOOS:  "linux",
 	}
 	issues := v.Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: false, UseMemory: true, Permissions: map[string]bool{"gpu": true}, Mounts: []config.Mount{{Path: "/missing"}}})
 	if len(issues) != 4 {
 		t.Fatalf("got %d issues: %#v", len(issues), issues)
+	}
+}
+
+func TestValidatorWarnsJailMemoryOnExternalVolumeCwd(t *testing.T) {
+	v := Validator{
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(path string) (os.FileInfo, error) { return nil, nil },
+		Getwd:    func() (string, error) { return "/Volumes/MSD512/Projetos/app", nil },
+		GOOS:     "darwin",
+	}
+	// Jail stays allowed on macOS /Volumes; only a warning when memory is also on.
+	issues := v.Validate(LaunchConfig{Agent: config.Agent{Command: "pi"}, UseJail: true, UseMemory: true})
+	found := false
+	for _, issue := range issues {
+		if issue.Code == "jail-memory-external-volume" && issue.Warning {
+			found = true
+		}
+		if issue.Code == "jail-memory-external-volume" && !issue.Warning {
+			t.Fatalf("jail-memory-external-volume must be a warning, not fatal: %#v", issue)
+		}
+	}
+	if !found {
+		t.Fatalf("issues = %#v; want warning jail-memory-external-volume", issues)
+	}
+	// Jail alone (no memory) — no volume advisory.
+	issues = v.Validate(LaunchConfig{Agent: config.Agent{Command: "pi"}, UseJail: true, UseMemory: false})
+	for _, issue := range issues {
+		if issue.Code == "jail-memory-external-volume" {
+			t.Fatalf("jail without memory should not warn about volume: %#v", issues)
+		}
 	}
 }
 

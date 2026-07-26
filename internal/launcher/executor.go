@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"syscall"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 // Executor runs an argv attached to a PTY so interactive agents behave as if
@@ -28,6 +30,11 @@ func (PTYExecutor) Run(ctx context.Context, argv []string, in io.Reader, out io.
 
 // RunWithEnv executes argv with an explicit environment (nil inherits the
 // current one) attached to a newly allocated PTY.
+//
+// When in is a real terminal (typical after the launcher TUI quits), the host
+// is switched to raw mode for the session. Without that, line discipline keeps
+// echo + cooked input: arrow keys show as ^[[A/^[[B and TUIs such as oc's
+// preset menu cannot navigate.
 func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Reader, out io.Writer, errOut io.Writer) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("cannot execute an empty command")
@@ -41,6 +48,10 @@ func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Rea
 		return fmt.Errorf("start %q: %w", argv[0], err)
 	}
 	defer func() { _ = ptmx.Close() }()
+
+	restore := prepareHostTTY(in, ptmx)
+	defer restore()
+
 	if in != nil {
 		go func() { _, _ = io.Copy(ptmx, in) }()
 	}
@@ -56,4 +67,33 @@ func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Rea
 		return waitErr
 	}
 	return nil
+}
+
+// prepareHostTTY puts a real terminal stdin into raw mode and mirrors window
+// size into the PTY. Non-terminal readers (tests, pipes) are left alone.
+func prepareHostTTY(in io.Reader, ptmx *os.File) (restore func()) {
+	restore = func() {}
+	f, ok := in.(*os.File)
+	if !ok || f == nil {
+		return restore
+	}
+	fd := int(f.Fd())
+	if !term.IsTerminal(fd) {
+		return restore
+	}
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return restore
+	}
+	restore = func() { _ = term.Restore(fd, state) }
+
+	// Match the host size so full-screen TUIs (oc, opencode, pi) lay out correctly.
+	_ = pty.InheritSize(f, ptmx)
+	stopResize := watchTTYResize(f, ptmx)
+	prev := restore
+	restore = func() {
+		stopResize()
+		prev()
+	}
+	return restore
 }
