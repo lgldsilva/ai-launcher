@@ -39,6 +39,7 @@ type launchSpec struct {
 	Memory        bool              `yaml:"memory"`
 	Continue      bool              `yaml:"continue"`
 	Fresh         bool              `yaml:"fresh"`
+	RunHarness    string            `yaml:"run_harness"`
 	NewWorkstream string            `yaml:"new_workstream"`
 	Workstream    string            `yaml:"workstream"`
 	Workspace     string            `yaml:"workspace"`
@@ -112,7 +113,7 @@ func runValidationScenario(t *testing.T, scenario featureScenario) bool {
 	if !ok {
 		t.Fatal("validation scenario must define expected issue codes")
 	}
-	if got, want := issueCodes(issues), nonEmptyLines(expected.doc); !reflect.DeepEqual(got, want) {
+	if got, want := issueCodes(issues), nonEmptyLines(expected.doc); !reflect.DeepEqual(got, want) && !(len(got) == 0 && len(want) == 0) {
 		t.Fatalf("Validate() issue codes = %#v; want %#v", got, want)
 	}
 	return true
@@ -193,8 +194,12 @@ func runLocalConfigScenario(t *testing.T, scenario featureScenario) {
 }
 
 func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
+	agent := config.Agent{Command: spec.Agent, YoloFlag: spec.YoloFlag, Params: spec.Params}
+	if spec.RunHarness != "" {
+		agent.Memory = &config.MemoryIntegration{RunHarness: spec.RunHarness}
+	}
 	return launcher.LaunchConfig{
-		Agent:           config.Agent{Command: spec.Agent, YoloFlag: spec.YoloFlag, Params: spec.Params},
+		Agent:           agent,
 		Executable:      spec.Executable,
 		HomeDir:         spec.Home,
 		UseJail:         spec.Jail,

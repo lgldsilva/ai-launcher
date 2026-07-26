@@ -138,7 +138,7 @@ see **Progress** below for what each closed item shipped.
 | I6 | Catalog is not deep-merged and is frozen on every launch | medium | 2 | done |
 | I5 | Minor consistency cluster (4 sub-items) | low | 2 | done |
 | S6 | No upstream version pinning or compatibility probe | medium | 3 | done |
-| F3 | Gaps in the Gherkin contract | medium | 3 | open |
+| F3 | Gaps in the Gherkin contract | medium | 3 | done (the relative `.config/gh` scenario decision moves to S7.k) |
 | I8 | `COVER_PKGS` does not exist; three divergent exclusion lists | medium | 3 | done |
 | F2 | Unmapped ai-jail v1.15 flags | medium | 3 | done except `ro_maps` |
 | F1 | `--fresh` is not exposed | low | 3 | done |
@@ -174,6 +174,7 @@ in `--dry-run`). **Phases 1 and 2 are complete**; what remains is Phase 3.
 | I8 | The boundary is stated once per mechanism and the three agree: the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` (now anchored so `cmd/` no longer swallows `internal/cmd/`), the Makefile `-coverpkg` + awk filter, and `sonar.coverage.exclusions` (now including `internal/selfupdate/**` and `internal/cmd/**`). CI runs `make test-coverage` instead of duplicating the command, and the four stale `COVER_PKGS` references now describe the regex mechanism | nothing |
 | F1 | `--fresh` is a CLI flag, an `Options` field, a TUI toggle, and a wrapper flag emitted before the harness token. Pre-flight rejects `--fresh` combined with `--continue` (`fresh-with-continue`). Covered by unit tests, a build scenario and a validation scenario in the contract, and the README options table | nothing |
 | F5 | With the jail enabled, the launcher maps the directory holding the resolved harness binary read-only (`--map <dir>`) unless a configured mount already covers it — the manual `/opt/homebrew` workaround in this repo's `.ai-jail` is the exact gap this closes. Documented as ARCHITECTURE invariant 10 | nothing |
+| F3 | The contract now covers `--executable` (with the F5 auto-mount), the `run_harness` remap, `private_home` / `overlay_maps` / `deny_paths` / `allow_tcp_ports` / `claude_dir`, `browser: soft` and `browser: off`, continue-with-workstream (I2), rejected harness (I1, already present), and a zero-issue `--no-jail` run (I7). Filesystem- and env-dependent behaviors (home-symlink auto-mounts and their denylist, automatic `--no-hide-config`, `AI_MEMORY_NATIVE_BIN`) are explicitly listed as out of contract scope in `AGENTS.md` | the relative `.config/gh` scenario at `launcher.feature:64-81` still locks in the empty-`$HOME` fallback; deciding code-vs-scenario is S7.k |
 
 Two defects found only after the fact are worth recording, because both came
 from modelling upstream from the CLI `--help` instead of the documented

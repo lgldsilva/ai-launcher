@@ -45,6 +45,14 @@ contract test fails after a change, **the code is wrong, not the test** —
 unless upstream changed, in which case the contract is updated together with
 the code, in the same commit.
 
+Out of contract scope (covered by unit tests instead, because they depend on
+the real filesystem or the process environment rather than on argv): the
+home-symlink auto-mounts and their denylist (ARCHITECTURE invariant 9,
+`internal/launcher/symlink_test.go`), the automatic `--no-hide-config` for a
+symlinked project `.ai-jail` (`cmd/ai-launcher/launch_test.go`), and the
+`AI_MEMORY_NATIVE_BIN` export (ARCHITECTURE invariant 8,
+`internal/launcher/builder_test.go`).
+
 ## Quality tools
 
 golangci-lint, gosec, and govulncheck run via `go run ...@latest` using the

@@ -623,3 +623,138 @@ Feature: Launcher command contract
       """
       permission-without-jail
       """
+
+  Scenario: Remaps a wrapper command to the ai-memory harness name
+    Given a launch configuration
+      """
+      agent: oc
+      run_harness: opencode
+      jail: false
+      memory: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      opencode
+      """
+
+  Scenario: Mounts the executable directory read-only inside the jail
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: true
+      executable: /opt/tools/bin/claude
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --map
+      /opt/tools/bin
+      ai-memory
+      run
+      claude
+      --executable
+      /opt/tools/bin/claude
+      """
+
+  Scenario: Emits private home, overlay maps, deny paths, tcp ports and claude dir
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        lockdown: true
+        private_home: true
+        overlay_maps: [/data]
+        deny_paths: [/proc/kcore]
+        allow_tcp_ports: [8080]
+        claude_dir: /home/tester/.claude
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --lockdown
+      --private-home
+      --overlay-map
+      /data
+      --deny-path
+      /proc/kcore
+      --allow-tcp-port
+      8080
+      --claude-dir
+      /home/tester/.claude
+      claude
+      """
+
+  Scenario: Emits the soft browser profile
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        browser: soft
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --browser=soft
+      claude
+      """
+
+  Scenario: Emits the negative form for browser off
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        browser: off
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-browser
+      claude
+      """
+
+  Scenario: Continues the most recent session keeping workstream and yolo
+    Given a launch configuration
+      """
+      continue: true
+      jail: false
+      memory: true
+      workstream: sprint-3
+      yolo: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      sprint-3
+      --yolo
+      """
+
+  Scenario: Produces no issues for a plain --no-jail launch
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: false
+      jail_exec: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      """
