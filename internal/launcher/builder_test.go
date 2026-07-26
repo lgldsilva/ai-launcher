@@ -139,6 +139,47 @@ func TestValidatorFindsIssues(t *testing.T) {
 	}
 }
 
+func TestExternalVolumeCwdByPlatform(t *testing.T) {
+	cases := []struct {
+		cwd, goos string
+		want      bool
+	}{
+		{"/Volumes/Data/proj", "darwin", true},
+		{"/Users/dev/proj", "darwin", false},
+		{"/media/usb/proj", "linux", true},
+		{"/mnt/disk/proj", "linux", true},
+		{"/run/media/u/disk", "linux", true},
+		{"/home/dev/proj", "linux", false},
+		{"/Volumes/Data", "windows", false},
+		{"C:\\Users\\dev", "windows", false},
+	}
+	for _, tc := range cases {
+		if got := ExternalVolumeCwd(tc.cwd, tc.goos); got != tc.want {
+			t.Errorf("ExternalVolumeCwd(%q, %q) = %v; want %v", tc.cwd, tc.goos, got, tc.want)
+		}
+	}
+}
+
+func TestJailMemoryVolumeIssuesBranches(t *testing.T) {
+	// getwd error / empty cwd → no issue
+	if issues := jailMemoryVolumeIssues(LaunchConfig{UseJail: true, UseMemory: true}, func() (string, error) {
+		return "", errors.New("no cwd")
+	}, "darwin"); len(issues) != 0 {
+		t.Fatalf("getwd error: %#v", issues)
+	}
+	if issues := jailMemoryVolumeIssues(LaunchConfig{UseJail: true, UseMemory: true}, func() (string, error) {
+		return "  ", nil
+	}, "darwin"); len(issues) != 0 {
+		t.Fatalf("empty cwd: %#v", issues)
+	}
+	// non-external → no issue
+	if issues := jailMemoryVolumeIssues(LaunchConfig{UseJail: true, UseMemory: true}, func() (string, error) {
+		return "/Users/dev/proj", nil
+	}, "darwin"); len(issues) != 0 {
+		t.Fatalf("home path: %#v", issues)
+	}
+}
+
 func TestValidatorWarnsJailMemoryOnExternalVolumeCwd(t *testing.T) {
 	v := Validator{
 		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
