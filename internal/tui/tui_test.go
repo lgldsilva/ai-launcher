@@ -458,6 +458,49 @@ func TestModelCanExecuteFromTheAgentSection(t *testing.T) {
 	}
 }
 
+// Regression: Selected is Claude but cursor is on oc (recent-sorted list or
+// arrow navigation without Space). r must RUN Selected, never the highlight.
+func TestRunUsesSelectedAgentNotCursorHighlight(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not on PATH")
+	}
+	trueBin, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("true not on PATH")
+	}
+	// Use sh as the Selected harness so pre-flight LookPath succeeds in CI;
+	// OpenCode under the cursor is a different real PATH binary (true).
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Name: "Claude Code", Command: "sh"},
+		Executable:  sh,
+		UseJail:     false,
+		UseMemory:   false,
+		Permissions: map[string]bool{},
+	})
+	model.agents = []catalog.AgentStatus{
+		{Agent: config.Agent{Name: "Claude Code", Command: "sh"}, Path: sh, Installed: true, ResolvedCommand: "sh"},
+		{Agent: config.Agent{Name: "OpenCode", Command: "oc"}, Path: trueBin, Installed: true, ResolvedCommand: "oc"},
+	}
+	model.cursor = 2 // highlight OpenCode without Space/Enter select
+	model.section = 0
+
+	model = applyKey(t, model, runeKey("r"))
+	if len(model.result) == 0 {
+		t.Fatalf("r did not launch; status=%q", model.status)
+	}
+	if model.launch.Agent.Command != "sh" {
+		t.Fatalf("r overwrote Selected with cursor: agent=%q; want sh", model.launch.Agent.Command)
+	}
+	joined := strings.Join(model.result, " ")
+	if strings.Contains(joined, "oc") {
+		t.Fatalf("argv launched highlighted oc instead of Selected: %q", joined)
+	}
+	if !strings.Contains(joined, "sh") {
+		t.Fatalf("argv = %q; want selected sh harness", joined)
+	}
+}
+
 func TestEnterOnPiSelectsWithoutClosing(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {

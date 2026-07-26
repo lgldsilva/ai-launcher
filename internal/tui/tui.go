@@ -1293,12 +1293,13 @@ func (m Model) helpView() string {
 		"Everywhere\n" +
 		"  Tab / Shift+Tab   next / previous section\n" +
 		"  1-5               jump to a section\n" +
-		"  r / Ctrl+Enter    RUN selected agent\n" +
+		"  r / Ctrl+Enter    RUN Selected (not the ↑/↓ highlight)\n" +
 		"  d / Ctrl+D        dry-run (preview argv, stay open)\n" +
 		"  ?                 this help\n" +
 		"  q / Esc           quit without running\n\n" +
 		"Agent\n" +
-		"  Space / Enter     select highlighted row (does NOT run)\n\n" +
+		"  Space / Enter     SELECT highlighted row into Selected\n" +
+		"  r                 runs Selected only (↑/↓ alone does not switch)\n\n" +
 		"Mounts\n" +
 		"  a / + / /         open add-folder panel\n" +
 		"  Space             toggle read-only ↔ read-write\n" +
@@ -1335,17 +1336,13 @@ func (m *Model) selectHighlightedAgent() {
 // confirmRun builds argv, validates pre-flight inside the TUI, and either
 // keeps the UI open with errors or returns true so the caller can tea.Quit.
 // dryRun only prints the command into the status line.
+//
+// r always runs the *Selected* agent (launch.Agent / ContinueSession), not the
+// list cursor. ↑/↓ only moves the highlight; Space/Enter commit selection.
+// Cursor is adopted only when nothing is selected yet (empty agent and not
+// Continue), so a first open still has a sensible one-key path.
 func (m *Model) confirmRun(dryRun bool) bool {
-	// If nothing is selected yet but the cursor is on an agent row, adopt it.
 	if !m.launch.ContinueSession && strings.TrimSpace(m.launch.Agent.Command) == "" && m.section == 0 {
-		if err := m.applyAgentCursorSelection(); err != nil {
-			m.status = err.Error()
-			return false
-		}
-	}
-	// When the user is on Agent and presses r, prefer the highlighted row so
-	// "highlight Pi + r" works without a separate Space.
-	if m.section == 0 {
 		if err := m.applyAgentCursorSelection(); err != nil {
 			m.status = err.Error()
 			return false
