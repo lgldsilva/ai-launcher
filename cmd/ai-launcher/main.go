@@ -57,13 +57,16 @@ type cliOptions struct {
 	profile, saveProfile           string
 	deleteProfile                  string
 	ssh, gh, docker, gpu           bool
+	display, pictures              bool
+	tailscale, systemdUser         bool
+	mise, worktree                 bool
 	noJail, sandbox                bool
 	memory, noMemory               bool
 	yolo, noYolo                   bool
 	dryRun, save, install, upgrade bool
 	listProfiles                   bool
 	continueSession                bool
-	showVersion                    bool
+	showVersion, doctor            bool
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
@@ -72,6 +75,12 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.gh, "gh", false, "optional: map ~/.config/gh into the jail (for host gh auth; not required)")
 	flags.BoolVar(&o.docker, "docker", false, "enable Docker permission")
 	flags.BoolVar(&o.gpu, "gpu", false, "enable GPU permission")
+	flags.BoolVar(&o.display, "display", false, "force X11/Wayland display passthrough in the jail (Linux only)")
+	flags.BoolVar(&o.pictures, "pictures", false, "map the Pictures folder into the jail (Linux/macOS)")
+	flags.BoolVar(&o.tailscale, "tailscale", false, "expose the Tailscale socket in the jail (Linux/macOS)")
+	flags.BoolVar(&o.systemdUser, "systemd-user", false, "expose the systemd user bus in the jail (Linux only)")
+	flags.BoolVar(&o.mise, "mise", false, "enable the ai-jail mise integration")
+	flags.BoolVar(&o.worktree, "worktree", false, "enable Git worktree passthrough in the jail")
 	flags.BoolVar(&o.noJail, "no-jail", false, "run without ai-jail")
 	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
@@ -105,6 +114,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
+	flags.BoolVar(&o.doctor, "doctor", false, "report the installed upstream tool versions against the supported floor and exit")
 }
 
 // applyToLocal folds every explicitly-set flag into the local configuration
@@ -192,6 +202,149 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 	return nil
 }
 
+// resolveAgentSelection picks the agent (the --agent flag wins over the local
+// config) and records what the workspace file asked for, so the trust check can
+// tell an operator's choice from a repository's. An unresolved agent is still
+// synthesized here; enforceLocalConfigTrust decides whether it may be used.
+func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) (catalog.AgentStatus, localTrust) {
+	selected := flagAgent
+	if selected == "" {
+		selected = local.Agent
+	}
+	status, err := catalogue.Resolve(selected)
+	trust := localTrust{
+		agent:      local.Agent,
+		agentKnown: err == nil,
+		fromFile:   flagAgent == "",
+		jail:       local.Options.Jail,
+		mounts:     local.Mounts,
+	}
+	if err != nil {
+		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}, trust
+	}
+	if status.ResolvedCommand != "" {
+		// Keep the configured catalog name for display, but invoke the alias
+		// that was actually found on this machine (for example kilocode).
+		status.Agent.Command = status.ResolvedCommand
+	}
+	return status, trust
+}
+
+// localTrust captures the security-relevant values a workspace-local
+// .ai-launch.yaml supplied, before CLI flags are layered on top of them.
+type localTrust struct {
+	agent      string
+	agentKnown bool
+	// fromFile is false once --agent was given: the operator's own choice.
+	fromFile bool
+	jail     bool
+	mounts   []config.Mount
+}
+
+// enforceLocalConfigTrust refuses a workspace-local config that lowers the
+// security posture on its own. A .ai-launch.yaml travels with the repository,
+// so for any checkout the operator did not write it is attacker-supplied
+// input: left unchecked it picks the executed binary, turns the sandbox off,
+// and mounts whatever it likes. What the operator types on the command line
+// stays fully trusted — the boundary is around the file, not around the user.
+//
+// Refusal rather than a prompt: a launcher run is routinely non-interactive
+// (scripts, CI, the --dry-run diagnostic), and the plan requires those to
+// refuse. Each refusal names the explicit opt-in that accepts the risk.
+func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust localTrust) error {
+	if trust.fromFile && strings.TrimSpace(trust.agent) != "" && !trust.agentKnown {
+		return fmt.Errorf("local config selects agent %q, which the catalog cannot resolve; "+
+			"run it explicitly with --agent %s, or register it in the global catalog with --add",
+			trust.agent, trust.agent)
+	}
+	if globalRequiresJail(global) && !trust.jail &&
+		!flagsWasSet(flags, "no-jail") && !flagsWasSet(flags, "sandbox") {
+		return errors.New("local config disables the sandbox (options.jail: false) " +
+			"while the global catalog defaults it on; pass --no-jail to accept that explicitly")
+	}
+	for _, mount := range trust.mounts {
+		path := strings.TrimSpace(mount.Path)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("local config mount %q is not an absolute path", path)
+		}
+		if filepath.Clean(path) == string(filepath.Separator) {
+			return fmt.Errorf("local config mount %q would expose the filesystem root", path)
+		}
+	}
+	return nil
+}
+
+// globalRequiresJail reports whether the trusted global catalog defaults the
+// sandbox on. An operator who turned it off globally is not being downgraded
+// by a local config that agrees with them.
+func globalRequiresJail(global config.Global) bool {
+	for _, permission := range global.Permissions {
+		if permission.ID == "jail" {
+			return permission.Default
+		}
+	}
+	return true
+}
+
+// reportPreflight prints every pre-flight issue and reports whether any of them
+// is fatal. Warnings are labelled as such; anything else blocks the launch.
+func reportPreflight(errOut io.Writer, issues []launcher.Issue) bool {
+	fatal := false
+	for _, issue := range issues {
+		label := "error:"
+		if issue.Warning {
+			label = "warning:"
+		}
+		_, _ = fmt.Fprintln(errOut, label, issue)
+		if !issue.Warning {
+			fatal = true
+		}
+	}
+	return fatal
+}
+
+// reportInfoFlags handles the flags that only print information and exit,
+// before any configuration is loaded. handled is true when one of them ran.
+func reportInfoFlags(opts cliOptions, out io.Writer) (bool, error) {
+	switch {
+	case opts.showVersion:
+		_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
+		return true, nil
+	case opts.doctor:
+		return true, reportDoctor(out)
+	}
+	return false, nil
+}
+
+// reportDoctor prints the installed upstream CLI versions against the floor
+// this launcher composes with. It is the explicit home of the --version probe:
+// pre-flight validation stays hermetic so a launch never pays for extra
+// processes, and the TUI event loop never blocks on them.
+func reportDoctor(out io.Writer) error {
+	_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
+	stale := false
+	for _, status := range launcher.UpstreamReport(nil, "") {
+		switch {
+		case status.Missing:
+			_, _ = fmt.Fprintf(out, "%-10s not found in PATH (required >= %s)\n", status.Command, status.Minimum)
+		case status.Version == "":
+			_, _ = fmt.Fprintf(out, "%-10s %s (version unreadable; required >= %s)\n", status.Command, status.Path, status.Minimum)
+		case status.TooOld:
+			stale = true
+			_, _ = fmt.Fprintf(out, "%-10s %s is older than the required %s; upgrade with --upgrade\n", status.Command, status.Version, status.Minimum)
+		default:
+			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
+		}
+	}
+	if stale {
+		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits.")
+	}
+	return nil
+}
+
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	// A positional `upgrade` as the first argument is the self-update
 	// subcommand (mirroring semidx). It must be intercepted before the launch
@@ -208,9 +361,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if opts.showVersion {
-		_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
-		return nil
+	if handled, err := reportInfoFlags(opts, out); handled {
+		return err
 	}
 
 	home, err := os.UserHomeDir()
@@ -258,23 +410,21 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	positionalArgs := append([]string(nil), flags.Args()...)
 
-	selectedAgent := opts.agent
-	if selectedAgent == "" {
-		selectedAgent = local.Agent
-	}
-	status, resolveErr := catalogue.Resolve(selectedAgent)
-	if resolveErr != nil {
-		status = catalog.AgentStatus{Agent: config.Agent{Name: selectedAgent, Command: selectedAgent}}
-	} else if status.ResolvedCommand != "" {
-		// Keep the configured catalog name for display, but invoke the alias
-		// that was actually found on this machine (for example kilocode).
-		status.Agent.Command = status.ResolvedCommand
-	}
+	status, trust := resolveAgentSelection(catalogue, opts.agent, local)
 	permissions := catalogue.NormalizePermissions(local.Permissions)
 	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
 	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
 	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
 	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
+	applyBoolFlag(flags, "display", permissions, "display", opts.display)
+	applyBoolFlag(flags, "pictures", permissions, "pictures", opts.pictures)
+	applyBoolFlag(flags, "tailscale", permissions, "tailscale", opts.tailscale)
+	applyBoolFlag(flags, "systemd-user", permissions, "systemd-user", opts.systemdUser)
+	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
+	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
+	if err := enforceLocalConfigTrust(flags, global, trust); err != nil {
+		return err
+	}
 	mountConfig, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
 	if err != nil {
 		return err
@@ -536,20 +686,20 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 	if err != nil {
 		return err
 	}
-	if decideLaunchAction(opts.dryRun) == actionPrint {
+	// Validate before printing: --dry-run is the advertised diagnostic surface,
+	// so it must not present a command pre-flight would reject. The argv is
+	// still printed when there are issues — seeing what would run is the point.
+	printOnly := decideLaunchAction(opts.dryRun) == actionPrint
+	issues := launcher.NewValidator().WithPermissions(global.Permissions).Validate(launchConfig)
+	fatal := reportPreflight(errOut, issues)
+	if printOnly {
 		_, _ = fmt.Fprintln(out, shellJoin(argv))
-		return nil
-	}
-	issues := launcher.NewValidator().Validate(launchConfig)
-	fatal := false
-	for _, issue := range issues {
-		_, _ = fmt.Fprintln(errOut, "warning:", issue)
-		if !issue.Warning {
-			fatal = true
-		}
 	}
 	if fatal {
 		return errors.New("pre-flight validation failed")
+	}
+	if printOnly {
+		return nil
 	}
 	// Remember the harness for the TUI MRU list (best-effort; never block launch).
 	if !launchConfig.ContinueSession {

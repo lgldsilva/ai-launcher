@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -284,5 +285,68 @@ func TestBuildYoloDoesNotDuplicateFlagPresentInExtraArgs(t *testing.T) {
 	want := []string{"claude", "--dangerously-skip-permissions", "--verbose"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
+	}
+}
+
+func TestBuildMapsV115PassthroughPermissions(t *testing.T) {
+	got, err := Build(LaunchConfig{
+		Agent:   config.Agent{Command: "claude"},
+		UseJail: true,
+		Permissions: map[string]bool{
+			"display": true, "pictures": true, "tailscale": true,
+			"systemd-user": true, "mise": true, "worktree": true,
+		},
+	})
+	want := []string{"ai-jail", "--display", "--pictures", "--tailscale", "--systemd-user", "--mise", "--worktree", "claude"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
+	}
+}
+
+func TestValidatorWarnsForPermissionUnsupportedOnPlatform(t *testing.T) {
+	v := Validator{
+		GOOS:     "darwin",
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+	}
+	issues := v.Validate(LaunchConfig{
+		Agent:       config.Agent{Command: "claude"},
+		UseJail:     true,
+		Permissions: map[string]bool{"systemd-user": true},
+	})
+	if len(issues) != 1 {
+		t.Fatalf("issues = %#v; want a single unsupported-platform warning", issues)
+	}
+	issue := issues[0]
+	if issue.Code != "unsupported-platform" || !issue.Warning {
+		t.Fatalf("issue = %#v; want an unsupported-platform warning", issue)
+	}
+	if !strings.Contains(issue.Message, "systemd-user") || !strings.Contains(issue.Message, "darwin") {
+		t.Fatalf("message = %q; want the permission id and the platform", issue.Message)
+	}
+	// The same permission is supported on Linux: no warning there.
+	v.GOOS = "linux"
+	if issues := v.Validate(LaunchConfig{
+		Agent:       config.Agent{Command: "claude"},
+		UseJail:     true,
+		Permissions: map[string]bool{"systemd-user": true},
+	}); len(issues) != 0 {
+		t.Fatalf("linux issues = %#v; want none", issues)
+	}
+}
+
+func TestValidatorIgnoresUnsupportedPlatformForDisabledOrUnknownPermissions(t *testing.T) {
+	v := Validator{
+		GOOS:     "darwin",
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+	}
+	issues := v.Validate(LaunchConfig{
+		Agent:       config.Agent{Command: "claude"},
+		UseJail:     true,
+		Permissions: map[string]bool{"systemd-user": false, "custom-unknown": true},
+	})
+	if len(issues) != 0 {
+		t.Fatalf("issues = %#v; disabled and unknown permissions must not warn", issues)
 	}
 }

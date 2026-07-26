@@ -79,15 +79,31 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    the Gherkin suite locks regressions out.
 2. **Selection precedence**: built-in defaults < local `.ai-launch.yaml` <
    profile < explicit flags. Profiles only replace the blocks they define.
+2b. **The local config is untrusted input**: `.ai-launch.yaml` ships with the
+   repository, so `enforceLocalConfigTrust` refuses one that selects an
+   unresolvable agent, disables the sandbox while the global catalog defaults
+   it on, or declares a relative mount or a filesystem root. Global config,
+   profiles and command-line flags are trusted; the boundary is around the
+   workspace file.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
 4. **Mandatory checksum on installs**: without a verifiable checksum the
    install fails, unless an explicit `allow_unverified: true` in the recipe.
+   A recipe that publishes release assets always installs from them; the
+   unverified `source_url` path is reserved for recipes with no assets.
 5. **Strict checksum on self-update**: `ai-launcher upgrade` and `install.sh`
    require the release `checksums.txt`; a missing file, a missing entry, or a
    mismatch is a hard error with no `allow_unverified` escape hatch, because
    the flow overwrites the executable you will run.
 6. **Safe defaults**: omitted `jail` and `memory` mean `true`; an explicit
    `false` is preserved (tested contract — see docs/test-strategy.md).
+   "Omitted" is decided from the **parsed** document, never from a substring
+   search over the raw bytes: `jail:` also occurs inside `permissions`, inside
+   comments and inside mount paths, and a false positive there skips the
+   default and leaves the sandbox off.
+6b. **Harness must be one ai-memory accepts**: `ai-memory run` takes a fixed
+   list (`config.MemoryRunHarnesses`). Pre-flight fails with
+   `memory-harness-unsupported` instead of emitting an argv whose rejection
+   would surface as an opaque clap error inside the jail.
 7. **Token via environment only**: `AI_MEMORY_AUTH_TOKEN` goes into the child
    process env and never into logs or argv. The same holds for
    `AI_LAUNCHER_UPDATE_TOKEN` in the self-update flow.
@@ -113,7 +129,7 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | `memory_auth_token` | string | Bearer token, forwarded via env only |
 | `agents[]` | list | `name`, `command`, `aliases`, `path`, `supports_memory`, `supports_yolo`, `yolo_flag`, `params[]` (`name`/`flag`/`takes_value`), `release` (GitHub recipe), `memory` (MCP/hooks adapter), `source_url` |
 | `tools[]` | list | Auxiliary tool recipes (ai-jail, ai-memory) |
-| `permissions[]` | list | `id`, `name`, `default`, `locked`, `requires` |
+| `permissions[]` | list | `id`, `name`, `default`, `locked`, `requires`, `platforms` (empty = all platforms) |
 | `default_mounts[]` | list | Mounts suggested when neither the local config/profile nor `--mount`/`--map`/`--rw-map` define any; read-write by default, with the same optional `:ro`/`:rw` suffix as `--mount`. Built-in candidates are OS-specific (Linux: `/storage…`; macOS: `/Volumes/MSD512…`); only paths that exist on the host are applied. Pre-selected in the TUI mount manager (removable) |
 | `profiles{}` | map | Named selection snapshots (`agent`, `permissions`, `mounts`, `options`) |
 | `recent_agents[]` | list | Most-recently-used agent commands (newest first); the TUI lists installed agents in this order |
@@ -138,17 +154,65 @@ ai-jail (all require `UseJail` when on):
 | `gh` | `--rw-map $HOME/.config/gh` (config mount only; does not LookPath `gh`) |
 | `docker` | `--docker` |
 | `gpu` | `--gpu` |
+| `display` | `--display` (Linux only) |
+| `pictures` | `--pictures` |
+| `tailscale` | `--tailscale` |
+| `systemd-user` | `--systemd-user` (Linux only) |
+| `mise` | `--mise` |
+| `worktree` | `--worktree` |
+
+Each permission declares its supported platforms in the catalog
+(`permissions[].platforms`; empty means all). The TUI hides permissions
+unsupported on the current OS, and pre-flight reports an
+`unsupported-platform` warning when a config enables one anyway. Platform
+metadata is read from the effective catalog, so a hand-edited
+`permissions[].platforms` drives the TUI and pre-flight identically.
+
+A permission is a one-way switch: it only ever emits the positive form. ai-jail
+treats an unset capability as auto (enabled when the resource exists), so an
+off permission means "leave auto-detection alone". Forcing a capability off is
+a `jail_flags` decision. When both name the same capability (`gpu`, `display`,
+`tailscale`, `mise`, `worktree`), the explicit `jail_flags` value wins and the
+permission emits nothing — otherwise `appendJailFlags` and the permission pass
+would produce `--no-tailscale --tailscale`, where clap's last-wins silently
+discards the declared intent.
 
 User-declared mounts are separate (`--map` / `--rw-map` from the mounts list).
 Home dotfile symlink targets outside `$HOME` are auto-merged when the jail is
 on. See the README section **Permissions: CLI + config** for the operator view.
 
-`jail_flags` mirrors the ai-jail toggles with tri-state booleans
-(absent = ai-jail default): `lockdown`, `private_home`, `tailscale`, `gpu`,
+`jail_flags` mirrors the ai-jail toggles with tri-state booleans that follow
+ai-jail's own model — absent = auto (enabled when the resource exists on the
+host), `true` = force on (`--flag`), `false` = force off (`--no-flag`). Forcing
+on is a distinct state from leaving unset, so neither form is ever suppressed:
+`lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`,
 `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `browser`
-(`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `deny_paths`,
-`allow_tcp_ports`. When unset, `hide_config` is auto-disabled for projects
-whose `.ai-jail` is a symlink (bwrap cannot mask a symlink).
+(`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `mask_exceptions`,
+`deny_paths`, `deny_path_exceptions`, `hide_dotdirs`, `allow_tcp_ports`, and
+`status_bar_style` (`dark`/`light`/`pastel`, emitted as `--status-bar=STYLE`;
+when set it suppresses both boolean `--status-bar` forms). When unset,
+`hide_config` is auto-disabled for projects whose `.ai-jail` is a symlink
+(bwrap cannot mask a symlink).
+
+## Upstream version compatibility
+
+The launcher composes a specific upstream surface, and that floor is pinned in
+two constants in `internal/config`: `MinAIJailVersion` (`1.15.0`) and
+`MinAIMemoryVersion` (`1.19.0`). `ai-launcher --doctor` probes the installed
+binaries with `ai-jail --version` / `ai-memory --version` (5-second timeout
+each) and reports `ai-jail-version-too-old` / `ai-memory-version-too-old` when
+the installed version is below the floor. A probe that fails or cannot be
+parsed stays silent.
+
+The probe lives in `--doctor` and **not** in pre-flight validation on purpose.
+`Validator.Validate` runs on every launch and inside the Bubble Tea update
+loop; forking two children there costs ~300 ms of startup latency and blocks
+the UI, and the same check would be invisible in `--dry-run`, which returns
+before validation. Validation stays hermetic — PATH lookups and `Stat` only.
+
+The Gherkin contract plus these constants are the drift detector: bumping the
+floor means reviewing the upstream changelog and updating the contract in the
+same commit.
 
 ## Build metadata vs. config schema
 

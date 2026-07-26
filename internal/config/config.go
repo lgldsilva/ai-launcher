@@ -24,6 +24,38 @@ const CurrentVersion = "2.0"
 // *.internal.lgldsilva.com.br (not the old *.raspberrypi.lan names).
 const DefaultMemoryServerURL = "https://aimemory.internal.lgldsilva.com.br"
 
+// memoryRunHarnesses is the fixed set of names `ai-memory run <HARNESS>`
+// accepts, verified against ai-memory 1.19.0. Anything else is rejected by
+// clap with an opaque "invalid value for '[HARNESS]'" — raised inside the jail,
+// where the user never sees it. This list is the single source of truth: a
+// catalog agent either resolves to one of these (directly or through
+// Memory.RunHarness) or declares SupportsMemory false.
+var memoryRunHarnesses = []string{"claude", "codex", "opencode", "pi", "crush", "omp", "kimi", "grok"}
+
+// MemoryRunHarnesses returns the harnesses `ai-memory run` accepts.
+func MemoryRunHarnesses() []string {
+	return append([]string(nil), memoryRunHarnesses...)
+}
+
+// SupportsMemoryRunHarness reports whether `ai-memory run` accepts name.
+func SupportsMemoryRunHarness(name string) bool {
+	name = strings.TrimSpace(name)
+	for _, harness := range memoryRunHarnesses {
+		if harness == name {
+			return true
+		}
+	}
+	return false
+}
+
+// MinAIJailVersion and MinAIMemoryVersion pin the minimum upstream CLI
+// versions this launcher composes against. Older installs still launch;
+// `ai-launcher --doctor` reports them (see launcher.CheckUpstreamVersions).
+const (
+	MinAIJailVersion   = "1.15.0"
+	MinAIMemoryVersion = "1.19.0"
+)
+
 // legacyMemoryServerURL is the pre-DNS-migration default. Existing
 // config.yaml files that still pin this host get rewritten on load so TLS
 // stops failing with "certificate not valid for name aimemory.raspberrypi.lan".
@@ -100,12 +132,29 @@ type Tool struct {
 
 // Permission is a toggleable capability with optional dependencies on other
 // permissions (Requires) and a Locked flag for values the user cannot change.
+// Platforms restricts the permission to the listed GOOS values; an empty list
+// means it is supported everywhere.
 type Permission struct {
-	ID       string   `yaml:"id"`
-	Name     string   `yaml:"name"`
-	Default  bool     `yaml:"default"`
-	Locked   bool     `yaml:"locked,omitempty"`
-	Requires []string `yaml:"requires,omitempty"`
+	ID        string   `yaml:"id"`
+	Name      string   `yaml:"name"`
+	Default   bool     `yaml:"default"`
+	Locked    bool     `yaml:"locked,omitempty"`
+	Requires  []string `yaml:"requires,omitempty"`
+	Platforms []string `yaml:"platforms,omitempty"`
+}
+
+// PermissionSupportedOn reports whether a permission applies to goos.
+// Permissions without a Platforms list are supported on every platform.
+func PermissionSupportedOn(permission Permission, goos string) bool {
+	if len(permission.Platforms) == 0 {
+		return true
+	}
+	for _, platform := range permission.Platforms {
+		if platform == goos {
+			return true
+		}
+	}
+	return false
 }
 
 // Mount is a host directory exposed inside the sandbox. Mode is "rw" or
@@ -116,16 +165,20 @@ type Mount struct {
 }
 
 // JailFlags holds the ai-jail v1.15 capability toggles. Pointer booleans are
-// tri-state: nil keeps the ai-jail default (no flag emitted), while true and
-// false emit the positive or --no- form respectively. Default-on capabilities
-// (GPU, Landlock, Seccomp, Rlimits, StatusBar, HideConfig) only emit the
-// --no- form when explicitly disabled. Browser accepts "hard", "soft", or
-// "off".
+// tri-state and mirror ai-jail's own model: nil leaves the capability in
+// ai-jail's auto mode (no flag emitted, meaning "enabled when the resource
+// exists on the host"), while true and false force it on or off with the
+// positive or --no- form. Forcing a capability on is therefore a distinct
+// state from leaving it unset, and both forms are always emitted. Browser
+// accepts "hard", "soft", or "off".
 type JailFlags struct {
 	Lockdown      *bool    `yaml:"lockdown,omitempty"`
 	PrivateHome   *bool    `yaml:"private_home,omitempty"`
 	Tailscale     *bool    `yaml:"tailscale,omitempty"`
 	GPU           *bool    `yaml:"gpu,omitempty"`
+	Display       *bool    `yaml:"display,omitempty"`
+	Mise          *bool    `yaml:"mise,omitempty"`
+	Worktree      *bool    `yaml:"worktree,omitempty"`
 	Landlock      *bool    `yaml:"landlock,omitempty"`
 	Seccomp       *bool    `yaml:"seccomp,omitempty"`
 	Rlimits       *bool    `yaml:"rlimits,omitempty"`
@@ -137,15 +190,25 @@ type JailFlags struct {
 	Mask          []string `yaml:"mask,omitempty"`
 	DenyPaths     []string `yaml:"deny_paths,omitempty"`
 	AllowTCPPorts []int    `yaml:"allow_tcp_ports,omitempty"`
+	// v1.15 exception lists: each entry punches a hole in a mask / deny-path
+	// rule or hides a dot-directory by name.
+	MaskExceptions     []string `yaml:"mask_exceptions,omitempty"`
+	DenyPathExceptions []string `yaml:"deny_path_exceptions,omitempty"`
+	HideDotdirs        []string `yaml:"hide_dotdirs,omitempty"`
+	// StatusBarStyle selects a status bar theme ("dark", "light", or
+	// "pastel"); when set it wins over the StatusBar boolean toggle.
+	StatusBarStyle string `yaml:"status_bar_style,omitempty"`
 }
 
 // IsZero reports whether no jail flag deviates from the ai-jail defaults.
 func (f JailFlags) IsZero() bool {
 	return f.Lockdown == nil && f.PrivateHome == nil && f.Tailscale == nil &&
-		f.GPU == nil && f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
+		f.GPU == nil && f.Display == nil && f.Mise == nil && f.Worktree == nil &&
+		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
-		len(f.AllowTCPPorts) == 0
+		len(f.AllowTCPPorts) == 0 && len(f.MaskExceptions) == 0 &&
+		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && f.StatusBarStyle == ""
 }
 
 // Options holds the per-launch behavior toggles persisted in the local config.
@@ -349,7 +412,7 @@ func DefaultGlobal() Global {
 			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: defaultMemoryIntegration("codex", "codex")},
 			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: defaultMemoryIntegration("opencode", "opencode")},
 			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", "kimi-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: defaultMemoryIntegration("kimi-code", "kimi-code")},
-			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
+			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
 				Assets: map[string]string{
 					"linux-amd64":  "kilo-linux-x64.tar.gz",
@@ -359,26 +422,26 @@ func DefaultGlobal() Global {
 				},
 				Binary: "kilo",
 			}},
-			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: true, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
-			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", "antigravity-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration("antigravity-cli", "antigravity-cli")},
+			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
+			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", "antigravity-cli"}, SupportsMemory: false, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration("antigravity-cli", "antigravity-cli")},
 			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
 			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: defaultMemoryIntegration("omp", "omp")},
-			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: true, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: defaultMemoryIntegration("cursor", "cursor")},
+			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: defaultMemoryIntegration("cursor", "cursor")},
 			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: false, Description: "Grok CLI", Memory: defaultMemoryIntegration("grok", "grok")},
-			{Name: "Zero", Command: "zero", SupportsMemory: true, SupportsYolo: false, Description: "Zero agent CLI", Memory: defaultMemoryIntegration("zero", "zero")},
-			{Name: "Devin", Command: "devin", SupportsMemory: true, SupportsYolo: false, Description: "Devin CLI", Memory: defaultMemoryIntegration("devin", "devin")},
+			{Name: "Zero", Command: "zero", SupportsMemory: false, SupportsYolo: false, Description: "Zero agent CLI", Memory: defaultMemoryIntegration("zero", "zero")},
+			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: false, Description: "Devin CLI", Memory: defaultMemoryIntegration("devin", "devin")},
 			// oc is a local preset TUI that ends up launching opencode; ai-memory
 			// only knows the harness name "opencode", so RunHarness remaps it.
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: &MemoryIntegration{Client: "opencode", Agent: "opencode", RunHarness: "opencode", InstallMCP: true, InstallHooks: true}},
-			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
-			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
-			{Name: "Aider", Command: "aider", SupportsMemory: true, SupportsYolo: true, Description: "Aider CLI"},
-			{Name: "Goose", Command: "goose", SupportsMemory: true, SupportsYolo: false, Description: "Block Goose CLI"},
-			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: true, SupportsYolo: false, Description: "Kiro CLI"},
-			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: true, SupportsYolo: true, Description: "OpenClaw CLI", Memory: mcpOnlyMemoryIntegration("openclaw")},
-			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: true, SupportsYolo: false, Description: "Hermes Agent CLI"},
-			{Name: "Cline", Command: "cline", SupportsMemory: true, SupportsYolo: false, Description: "Cline CLI"},
+			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: false, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
+			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
+			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI"},
+			{Name: "Goose", Command: "goose", SupportsMemory: false, SupportsYolo: false, Description: "Block Goose CLI"},
+			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: false, SupportsYolo: false, Description: "Kiro CLI"},
+			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: false, SupportsYolo: true, Description: "OpenClaw CLI", Memory: mcpOnlyMemoryIntegration("openclaw")},
+			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: false, SupportsYolo: false, Description: "Hermes Agent CLI"},
+			{Name: "Cline", Command: "cline", SupportsMemory: false, SupportsYolo: false, Description: "Cline CLI"},
 		},
 		Tools: []Tool{
 			{
@@ -420,6 +483,16 @@ func DefaultGlobal() Global {
 			{ID: "gh", Name: "GitHub CLI", Requires: []string{"jail"}},
 			{ID: "docker", Name: "Docker socket", Requires: []string{"jail"}},
 			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"docker"}},
+			// The passthroughs below default to off because ai-jail already
+			// auto-enables display, mise and worktree when the resource exists.
+			// Turning one on here forces it on; forcing one off is a jail_flags
+			// decision, which is tri-state and can express it.
+			{ID: "display", Name: "Display passthrough", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux"}},
+			{ID: "pictures", Name: "Pictures folder", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux", "darwin"}},
+			{ID: "tailscale", Name: "Tailscale socket", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux", "darwin"}},
+			{ID: "systemd-user", Name: "systemd user bus", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux"}},
+			{ID: "mise", Name: "mise integration", Default: false, Requires: []string{"jail"}},
+			{ID: "worktree", Name: "Git worktree passthrough", Default: false, Requires: []string{"jail"}},
 		},
 		DefaultMounts: DefaultMountCandidates(runtime.GOOS),
 	}
@@ -630,13 +703,14 @@ func LoadLocal(path string) (Local, error) {
 	}
 	// An omitted options block must retain safe defaults. Once the block is
 	// present, inspect each key so explicit false values remain meaningful.
-	if !hasSectionKey(b, "options") {
+	declared := declaredOptionKeys(b)
+	if declared == nil {
 		loaded.Options = cfg.Options
 	} else {
-		if !hasOptionKey(b, "jail") {
+		if !declared["jail"] {
 			loaded.Options.Jail = true
 		}
-		if !hasOptionKey(b, "memory") {
+		if !declared["memory"] {
 			loaded.Options.Memory = true
 		}
 	}
@@ -712,9 +786,7 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 	if len(cfg.Agents) == 0 {
 		cfg.Agents = defaults.Agents
 	}
-	if len(cfg.Permissions) == 0 {
-		cfg.Permissions = defaults.Permissions
-	}
+	cfg.Permissions = mergePermissions(defaults.Permissions, cfg.Permissions)
 	if len(cfg.Tools) == 0 {
 		cfg.Tools = defaults.Tools
 	}
@@ -724,11 +796,64 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 	return cfg
 }
 
-func hasOptionKey(data []byte, key string) bool {
-	return strings.Contains(string(data), "\n"+key+":") || strings.HasPrefix(strings.TrimSpace(string(data)), key+":") || strings.Contains(string(data), "\n  "+key+":")
+// mergePermissions merges the built-in permission defaults with the user's
+// configured list by ID. User entries win on conflict; defaults with IDs the
+// user does not have are appended so new launcher releases surface their new
+// permissions without clobbering the user's customizations.
+func mergePermissions(defaults, user []Permission) []Permission {
+	if len(user) == 0 {
+		return defaults
+	}
+	byID := make(map[string]Permission, len(user))
+	for _, permission := range user {
+		byID[permission.ID] = permission
+	}
+	merged := make([]Permission, 0, len(defaults)+len(user))
+	for _, permission := range defaults {
+		if existing, ok := byID[permission.ID]; ok {
+			merged = append(merged, existing)
+		} else {
+			merged = append(merged, permission)
+		}
+	}
+	// Preserve any user-defined permissions that are not in the built-in
+	// defaults (custom permissions the operator added by hand).
+	for _, permission := range user {
+		found := false
+		for _, def := range defaults {
+			if def.ID == permission.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, permission)
+		}
+	}
+	return merged
 }
 
-func hasSectionKey(data []byte, key string) bool {
-	text := strings.TrimSpace(string(data))
-	return strings.HasPrefix(text, key+":") || strings.Contains(text, "\n"+key+":")
+// declaredOptionKeys returns the set of keys the document's top-level options
+// block declares, or nil when there is no such block. Presence has to come from
+// the parsed document: substring search over the raw bytes matches "jail:"
+// anywhere in the file — nested in a permissions block, in a comment, in a
+// mount path — and a false positive there silently skips the safety default,
+// leaving Options.Jail at Go's zero value. Writing the config that looks like
+// it enables the sandbox was exactly what turned it off.
+//
+// The probe deliberately decodes into a plain map instead of Options: Options
+// has a custom unmarshaler that fills in defaults, which would erase the
+// distinction between "declared" and "absent".
+func declaredOptionKeys(data []byte) map[string]bool {
+	var probe struct {
+		Options map[string]any `yaml:"options"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil || probe.Options == nil {
+		return nil
+	}
+	declared := make(map[string]bool, len(probe.Options))
+	for key := range probe.Options {
+		declared[key] = true
+	}
+	return declared
 }

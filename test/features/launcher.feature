@@ -258,7 +258,7 @@ Feature: Launcher command contract
       claude
       """
 
-  Scenario: Emits negative forms for disabled default-on jail toggles
+  Scenario: Emits negative forms for explicitly disabled jail toggles
     Given a launch configuration
       """
       agent: claude
@@ -280,6 +280,75 @@ Feature: Launcher command contract
       --no-seccomp
       --no-rlimits
       --no-status-bar
+      claude
+      """
+
+  Scenario: Emits positive forms for jail toggles forced on
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        gpu: true
+        display: true
+        mise: true
+        worktree: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --gpu
+      --display
+      --mise
+      --worktree
+      claude
+      """
+
+  Scenario: Forces the auto-detected passthroughs off from jail flags
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        display: false
+        mise: false
+        worktree: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-display
+      --no-mise
+      --no-worktree
+      claude
+      """
+
+  Scenario: An explicit jail flag wins over the permission for the same capability
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      permissions:
+        gpu: true
+        tailscale: true
+        display: true
+      jail_flags:
+        gpu: false
+        tailscale: false
+        display: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-tailscale
+      --no-gpu
+      --no-display
       claude
       """
 
@@ -396,4 +465,125 @@ Feature: Launcher command contract
       linux-amd64
       linux-arm64
       windows-amd64
+      """
+
+  Scenario: Maps the ai-jail v1.15 passthrough permissions to argv
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      permissions:
+        display: true
+        pictures: true
+        tailscale: true
+        systemd-user: true
+        mise: true
+        worktree: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --display
+      --pictures
+      --tailscale
+      --systemd-user
+      --mise
+      --worktree
+      claude
+      """
+
+  Scenario: Warns when an enabled permission is unsupported on the platform
+    Given a validation configuration
+      """
+      agent: claude
+      goos: darwin
+      jail: true
+      memory: false
+      permissions:
+        systemd-user: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      unsupported-platform
+      """
+
+  Scenario: Emits mask and deny-path exceptions, hidden dotdirs and status bar style
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        mask_exceptions: [/etc/secrets/public, /srv/shared]
+        deny_path_exceptions: [/var/cache]
+        hide_dotdirs: [.aws, .gnupg]
+        status_bar_style: dark
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --status-bar=dark
+      --mask-except
+      /etc/secrets/public
+      --mask-except
+      /srv/shared
+      --deny-path-except
+      /var/cache
+      --hide-dotdir
+      .aws
+      --hide-dotdir
+      .gnupg
+      claude
+      """
+
+  Scenario: A status bar style suppresses the boolean status bar forms
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        status_bar: false
+        status_bar_style: pastel
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --status-bar=pastel
+      claude
+      """
+
+  Scenario: Rejects a harness ai-memory run does not accept
+    Given a validation configuration
+      """
+      agent: gemini
+      goos: linux
+      jail: false
+      memory: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-harness-unsupported
+      """
+
+  Scenario: Accepts a harness from the ai-memory run list
+    Given a validation configuration
+      """
+      agent: opencode
+      goos: linux
+      jail: false
+      memory: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
       """

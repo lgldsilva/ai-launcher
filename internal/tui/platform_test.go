@@ -21,6 +21,52 @@ func stubWindows(t *testing.T, windows bool) {
 	t.Cleanup(func() { isWindows = original })
 }
 
+// stubGOOS forces the permission platform filter to the given target.
+func stubGOOS(t *testing.T, target string) {
+	t.Helper()
+	original := goos
+	goos = func() string { return target }
+	t.Cleanup(func() { goos = original })
+}
+
+func permissionIDSet(model Model) map[string]bool {
+	seen := make(map[string]bool, len(model.permissionIDs))
+	for _, id := range model.permissionIDs {
+		seen[id] = true
+	}
+	return seen
+}
+
+func TestUnsupportedPlatformPermissionsAreHidden(t *testing.T) {
+	stubWindows(t, false)
+	stubGOOS(t, "darwin")
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	seen := permissionIDSet(model)
+	// systemd-user and display are Linux-only in ai-jail.
+	for _, hidden := range []string{"systemd-user", "display"} {
+		if seen[hidden] {
+			t.Errorf("permission %q (linux-only) offered on macOS", hidden)
+		}
+	}
+	for _, want := range []string{"pictures", "tailscale", "mise", "worktree"} {
+		if !seen[want] {
+			t.Errorf("permission %q missing on macOS TUI", want)
+		}
+	}
+	if view := model.View(); strings.Contains(view, "systemd user bus") {
+		t.Fatalf("options view shows systemd-user on macOS: %s", view)
+	}
+
+	stubGOOS(t, "linux")
+	model = NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	linux := permissionIDSet(model)
+	for _, want := range []string{"systemd-user", "display"} {
+		if !linux[want] {
+			t.Errorf("permission %q missing on Linux TUI", want)
+		}
+	}
+}
+
 func TestMacOSKeepsJailAndPermissions(t *testing.T) {
 	stubWindows(t, false)
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{

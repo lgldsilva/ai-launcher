@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,12 +11,42 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
+// stubToolsOnPath puts executable stubs for the harness and the upstream CLIs
+// at the front of PATH. Pre-flight validation resolves all three, and --dry-run
+// now runs it, so a fixture pointing at binaries that do not exist would fail
+// for the wrong reason. It also keeps the suite hermetic: it never depends on
+// ai-jail or ai-memory being installed on the machine running the tests.
+func stubToolsOnPath(t *testing.T, names ...string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	for _, name := range names {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { // #nosec G306 -- test stub must be executable
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return binDir
+}
+
+// stubPath resolves a stub installed by stubToolsOnPath. A resolvable harness
+// is invoked through its absolute path, so that is what the argv carries.
+func stubPath(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatalf("stub %q is not on PATH: %v", name, err)
+	}
+	return path
+}
+
 // writeTestConfigs creates a global config with a custom harness and two
 // profiles plus a local config. The returned mounts are three existing
 // directories used as default_mounts so tests stay independent of the host OS
 // layout (production defaults come from config.DefaultMountCandidates).
 func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath string, defaultMounts []string) {
 	t.Helper()
+	stubToolsOnPath(t, "custom-cli", "other-cli", "codex", "ai-jail", "ai-memory")
 	dir := t.TempDir()
 	defaultMounts = []string{
 		filepath.Join(dir, "storage"),
@@ -31,6 +62,16 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
   - name: Custom
     command: custom-cli
     yolo_flag: --custom-yolo
+    # custom-cli is a wrapper: ai-memory run only accepts its fixed harness
+    # list, so the catalog declares which of those it maps onto.
+    memory:
+      run_harness: opencode
+    params:
+      - name: model
+        flag: --model
+        takes_value: true
+  - name: Codex
+    command: codex
     params:
       - name: model
         flag: --model
@@ -83,7 +124,7 @@ func runDryRun(t *testing.T, args ...string) (string, error) {
 
 func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "review", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "review", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -94,7 +135,7 @@ func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 
 func TestExplicitFlagsOverrideProfile(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
 		"--profile", "review", "--agent", "codex", "--param", "model=v2", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -109,18 +150,18 @@ func TestExplicitFlagsOverrideProfile(t *testing.T) {
 
 func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "minimal", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "minimal", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	if !strings.HasPrefix(out, "ai-memory run custom-cli") {
+	if !strings.HasPrefix(out, "ai-memory run opencode") {
 		t.Fatalf("dry-run = %q; want local memory option retained by a profile without options", out)
 	}
 }
 
 func TestSaveProfilePersistsMergedSelectionWithoutLaunching(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
 		"--save-profile", "saved", "--param", "model=v9", "--yolo")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)

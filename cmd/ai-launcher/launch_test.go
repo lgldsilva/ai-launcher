@@ -18,7 +18,7 @@ func TestDecideLaunchAction(t *testing.T) {
 
 func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--continue", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--continue", "--no-jail", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -29,12 +29,12 @@ func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
 
 func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
 		"--workspace", "acme", "--project", "billing", "--workstream", "release-1", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-memory run --workspace acme --project billing --workstream release-1 custom-cli"
+	want := "ai-memory run --workspace acme --project billing --workstream release-1 opencode --executable " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
 	}
@@ -42,11 +42,11 @@ func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
 
 func TestNewWorkstreamStillCreates(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--new", "fresh", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--new", "fresh", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	if strings.TrimSpace(out) != "ai-memory run --new fresh custom-cli" {
+	if strings.TrimSpace(out) != "ai-memory run --new fresh opencode --executable "+stubPath(t, "custom-cli") {
 		t.Fatalf("--new dry-run = %q", out)
 	}
 }
@@ -58,7 +58,7 @@ func TestCliLaunchUsesJailExecProgrammaticMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec " + defaultMountArgv(mounts) + " custom-cli"
+	want := "ai-jail --exec " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("CLI dry-run = %q; want %q", out, want)
 	}
@@ -71,7 +71,22 @@ func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + defaultMountArgv(mounts) + " custom-cli"
+	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
+	if strings.TrimSpace(out) != want {
+		t.Fatalf("dry-run = %q; want %q", out, want)
+	}
+}
+
+func TestV115PermissionFlagsMapToAiJail(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	globalPath, localPath, mounts := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+		"--display", "--pictures", "--tailscale", "--systemd-user", "--mise", "--worktree", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	want := "ai-jail --exec --display --pictures --tailscale --systemd-user --mise --worktree " +
+		defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
 	}
@@ -79,12 +94,14 @@ func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 
 func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: /data\n    mode: ro\n")
+	// Pre-flight stats every mount, so the fixture path has to exist.
+	data := t.TempDir()
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: "+data+"\n    mode: ro\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --map /data custom-cli"
+	want := "ai-jail --exec --map " + data + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q (local mounts replace default_mounts)", out, want)
 	}
@@ -92,6 +109,7 @@ func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 
 func TestMissingDefaultMountsAreSkipped(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	stubToolsOnPath(t, "custom-cli", "ai-jail")
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "present")
 	if err := os.MkdirAll(existing, 0o750); err != nil {
@@ -121,7 +139,7 @@ default_mounts:
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --rw-map " + existing + " custom-cli"
+	want := "ai-jail --exec --rw-map " + existing + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want missing default mounts skipped → %q", out, want)
 	}
@@ -132,12 +150,13 @@ default_mounts:
 
 func TestMountFlagsReplaceDefaultMounts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	custom := t.TempDir()
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--rw-map", "/custom", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--rw-map", custom, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --rw-map /custom custom-cli"
+	want := "ai-jail --exec --rw-map " + custom + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q (flag mounts replace default_mounts)", out, want)
 	}
@@ -191,7 +210,7 @@ func TestSymlinkAutoMountsSkippedWithoutJail(t *testing.T) {
 	}
 	t.Setenv("HOME", fakeHome)
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}

@@ -251,22 +251,7 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 		command = append(command, "--exec")
 	}
 	command = appendJailFlags(command, cfg.JailFlags)
-	if cfg.Permissions["ssh"] {
-		command = append(command, "--ssh")
-	}
-	if cfg.Permissions["gh"] {
-		home := cfg.HomeDir
-		if home == "" {
-			home = os.Getenv("HOME")
-		}
-		command = append(command, "--rw-map", filepathOrEmpty(home, ".config/gh"))
-	}
-	if cfg.Permissions["docker"] {
-		command = append(command, "--docker")
-	}
-	if cfg.Permissions["gpu"] {
-		command = append(command, "--gpu")
-	}
+	command = appendPermissionArgs(command, cfg)
 	for _, mount := range cfg.Mounts {
 		path := strings.TrimSpace(mount.Path)
 		if path == "" {
@@ -281,13 +266,63 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	return command
 }
 
-// jailToggle declares one tri-state ai-jail capability flag. Default-on
-// toggles emit only the --no- form (when explicitly disabled); default-off
-// toggles emit both forms.
+// jailPermission maps a catalog permission id to the ai-jail capability it
+// enables. override names the config.JailFlags field that declares the same
+// capability: when that field is set, the declarative value wins and the
+// permission stays silent, so the argv never contradicts itself with
+// "--no-tailscale --tailscale". mountHome replaces the flag with a read-write
+// map of a path under $HOME (ai-jail has no dedicated flag for it).
+type jailPermission struct {
+	id        string
+	flag      string
+	mountHome string
+	override  func(config.JailFlags) *bool
+}
+
+// jailPermissions lists the permission-driven jail arguments in their stable
+// emission order.
+func jailPermissions() []jailPermission {
+	return []jailPermission{
+		{id: "ssh", flag: "--ssh"},
+		{id: "gh", mountHome: ".config/gh"},
+		{id: "docker", flag: "--docker"},
+		{id: "gpu", flag: "--gpu", override: func(f config.JailFlags) *bool { return f.GPU }},
+		{id: "display", flag: "--display", override: func(f config.JailFlags) *bool { return f.Display }},
+		{id: "pictures", flag: "--pictures"},
+		{id: "tailscale", flag: "--tailscale", override: func(f config.JailFlags) *bool { return f.Tailscale }},
+		{id: "systemd-user", flag: "--systemd-user"},
+		{id: "mise", flag: "--mise", override: func(f config.JailFlags) *bool { return f.Mise }},
+		{id: "worktree", flag: "--worktree", override: func(f config.JailFlags) *bool { return f.Worktree }},
+	}
+}
+
+// appendPermissionArgs emits the jail arguments enabled by the permission map,
+// skipping every capability the declarative jail_flags block already decided.
+func appendPermissionArgs(command []string, cfg LaunchConfig) []string {
+	for _, permission := range jailPermissions() {
+		if !cfg.Permissions[permission.id] {
+			continue
+		}
+		if permission.override != nil && permission.override(cfg.JailFlags) != nil {
+			continue
+		}
+		if permission.mountHome != "" {
+			home := cfg.HomeDir
+			if home == "" {
+				home = os.Getenv("HOME")
+			}
+			command = append(command, "--rw-map", filepathOrEmpty(home, permission.mountHome))
+			continue
+		}
+		command = append(command, permission.flag)
+	}
+	return command
+}
+
+// jailToggle declares one tri-state ai-jail capability flag.
 type jailToggle struct {
-	name      string
-	value     *bool
-	defaultOn bool
+	name  string
+	value *bool
 }
 
 // jailToggles lists the ai-jail v1.15 capability flags in their stable
@@ -297,20 +332,43 @@ func jailToggles(flags config.JailFlags) []jailToggle {
 		{name: "lockdown", value: flags.Lockdown},
 		{name: "private-home", value: flags.PrivateHome},
 		{name: "tailscale", value: flags.Tailscale},
-		{name: "gpu", value: flags.GPU, defaultOn: true},
-		{name: "landlock", value: flags.Landlock, defaultOn: true},
-		{name: "seccomp", value: flags.Seccomp, defaultOn: true},
-		{name: "rlimits", value: flags.Rlimits, defaultOn: true},
-		{name: "status-bar", value: flags.StatusBar, defaultOn: true},
-		{name: "hide-config", value: flags.HideConfig, defaultOn: true},
+		{name: "gpu", value: flags.GPU},
+		{name: "display", value: flags.Display},
+		{name: "mise", value: flags.Mise},
+		{name: "worktree", value: flags.Worktree},
+		{name: "landlock", value: flags.Landlock},
+		{name: "seccomp", value: flags.Seccomp},
+		{name: "rlimits", value: flags.Rlimits},
+		{name: "status-bar", value: flags.StatusBar},
+		{name: "hide-config", value: flags.HideConfig},
 	}
 }
 
+// statusBarStyle normalizes the configured status bar theme, returning "" for
+// unset or unrecognized values (which keeps the StatusBar boolean toggle in
+// charge).
+func statusBarStyle(flags config.JailFlags) string {
+	switch strings.ToLower(strings.TrimSpace(flags.StatusBarStyle)) {
+	case "dark", "light", "pastel":
+		return strings.ToLower(strings.TrimSpace(flags.StatusBarStyle))
+	}
+	return ""
+}
+
 // appendJailFlags maps the declarative jail options to the exact ai-jail
-// v1.15 CLI flags in a deterministic order: toggles, list flags, browser
-// profile, and claude dir.
+// v1.15 CLI flags in a deterministic order: status bar style, toggles, list
+// flags, browser profile, claude dir, and the v1.15 exception lists. A
+// configured status bar style wins over the StatusBar toggle, so --no-status-bar
+// is never emitted together with --status-bar=STYLE.
 func appendJailFlags(command []string, flags config.JailFlags) []string {
+	style := statusBarStyle(flags)
+	if style != "" {
+		command = append(command, "--status-bar="+style)
+	}
 	for _, toggle := range jailToggles(flags) {
+		if toggle.name == "status-bar" && style != "" {
+			continue
+		}
 		command = appendJailToggle(command, toggle)
 	}
 	for _, path := range flags.OverlayMaps {
@@ -331,19 +389,28 @@ func appendJailFlags(command []string, flags config.JailFlags) []string {
 	case "off":
 		command = append(command, "--no-browser")
 	}
-	return appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+	command = appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+	for _, path := range flags.MaskExceptions {
+		command = appendFlagValue(command, "--mask-except", path)
+	}
+	for _, path := range flags.DenyPathExceptions {
+		command = appendFlagValue(command, "--deny-path-except", path)
+	}
+	for _, dir := range flags.HideDotdirs {
+		command = appendFlagValue(command, "--hide-dotdir", dir)
+	}
+	return command
 }
 
-// appendJailToggle emits the positive or negative form of one capability
-// flag; an unset (nil) toggle keeps the ai-jail default and emits nothing.
+// appendJailToggle emits the positive or negative form of one capability flag.
+// An unset (nil) toggle emits nothing, which leaves the capability in ai-jail's
+// auto mode; forcing it on is a different state and must emit the positive
+// form, so neither direction is ever silently dropped.
 func appendJailToggle(command []string, toggle jailToggle) []string {
 	if toggle.value == nil {
 		return command
 	}
 	if *toggle.value {
-		if toggle.defaultOn {
-			return command
-		}
 		return append(command, "--"+toggle.name)
 	}
 	return append(command, "--no-"+toggle.name)
@@ -433,11 +500,23 @@ type Validator struct {
 	// GOOS overrides the platform used by platform-specific checks; empty
 	// means the runtime platform.
 	GOOS string
+	// Permissions is the effective permission catalog, the source of the
+	// platform metadata used by the unsupported-platform check. Empty falls
+	// back to the built-in defaults, so callers that do not load a global
+	// config still get the shipped platform rules.
+	Permissions []config.Permission
 }
 
 // NewValidator returns a Validator backed by the real PATH and filesystem.
 func NewValidator() Validator {
 	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd}
+}
+
+// WithPermissions returns a copy of v that reads platform metadata from the
+// given catalog instead of the built-in defaults.
+func (v Validator) WithPermissions(permissions []config.Permission) Validator {
+	v.Permissions = permissions
+	return v
 }
 
 // Validate returns every issue found in cfg, or an empty slice when the
@@ -469,11 +548,21 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		if _, err := lookPath("ai-memory"); err != nil {
 			issues = append(issues, Issue{Code: "memory-not-found", Message: "ai-memory is required when memory integration is enabled"})
 		}
+		issues = append(issues, memoryHarnessIssues(cfg)...)
 	}
 	issues = append(issues, mountIssues(cfg, stat)...)
-	issues = append(issues, permissionIssues(cfg, onWindows)...)
+	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
 	issues = append(issues, undeclaredParamIssues(cfg)...)
 	return issues
+}
+
+// permissionCatalog returns the catalog backing the platform checks, falling
+// back to the built-in defaults when the caller did not supply one.
+func (v Validator) permissionCatalog() []config.Permission {
+	if len(v.Permissions) > 0 {
+		return v.Permissions
+	}
+	return config.DefaultGlobal().Permissions
 }
 
 // agentIssues reports when the configured agent executable is unavailable.
@@ -490,6 +579,26 @@ func agentIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Issu
 		return []Issue{{Code: "agent-not-found", Message: fmt.Sprintf("%q is not available in PATH", cfg.Agent.Command)}}
 	}
 	return nil
+}
+
+// memoryHarnessIssues rejects a harness `ai-memory run` does not accept. Without
+// it the launcher emits a valid-looking argv and the failure surfaces as an
+// opaque clap error inside the jail, long after the point of diagnosis. A
+// continue session carries no harness at all, so there is nothing to check.
+func memoryHarnessIssues(cfg LaunchConfig) []Issue {
+	if cfg.ContinueSession {
+		return nil
+	}
+	harness := memoryRunHarness(cfg.Agent)
+	if config.SupportsMemoryRunHarness(harness) {
+		return nil
+	}
+	return []Issue{{
+		Code: "memory-harness-unsupported",
+		Message: fmt.Sprintf(
+			"ai-memory run does not accept harness %q (accepted: %s); relaunch with --no-memory, or declare memory.run_harness in the catalog",
+			harness, strings.Join(config.MemoryRunHarnesses(), ", ")),
+	}}
 }
 
 // jailIssues checks the ai-jail dependency, degrading to warnings where the
@@ -565,13 +674,14 @@ func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Iss
 }
 
 // permissionIssues checks the cross-permission dependencies (jail-backed
-// permissions and gpu requiring docker).
-func permissionIssues(cfg LaunchConfig, onWindows bool) []Issue {
+// permissions and gpu requiring docker) and warns about enabled permissions
+// that the host platform does not support.
+func permissionIssues(cfg LaunchConfig, goos string, catalog []config.Permission) []Issue {
 	issues := make([]Issue, 0)
 	if cfg.Permissions["ssh"] || cfg.Permissions["gh"] || cfg.Permissions["docker"] || cfg.Permissions["gpu"] {
 		if !cfg.UseJail {
 			issue := Issue{Code: "permission-without-jail", Message: "ssh, gh, docker, and gpu permissions require ai-jail"}
-			if onWindows {
+			if goos == "windows" {
 				issue.Message = "ssh, gh, docker, and gpu permissions require ai-jail, which is unavailable on Windows; they will be ignored"
 				issue.Warning = true
 			}
@@ -580,6 +690,38 @@ func permissionIssues(cfg LaunchConfig, onWindows bool) []Issue {
 	}
 	if cfg.Permissions["gpu"] && !cfg.Permissions["docker"] {
 		issues = append(issues, Issue{Code: "gpu-without-docker", Message: "gpu permission requires docker"})
+	}
+	issues = append(issues, unsupportedPlatformIssues(cfg, goos, catalog)...)
+	return issues
+}
+
+// unsupportedPlatformIssues warns (never fails) about enabled permissions
+// whose Platforms list excludes goos — for example systemd-user on macOS.
+// Platform metadata comes from the effective catalog; unknown IDs have no
+// restriction.
+func unsupportedPlatformIssues(cfg LaunchConfig, goos string, catalog []config.Permission) []Issue {
+	byID := make(map[string]config.Permission, len(catalog))
+	for _, permission := range catalog {
+		byID[permission.ID] = permission
+	}
+	enabled := make([]string, 0, len(cfg.Permissions))
+	for id, on := range cfg.Permissions {
+		if on {
+			enabled = append(enabled, id)
+		}
+	}
+	sort.Strings(enabled)
+	issues := make([]Issue, 0)
+	for _, id := range enabled {
+		permission, ok := byID[id]
+		if !ok || config.PermissionSupportedOn(permission, goos) {
+			continue
+		}
+		issues = append(issues, Issue{
+			Code:    "unsupported-platform",
+			Message: fmt.Sprintf("permission %s is not supported on %s", id, goos),
+			Warning: true,
+		})
 	}
 	return issues
 }

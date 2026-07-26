@@ -647,3 +647,115 @@ func TestExistingPathsKeepsOnlyPresentEntries(t *testing.T) {
 		t.Fatal("ExistingPaths(nil) must return nil")
 	}
 }
+
+func TestPermissionSupportedOn(t *testing.T) {
+	cases := []struct {
+		name       string
+		permission Permission
+		goos       string
+		want       bool
+	}{
+		{"empty platforms matches every OS", Permission{ID: "ssh"}, "windows", true},
+		{"empty platforms matches linux", Permission{ID: "ssh"}, "linux", true},
+		{"listed OS matches", Permission{ID: "display", Platforms: []string{"linux", "darwin"}}, "darwin", true},
+		{"single listed OS matches", Permission{ID: "systemd-user", Platforms: []string{"linux"}}, "linux", true},
+		{"unlisted OS does not match", Permission{ID: "systemd-user", Platforms: []string{"linux"}}, "darwin", false},
+		{"windows excluded from the desktop pair", Permission{ID: "pictures", Platforms: []string{"linux", "darwin"}}, "windows", false},
+	}
+	for _, tc := range cases {
+		if got := PermissionSupportedOn(tc.permission, tc.goos); got != tc.want {
+			t.Errorf("%s: PermissionSupportedOn(%q, %q) = %t; want %t", tc.name, tc.permission.ID, tc.goos, got, tc.want)
+		}
+	}
+}
+
+func TestDefaultGlobalIncludesV115Permissions(t *testing.T) {
+	byID := make(map[string]Permission)
+	for _, permission := range DefaultGlobal().Permissions {
+		byID[permission.ID] = permission
+	}
+	cases := []struct {
+		id        string
+		def       bool
+		platforms []string
+	}{
+		// display, mise and worktree stay off: ai-jail auto-detects them, and
+		// enabling the permission forces them on rather than mirroring a default.
+		{"display", false, []string{"linux"}},
+		{"pictures", false, []string{"linux", "darwin"}},
+		{"tailscale", false, []string{"linux", "darwin"}},
+		{"systemd-user", false, []string{"linux"}},
+		{"mise", false, nil},
+		{"worktree", false, nil},
+	}
+	for _, tc := range cases {
+		permission, ok := byID[tc.id]
+		if !ok {
+			t.Errorf("DefaultGlobal() missing permission %q", tc.id)
+			continue
+		}
+		if permission.Default != tc.def {
+			t.Errorf("permission %q default = %t; want %t", tc.id, permission.Default, tc.def)
+		}
+		if !reflect.DeepEqual(permission.Platforms, tc.platforms) {
+			t.Errorf("permission %q platforms = %#v; want %#v", tc.id, permission.Platforms, tc.platforms)
+		}
+		if len(permission.Requires) != 1 || permission.Requires[0] != "jail" {
+			t.Errorf("permission %q requires = %#v; want [jail]", tc.id, permission.Requires)
+		}
+	}
+}
+
+func TestMergePermissionsAppendsNewDefaults(t *testing.T) {
+	defaults := DefaultGlobal().Permissions
+	user := []Permission{
+		{ID: "jail", Name: "Custom Jail", Default: true, Locked: true},
+		{ID: "ssh", Name: "SSH access", Default: true, Requires: []string{"jail"}},
+		{ID: "custom", Name: "Custom permission", Default: false},
+	}
+	got := mergePermissions(defaults, user)
+	byID := make(map[string]Permission, len(got))
+	for _, permission := range got {
+		byID[permission.ID] = permission
+	}
+	if byID["jail"].Name != "Custom Jail" {
+		t.Errorf("user jail entry was not preserved: %#v", byID["jail"])
+	}
+	if !byID["ssh"].Default {
+		t.Errorf("user ssh default=true was not preserved: %#v", byID["ssh"])
+	}
+	for _, id := range []string{"display", "pictures", "tailscale", "systemd-user", "mise", "worktree"} {
+		if _, ok := byID[id]; !ok {
+			t.Errorf("new default permission %q missing after merge", id)
+		}
+	}
+	if _, ok := byID["custom"]; !ok {
+		t.Error("user-defined custom permission was dropped")
+	}
+}
+
+func TestMergePermissionsEmptyUserKeepsDefaults(t *testing.T) {
+	defaults := DefaultGlobal().Permissions
+	got := mergePermissions(defaults, nil)
+	if !reflect.DeepEqual(got, defaults) {
+		t.Errorf("mergePermissions(defaults, nil) = %#v; want defaults", got)
+	}
+}
+
+func TestJailFlagsIsZeroCoversV115Fields(t *testing.T) {
+	if !(JailFlags{}).IsZero() {
+		t.Fatal("IsZero() = false for an empty JailFlags")
+	}
+	for name, mutate := range map[string]func(*JailFlags){
+		"mask_exceptions":      func(f *JailFlags) { f.MaskExceptions = []string{"/srv/shared"} },
+		"deny_path_exceptions": func(f *JailFlags) { f.DenyPathExceptions = []string{"/var/cache"} },
+		"hide_dotdirs":         func(f *JailFlags) { f.HideDotdirs = []string{".aws"} },
+		"status_bar_style":     func(f *JailFlags) { f.StatusBarStyle = "dark" },
+	} {
+		var flags JailFlags
+		mutate(&flags)
+		if flags.IsZero() {
+			t.Errorf("IsZero() = true with %s set", name)
+		}
+	}
+}
