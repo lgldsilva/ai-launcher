@@ -84,7 +84,11 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    unresolvable agent, disables the sandbox while the global catalog defaults
    it on, or declares a relative mount or a filesystem root. Global config,
    profiles and command-line flags are trusted; the boundary is around the
-   workspace file.
+   workspace file. The exception is provenance: when the launcher saves the
+   file itself (Ctrl+S / `--save`), it records the file's SHA-256 in the
+   trusted global config (`trusted_local_configs`), and a byte-identical file
+   is honored like operator input. Any later edit changes the hash and the
+   boundary applies again — a cloned repository cannot forge the record.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
 4. **Mandatory checksum on installs**: without a verifiable checksum the
    install fails, unless an explicit `allow_unverified: true` in the recipe.

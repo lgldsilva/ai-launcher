@@ -2,6 +2,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -295,6 +297,11 @@ type Global struct {
 	// to the top. Updated on every successful launch.
 	RecentAgents []string           `yaml:"recent_agents,omitempty"`
 	Profiles     map[string]Profile `yaml:"profiles,omitempty"`
+	// TrustedLocalConfigs holds SHA-256 hashes of local configs the launcher
+	// itself saved. A hash match proves "the operator saved this file", which
+	// a repository-shipped .ai-launch.yaml cannot forge (see ARCHITECTURE
+	// invariant 2b).
+	TrustedLocalConfigs []string `yaml:"trusted_local_configs,omitempty"`
 }
 
 // recentAgentsMax is the cap on the MRU list stored in the global config.
@@ -669,6 +676,84 @@ func SaveRecentAgents(path string, recent []string) error {
 		return fmt.Errorf("encode global config: %w", err)
 	}
 	return writeGlobalAtomically(path, encoded)
+}
+
+// trustedLocalConfigsMax caps the provenance list so a long history of saves
+// cannot grow the global config without bound.
+const trustedLocalConfigsMax = 50
+
+// localConfigHash returns the hex SHA-256 of a local config file's bytes.
+func localConfigHash(path string) (string, error) {
+	b, err := os.ReadFile(path) // #nosec G304 -- path is the user's config location by design
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// LocalConfigTrusted reports whether the local config at path is byte-identical
+// to one the launcher itself saved, proven by a hash recorded in the trusted
+// global config. A repository-shipped .ai-launch.yaml has no recorded hash;
+// editing a saved file changes its hash and revokes the trust.
+func LocalConfigTrusted(global Global, path string) bool {
+	hash, err := localConfigHash(path)
+	if err != nil {
+		return false
+	}
+	for _, trusted := range global.TrustedLocalConfigs {
+		if trusted == hash {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordTrustedLocalConfig notes the content hash of a launcher-saved local
+// config in the global config, leaving every other key in the file untouched
+// (the same discipline as SaveRecentAgents: never write the merged catalog
+// back). This is what lets the next launch honor what the operator saved
+// instead of refusing it as repo-supplied input.
+func RecordTrustedLocalConfig(globalPath, localPath string) error {
+	if globalPath == "" {
+		return errors.New("global config path is empty")
+	}
+	hash, err := localConfigHash(localPath)
+	if err != nil {
+		return fmt.Errorf("hash local config: %w", err)
+	}
+	document := make(map[string]any)
+	b, err := os.ReadFile(globalPath) // #nosec G304 -- path is the user's config location by design
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(b, &document); err != nil {
+			return fmt.Errorf("parse global config %s: %w", globalPath, err)
+		}
+		if document == nil {
+			document = make(map[string]any)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("read global config: %w", err)
+	}
+	var hashes []string
+	if existing, ok := document["trusted_local_configs"].([]any); ok {
+		for _, entry := range existing {
+			if value, ok := entry.(string); ok && value != hash {
+				hashes = append(hashes, value)
+			}
+		}
+	}
+	hashes = append(hashes, hash)
+	if len(hashes) > trustedLocalConfigsMax {
+		hashes = hashes[len(hashes)-trustedLocalConfigsMax:]
+	}
+	document["version"] = CurrentVersion
+	document["trusted_local_configs"] = hashes
+	encoded, err := yaml.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("encode global config: %w", err)
+	}
+	return writeGlobalAtomically(globalPath, encoded)
 }
 
 // writeGlobalAtomically writes the global config through a temporary file with

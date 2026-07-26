@@ -242,10 +242,18 @@ type localTrust struct {
 // and mounts whatever it likes. What the operator types on the command line
 // stays fully trusted — the boundary is around the file, not around the user.
 //
+// savedLocally is true when the file's hash matches one the launcher recorded
+// in the trusted global config at save time: proven proof the operator wrote
+// it, which no cloned repository can forge. Such a file is honored like
+// operator input.
+//
 // Refusal rather than a prompt: a launcher run is routinely non-interactive
 // (scripts, CI, the --dry-run diagnostic), and the plan requires those to
 // refuse. Each refusal names the explicit opt-in that accepts the risk.
-func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust localTrust) error {
+func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust localTrust, savedLocally bool) error {
+	if savedLocally {
+		return nil
+	}
 	if trust.fromFile && strings.TrimSpace(trust.agent) != "" && !trust.agentKnown {
 		return fmt.Errorf("local config selects agent %q, which the catalog cannot resolve; "+
 			"run it explicitly with --agent %s, or register it in the global catalog with --add",
@@ -426,7 +434,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
 	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
 	permissions = catalogue.NormalizePermissions(permissions)
-	if err := enforceLocalConfigTrust(flags, global, trust); err != nil {
+	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
 		return err
 	}
 	mountConfig, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
@@ -675,7 +683,7 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 	if fromTUI {
 		confirmed, err := tui.RunWithHooks(global, launchConfig, tui.Hooks{
 			Save: func(updated launcher.LaunchConfig) error {
-				return saveIfRequested(true, opts.localPath, local, updated)
+				return saveLocalSelection(opts.globalPath, true, opts.localPath, local, updated)
 			},
 			SaveProfile: func(name string, updated launcher.LaunchConfig) error {
 				if err := config.SetProfile(&global, name, profileFromLaunch(updated)); err != nil {
@@ -689,7 +697,7 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 			return classifyTUIError(err)
 		}
 		launchConfig = confirmed
-	} else if err := saveIfRequested(opts.save, opts.localPath, local, launchConfig); err != nil {
+	} else if err := saveLocalSelection(opts.globalPath, opts.save, opts.localPath, local, launchConfig); err != nil {
 		return err
 	} else if opts.save {
 		return nil
@@ -786,6 +794,18 @@ func saveIfRequested(save bool, path string, local config.Local, launch launcher
 	local.Options.ExtraArgs = launch.ExtraArgs
 	local.Options.ParamValues = launch.ParamValues
 	return config.SaveLocal(path, local)
+}
+
+// saveLocalSelection persists the selection and records the written file's
+// hash in the trusted global config. Provenance is what lets the next launch
+// honor the operator's own saved choices (including jail: false) instead of
+// refusing the file as repo-supplied input — the trust boundary is about who
+// wrote the file, and only the launcher can add a hash to the global config.
+func saveLocalSelection(globalPath string, save bool, path string, local config.Local, launch launcher.LaunchConfig) error {
+	if err := saveIfRequested(save, path, local, launch); err != nil || !save {
+		return err
+	}
+	return config.RecordTrustedLocalConfig(globalPath, path)
 }
 
 // symlinkedProjectJailConfig returns a pointer to false when the working
