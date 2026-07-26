@@ -369,6 +369,42 @@ Feature: Launcher command contract
       claude
       """
 
+  Scenario: Emits --fresh as an ai-memory run wrapper flag
+    Given a launch configuration
+      """
+      agent: claude
+      jail: false
+      memory: true
+      fresh: true
+      workstream: release-1
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      release-1
+      --fresh
+      claude
+      """
+
+  Scenario: Rejects --fresh together with --continue
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      continue: true
+      fresh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      fresh-with-continue
+      """
+
   Scenario: Resumes a named workstream through ai-memory run
     Given a launch configuration
       """

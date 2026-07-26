@@ -139,11 +139,11 @@ see **Progress** below for what each closed item shipped.
 | I5 | Minor consistency cluster (4 sub-items) | low | 2 | done |
 | S6 | No upstream version pinning or compatibility probe | medium | 3 | done |
 | F3 | Gaps in the Gherkin contract | medium | 3 | open |
-| I8 | `COVER_PKGS` does not exist; three divergent exclusion lists | medium | 3 | open |
+| I8 | `COVER_PKGS` does not exist; three divergent exclusion lists | medium | 3 | done |
 | F2 | Unmapped ai-jail v1.15 flags | medium | 3 | done except `ro_maps` |
-| F1 | `--fresh` is not exposed | low | 3 | open |
+| F1 | `--fresh` is not exposed | low | 3 | done |
 | F4 | `install.sh` and `.goreleaser.yaml` have no CI gate | medium | 3 | open |
-| F5 | `--executable` points at a host path not mounted in the jail | medium | 3 | open |
+| F5 | `--executable` points at a host path not mounted in the jail | medium | 3 | done |
 | S7 | Hardening and cleanup cluster (12 sub-items) | low | 3 | partial |
 
 ## Progress
@@ -171,6 +171,9 @@ in `--dry-run`). **Phases 1 and 2 are complete**; what remains is Phase 3.
 | F2 | `--mask-except`, `--deny-path-except`, `--hide-dotdir`, `--status-bar=STYLE`, and the `display` / `pictures` / `tailscale` / `systemd-user` / `mise` / `worktree` passthroughs. `JailFlags` booleans now mirror ai-jail's own auto / force-on / force-off model instead of suppressing the positive form, so `jail_flags.gpu: true` stops being a silent no-op | `ro_maps` (a declarative read-only mount key; `--mount PATH:ro` already covers the behavior) |
 | I6 | `mergePermissions` merges the built-in permission catalog with the user's by ID, so a new release's permissions appear without clobbering customizations | `cfg.Agents` is still replaced wholesale, losing `Memory.RunHarness` / `YoloFlag` / `Params`; `SaveGlobal` still runs on every launch with the error ignored |
 | S7 | The flag-precedence sub-item: `appendJailFlags` ran before the permission pass, so `jail_flags.gpu: false` plus permission `gpu` produced `--no-gpu … --gpu` and clap's last-wins discarded the explicit value. Permissions now stay silent for any capability an explicit `jail_flags` entry already decided | the other 11 sub-items |
+| I8 | The boundary is stated once per mechanism and the three agree: the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` (now anchored so `cmd/` no longer swallows `internal/cmd/`), the Makefile `-coverpkg` + awk filter, and `sonar.coverage.exclusions` (now including `internal/selfupdate/**` and `internal/cmd/**`). CI runs `make test-coverage` instead of duplicating the command, and the four stale `COVER_PKGS` references now describe the regex mechanism | nothing |
+| F1 | `--fresh` is a CLI flag, an `Options` field, a TUI toggle, and a wrapper flag emitted before the harness token. Pre-flight rejects `--fresh` combined with `--continue` (`fresh-with-continue`). Covered by unit tests, a build scenario and a validation scenario in the contract, and the README options table | nothing |
+| F5 | With the jail enabled, the launcher maps the directory holding the resolved harness binary read-only (`--map <dir>`) unless a configured mount already covers it — the manual `/opt/homebrew` workaround in this repo's `.ai-jail` is the exact gap this closes. Documented as ARCHITECTURE invariant 10 | nothing |
 
 Two defects found only after the fact are worth recording, because both came
 from modelling upstream from the CLI `--help` instead of the documented

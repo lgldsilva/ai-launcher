@@ -104,8 +104,11 @@ type LaunchConfig struct {
 	Permissions     map[string]bool
 	Mounts          []config.Mount
 	Yolo            bool
-	ExtraArgs       []string
-	ParamValues     map[string]string
+	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
+	// current workstream instead of resuming or adopting one.
+	Fresh       bool
+	ExtraArgs   []string
+	ParamValues map[string]string
 }
 
 // Build returns argv without executing anything. This is deliberately pure so
@@ -127,6 +130,9 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		command = append(command, "ai-memory", "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
+		if cfg.Fresh {
+			command = append(command, "--fresh")
+		}
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
@@ -266,6 +272,7 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	}
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
+	command = appendExecutableMount(command, cfg)
 	for _, mount := range cfg.Mounts {
 		path := strings.TrimSpace(mount.Path)
 		if path == "" {
@@ -278,6 +285,27 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 		}
 	}
 	return command
+}
+
+// appendExecutableMount maps the directory holding the resolved harness binary
+// read-only, unless a configured mount already covers it. `--executable` names
+// a host path that has to exist *inside* the sandbox; nothing mounted it, so
+// the argv pointed at a binary the agent could not reach and operators worked
+// around it by hand (the .ai-jail in this repo carries /opt/homebrew for
+// exactly that reason). Read-only is enough: the agent runs it, never writes it.
+func appendExecutableMount(command []string, cfg LaunchConfig) []string {
+	executable := strings.TrimSpace(cfg.Executable)
+	if executable == "" || !filepath.IsAbs(executable) {
+		return command
+	}
+	dir := filepath.Dir(executable)
+	if dir == "" || dir == string(filepath.Separator) {
+		return command
+	}
+	if coveredByMounts(dir, cfg.Mounts) {
+		return command
+	}
+	return append(command, "--map", dir)
 }
 
 // jailPermission maps a catalog permission id to the ai-jail capability it
@@ -568,6 +596,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues = append(issues, permissionIssues(cfg, goos, v.permissionCatalog())...)
 	issues = append(issues, undeclaredParamIssues(cfg)...)
 	issues = append(issues, continueIssues(cfg)...)
+	issues = append(issues, freshIssues(cfg)...)
 	return issues
 }
 
@@ -633,6 +662,20 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 	// option had been configured at all.
 	if !cfg.JailFlags.IsZero() {
 		return []Issue{{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true}}
+	}
+	return nil
+}
+
+// freshIssues rejects asking to resume and to start fresh at the same time.
+// --continue resumes the most recent session; --fresh starts a new one in the
+// current workstream. Letting ai-memory arbitrate would make the outcome depend
+// on flag order rather than on what the operator asked for.
+func freshIssues(cfg LaunchConfig) []Issue {
+	if cfg.Fresh && cfg.ContinueSession {
+		return []Issue{{
+			Code:    "fresh-with-continue",
+			Message: "--fresh starts a new session and --continue resumes the most recent one; pick one",
+		}}
 	}
 	return nil
 }

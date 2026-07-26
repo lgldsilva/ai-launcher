@@ -117,6 +117,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    dotfile symlink target that resolves outside `$HOME` as `--rw-map`
    (`internal/launcher/symlink.go`), skipping targets already covered by a
    configured mount.
+10. **The harness binary must be reachable inside the jail**: `--executable`
+    names an absolute host path, and ai-jail hides everything not explicitly
+    mapped. With the jail enabled, the launcher maps the directory holding
+    the resolved binary read-only (`--map <dir>`), unless a configured mount
+    already covers it. Read-only is sufficient: the agent executes the
+    binary, it never writes it.
 
 ## Configuration (summary)
 
@@ -135,9 +141,9 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | `recent_agents[]` | list | Most-recently-used agent commands (newest first); the TUI lists installed agents in this order |
 
 Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
-(`path`/`mode`), and `options`: `jail`, `memory`, `yolo`, `new_workstream`,
-`workstream`, `workspace`, `project`, `jail_flags`, `extra_args`,
-`param_values`.
+(`path`/`mode`), and `options`: `jail`, `memory`, `yolo`, `fresh`,
+`new_workstream`, `workstream`, `workspace`, `project`, `jail_flags`,
+`extra_args`, `param_values`.
 
 ### Permission → jail argv (implementation)
 

@@ -40,6 +40,14 @@ func stubPath(t *testing.T, name string) string {
 	return path
 }
 
+// execMountArgv is the read-only map of the directory holding the resolved
+// harness. --executable names a host path that has to exist inside the sandbox,
+// so the launcher mounts its directory.
+func execMountArgv(t *testing.T, name string) string {
+	t.Helper()
+	return "--map " + filepath.Dir(stubPath(t, name))
+}
+
 // writeTestConfigs creates a global config with a custom harness and two
 // profiles plus a local config. The returned mounts are three existing
 // directories used as default_mounts so tests stay independent of the host OS

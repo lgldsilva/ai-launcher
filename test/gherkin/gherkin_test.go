@@ -38,6 +38,7 @@ type launchSpec struct {
 	JailFlags     config.JailFlags  `yaml:"jail_flags"`
 	Memory        bool              `yaml:"memory"`
 	Continue      bool              `yaml:"continue"`
+	Fresh         bool              `yaml:"fresh"`
 	NewWorkstream string            `yaml:"new_workstream"`
 	Workstream    string            `yaml:"workstream"`
 	Workspace     string            `yaml:"workspace"`
@@ -201,6 +202,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		JailFlags:       spec.JailFlags,
 		UseMemory:       spec.Memory,
 		ContinueSession: spec.Continue,
+		Fresh:           spec.Fresh,
 		NewWorkstream:   spec.NewWorkstream,
 		Workstream:      spec.Workstream,
 		Workspace:       spec.Workspace,

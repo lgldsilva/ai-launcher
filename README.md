@@ -244,6 +244,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--new <name>` / `--workstream <name>` | Creates / resumes an ai-memory workstream |
 | `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
 | `--continue` | Continues the last ai-memory session of this checkout |
+| `--fresh` | Starts a new ai-memory session in the current workstream instead of resuming one (mutually exclusive with `--continue`) |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |

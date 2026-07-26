@@ -63,6 +63,7 @@ type cliOptions struct {
 	noJail, sandbox                bool
 	memory, noMemory               bool
 	yolo, noYolo                   bool
+	fresh                          bool
 	dryRun, save, install, upgrade bool
 	listProfiles                   bool
 	continueSession                bool
@@ -86,6 +87,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
 	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
 	flags.BoolVar(&o.yolo, "yolo", false, "pass the dangerous-mode flag to the agent")
+	flags.BoolVar(&o.fresh, "fresh", false, "start a new ai-memory session in the current workstream instead of resuming one")
 	flags.BoolVar(&o.noYolo, "no-yolo", false, "do not pass the dangerous-mode flag to the agent")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "print the generated command")
 	flags.BoolVar(&o.save, "save", false, "save local configuration and exit")
@@ -136,6 +138,9 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 	// this one to "only ever disable" made --no-memory=false silently inert.
 	if flagsWasSet(flags, "no-memory") {
 		local.Options.Memory = !o.noMemory
+	}
+	if flagsWasSet(flags, "fresh") {
+		local.Options.Fresh = o.fresh
 	}
 	if flagsWasSet(flags, "yolo") {
 		local.Options.Yolo = o.yolo
@@ -446,6 +451,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		Permissions:     permissions,
 		Mounts:          mountConfig,
 		Yolo:            local.Options.Yolo,
+		Fresh:           local.Options.Fresh,
 		ExtraArgs:       local.Options.ExtraArgs,
 		ParamValues:     local.Options.ParamValues,
 	}
@@ -616,6 +622,7 @@ func profileFromLaunch(launch launcher.LaunchConfig) config.Profile {
 			Jail:          launch.UseJail,
 			Memory:        launch.UseMemory,
 			Yolo:          launch.Yolo,
+			Fresh:         launch.Fresh,
 			NewWorkstream: launch.NewWorkstream,
 			Workstream:    launch.Workstream,
 			Workspace:     launch.Workspace,
@@ -755,6 +762,7 @@ func saveIfRequested(save bool, path string, local config.Local, launch launcher
 	local.Options.Jail = launch.UseJail
 	local.Options.Memory = launch.UseMemory
 	local.Options.Yolo = launch.Yolo
+	local.Options.Fresh = launch.Fresh
 	local.Options.NewWorkstream = launch.NewWorkstream
 	local.Options.Workstream = launch.Workstream
 	local.Options.Workspace = launch.Workspace

@@ -312,6 +312,7 @@ func (m *Model) optionRows() []optionRow {
 		optionRow{name: "ai-memory", on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
 		optionRow{name: "New workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
 		optionRow{name: "--yolo", on: m.launch.Yolo, toggle: func(m *Model) { m.launch.Yolo = !m.launch.Yolo }},
+		optionRow{name: "--fresh", on: m.launch.Fresh, toggle: func(m *Model) { m.launch.Fresh = !m.launch.Fresh }},
 	)
 }
 
@@ -725,6 +726,7 @@ func (m *Model) loadProfile(name string) {
 		m.launch.UseJail = profile.Options.Jail && !isWindows()
 		m.launch.UseMemory = profile.Options.Memory
 		m.launch.Yolo = profile.Options.Yolo
+		m.launch.Fresh = profile.Options.Fresh
 		m.launch.NewWorkstream = profile.Options.NewWorkstream
 		m.launch.Workstream = profile.Options.Workstream
 		m.launch.Workspace = profile.Options.Workspace
