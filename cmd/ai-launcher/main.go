@@ -108,8 +108,11 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 }
 
 // applyToLocal folds every explicitly-set flag into the local configuration
-// and returns the effective mount list (flag mounts replace configured ones).
-func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local) ([]config.Mount, error) {
+// and returns the effective mount list. Flag mounts replace configured ones;
+// when neither flags nor the local/profile config define any mount, the
+// global default_mounts are suggested (read-write by default, with the same
+// optional :ro/:rw suffix as --mount).
+func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defaultMounts []string) ([]config.Mount, error) {
 	if flagsWasSet(flags, "no-jail") {
 		local.Options.Jail = !o.noJail
 	}
@@ -147,6 +150,10 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local) ([]c
 			mountConfig = append(mountConfig, parseMount(value, "ro"))
 		}
 		for _, value := range o.rwMounts {
+			mountConfig = append(mountConfig, parseMount(value, "rw"))
+		}
+	} else if len(mountConfig) == 0 {
+		for _, value := range defaultMounts {
 			mountConfig = append(mountConfig, parseMount(value, "rw"))
 		}
 	}
@@ -265,7 +272,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
 	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
 	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
-	mountConfig, err := opts.applyToLocal(flags, &local)
+	mountConfig, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
 	if err != nil {
 		return err
 	}
@@ -300,6 +307,14 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	launchConfig, platformIssues = launcher.ConstrainToPlatform(launchConfig, runtime.GOOS, global.Permissions)
 	for _, issue := range platformIssues {
 		_, _ = fmt.Fprintln(errOut, "warning:", issue)
+	}
+	if launchConfig.UseJail {
+		// ai-jail recreates home dotfile symlinks inside the sandbox without
+		// their targets; mount the resolved targets so they keep resolving.
+		launchConfig.Mounts = launcher.MergeAutoMounts(launchConfig.Mounts, launcher.HomeSymlinkMounts(home))
+		if launchConfig.JailFlags.HideConfig == nil {
+			launchConfig.JailFlags.HideConfig = symlinkedProjectJailConfig()
+		}
 	}
 	if opts.saveProfile != "" {
 		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
@@ -555,6 +570,24 @@ func saveIfRequested(save bool, path string, local config.Local, launch launcher
 	local.Options.ExtraArgs = launch.ExtraArgs
 	local.Options.ParamValues = launch.ParamValues
 	return config.SaveLocal(path, local)
+}
+
+// symlinkedProjectJailConfig returns a pointer to false when the working
+// directory's .ai-jail file is a symlink, nil otherwise. ai-jail's default
+// --hide-config masks <project>/.ai-jail with a bind mount, which bwrap
+// cannot create over a symlink ("Can't create file ... No such file or
+// directory"), so the mask must be disabled for that project.
+func symlinkedProjectJailConfig() *bool {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	info, err := os.Lstat(filepath.Join(wd, ".ai-jail"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	disable := false
+	return &disable
 }
 
 func parseMount(value, defaultMode string) config.Mount {

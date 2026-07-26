@@ -283,6 +283,23 @@ Feature: Launcher command contract
       claude
       """
 
+  Scenario: Emits --no-hide-config when the project config mask is disabled
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        hide_config: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-hide-config
+      claude
+      """
+
   Scenario: Resumes a named workstream through ai-memory run
     Given a launch configuration
       """

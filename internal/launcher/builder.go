@@ -283,6 +283,7 @@ func jailToggles(flags config.JailFlags) []jailToggle {
 		{name: "seccomp", value: flags.Seccomp, defaultOn: true},
 		{name: "rlimits", value: flags.Rlimits, defaultOn: true},
 		{name: "status-bar", value: flags.StatusBar, defaultOn: true},
+		{name: "hide-config", value: flags.HideConfig, defaultOn: true},
 	}
 }
 
