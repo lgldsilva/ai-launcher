@@ -11,3 +11,4 @@ coverage.html
 .agents/
 .codex/
 .ai-jail
+internal/**/testdata/rapid/
