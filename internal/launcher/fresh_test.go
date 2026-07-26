@@ -108,3 +108,20 @@ func TestExecutableInsideAConfiguredMountIsNotRemounted(t *testing.T) {
 		t.Fatalf("Build() = %#v; want %#v", got, want)
 	}
 }
+
+// A relative or empty --executable names nothing mountable; the auto-mount
+// only applies to absolute host paths.
+func TestRelativeExecutableGetsNoAutoMount(t *testing.T) {
+	got, err := Build(LaunchConfig{
+		Agent:      config.Agent{Command: "claude"},
+		Executable: "bin/claude",
+		UseJail:    true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	want := []string{"ai-jail", "bin/claude"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v; want %#v (no mount for a relative executable)", got, want)
+	}
+}

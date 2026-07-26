@@ -116,7 +116,9 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    the sandbox). With the jail enabled, the launcher mounts every home
    dotfile symlink target that resolves outside `$HOME` as `--rw-map`
    (`internal/launcher/symlink.go`), skipping targets already covered by a
-   configured mount.
+   configured mount. A denylist refuses filesystem roots and system trees
+   (`/`, `/etc`, `/usr`, `/var`, `/System`, `/private/*`, …): a refused
+   target is never mounted and is reported by name as a pre-flight warning.
 10. **The harness binary must be reachable inside the jail**: `--executable`
     names an absolute host path, and ai-jail hides everything not explicitly
     mapped. With the jail enabled, the launcher maps the directory holding

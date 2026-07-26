@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,6 +257,33 @@ func TestRealProjectJailConfigKeepsHideConfig(t *testing.T) {
 	}
 	if strings.Contains(out, "hide-config") {
 		t.Fatalf("dry-run = %q; a real .ai-jail file keeps the ai-jail default mask", out)
+	}
+}
+
+// Disabling the project's config mask because .ai-jail is a symlink is a
+// policy downgrade: it must be announced, naming the file and the effect,
+// not applied silently.
+func TestSymlinkedProjectJailConfigWarnsWhenDisablingHideConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	target := filepath.Join(dir, "ai-jail.toml")
+	if err := os.WriteFile(target, []byte("# jail config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, ".ai-jail")); err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, dir)
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	var out, errOut bytes.Buffer
+	err := run([]string{"--config", globalPath, "--local-config", localPath, "--dry-run"}, strings.NewReader(""), &out, &errOut)
+	restore()
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	warning := errOut.String()
+	if !strings.Contains(warning, ".ai-jail") || !strings.Contains(warning, "hide-config") {
+		t.Fatalf("stderr = %q; want a warning naming .ai-jail and hide-config", warning)
 	}
 }
 
