@@ -94,6 +94,13 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
 8. **No downloads inside the jail**: when the managed ai-memory native runner
    exists, the launcher exports `AI_MEMORY_NATIVE_BIN` so the memory wrapper
    uses it directly.
+9. **Home symlink targets ride along**: ai-jail rebuilds `$HOME` as a tmpfs
+   and recreates dotfile symlinks without their targets, leaving them
+   dangling (for example `~/.cache -> /storage/cache` with no `/storage` in
+   the sandbox). With the jail enabled, the launcher mounts every home
+   dotfile symlink target that resolves outside `$HOME` as `--rw-map`
+   (`internal/launcher/symlink.go`), skipping targets already covered by a
+   configured mount.
 
 ## Configuration (summary)
 
@@ -107,7 +114,7 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | `agents[]` | list | `name`, `command`, `aliases`, `path`, `supports_memory`, `supports_yolo`, `yolo_flag`, `params[]` (`name`/`flag`/`takes_value`), `release` (GitHub recipe), `memory` (MCP/hooks adapter), `source_url` |
 | `tools[]` | list | Auxiliary tool recipes (ai-jail, ai-memory) |
 | `permissions[]` | list | `id`, `name`, `default`, `locked`, `requires` |
-| `default_mounts[]` | list | Mounts suggested in new selections |
+| `default_mounts[]` | list | Mounts suggested when neither the local config/profile nor `--mount`/`--map`/`--rw-map` define any; read-write by default, with the same optional `:ro`/`:rw` suffix as `--mount`. Pre-selected in the TUI mount manager (removable) |
 | `profiles{}` | map | Named selection snapshots (`agent`, `permissions`, `mounts`, `options`) |
 
 Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
@@ -117,9 +124,10 @@ Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
 
 `jail_flags` mirrors the ai-jail v1.15 toggles with tri-state booleans
 (absent = ai-jail default): `lockdown`, `private_home`, `tailscale`, `gpu`,
-`landlock`, `seccomp`, `rlimits`, `status_bar`, `browser`
+`landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `browser`
 (`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `deny_paths`,
-`allow_tcp_ports`.
+`allow_tcp_ports`. When unset, `hide_config` is auto-disabled for projects
+whose `.ai-jail` is a symlink (bwrap cannot mask a symlink).
 
 ## Build metadata vs. config schema
 

@@ -106,8 +106,9 @@ type Mount struct {
 // JailFlags holds the ai-jail v1.15 capability toggles. Pointer booleans are
 // tri-state: nil keeps the ai-jail default (no flag emitted), while true and
 // false emit the positive or --no- form respectively. Default-on capabilities
-// (GPU, Landlock, Seccomp, Rlimits, StatusBar) only emit the --no- form when
-// explicitly disabled. Browser accepts "hard", "soft", or "off".
+// (GPU, Landlock, Seccomp, Rlimits, StatusBar, HideConfig) only emit the
+// --no- form when explicitly disabled. Browser accepts "hard", "soft", or
+// "off".
 type JailFlags struct {
 	Lockdown      *bool    `yaml:"lockdown,omitempty"`
 	PrivateHome   *bool    `yaml:"private_home,omitempty"`
@@ -117,6 +118,7 @@ type JailFlags struct {
 	Seccomp       *bool    `yaml:"seccomp,omitempty"`
 	Rlimits       *bool    `yaml:"rlimits,omitempty"`
 	StatusBar     *bool    `yaml:"status_bar,omitempty"`
+	HideConfig    *bool    `yaml:"hide_config,omitempty"`
 	Browser       string   `yaml:"browser,omitempty"`
 	ClaudeDir     string   `yaml:"claude_dir,omitempty"`
 	OverlayMaps   []string `yaml:"overlay_maps,omitempty"`
@@ -129,7 +131,7 @@ type JailFlags struct {
 func (f JailFlags) IsZero() bool {
 	return f.Lockdown == nil && f.PrivateHome == nil && f.Tailscale == nil &&
 		f.GPU == nil && f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
-		f.StatusBar == nil && f.Browser == "" && f.ClaudeDir == "" &&
+		f.StatusBar == nil && f.HideConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
 		len(f.AllowTCPPorts) == 0
 }

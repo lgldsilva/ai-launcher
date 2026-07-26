@@ -48,11 +48,12 @@ func TestBuildMapsDefaultOffTogglesInBothForms(t *testing.T) {
 
 func TestBuildMapsDefaultOnTogglesOnlyWhenDisabled(t *testing.T) {
 	for name, toggle := range map[string]func(*config.JailFlags) **bool{
-		"--no-gpu":        func(f *config.JailFlags) **bool { return &f.GPU },
-		"--no-landlock":   func(f *config.JailFlags) **bool { return &f.Landlock },
-		"--no-seccomp":    func(f *config.JailFlags) **bool { return &f.Seccomp },
-		"--no-rlimits":    func(f *config.JailFlags) **bool { return &f.Rlimits },
-		"--no-status-bar": func(f *config.JailFlags) **bool { return &f.StatusBar },
+		"--no-gpu":         func(f *config.JailFlags) **bool { return &f.GPU },
+		"--no-landlock":    func(f *config.JailFlags) **bool { return &f.Landlock },
+		"--no-seccomp":     func(f *config.JailFlags) **bool { return &f.Seccomp },
+		"--no-rlimits":     func(f *config.JailFlags) **bool { return &f.Rlimits },
+		"--no-status-bar":  func(f *config.JailFlags) **bool { return &f.StatusBar },
+		"--no-hide-config": func(f *config.JailFlags) **bool { return &f.HideConfig },
 	} {
 		var flags config.JailFlags
 		*toggle(&flags) = boolPtr(false)
