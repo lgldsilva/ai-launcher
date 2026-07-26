@@ -213,9 +213,9 @@ func (f JailFlags) IsZero() bool {
 
 // Options holds the per-launch behavior toggles persisted in the local config.
 type Options struct {
-	Jail          bool              `yaml:"jail"`
-	Memory        bool              `yaml:"memory"`
-	Yolo bool `yaml:"yolo"`
+	Jail   bool `yaml:"jail"`
+	Memory bool `yaml:"memory"`
+	Yolo   bool `yaml:"yolo"`
 	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
 	// current workstream instead of resuming or adopting one.
 	Fresh         bool              `yaml:"fresh,omitempty"`

@@ -113,7 +113,7 @@ func runValidationScenario(t *testing.T, scenario featureScenario) bool {
 	if !ok {
 		t.Fatal("validation scenario must define expected issue codes")
 	}
-	if got, want := issueCodes(issues), nonEmptyLines(expected.doc); !reflect.DeepEqual(got, want) && !(len(got) == 0 && len(want) == 0) {
+	if got, want := issueCodes(issues), nonEmptyLines(expected.doc); !reflect.DeepEqual(got, want) && (len(got) != 0 || len(want) != 0) {
 		t.Fatalf("Validate() issue codes = %#v; want %#v", got, want)
 	}
 	return true
