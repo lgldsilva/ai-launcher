@@ -63,18 +63,21 @@ const legacyMemoryServerURL = "https://aimemory.raspberrypi.lan"
 
 // Agent describes a launchable AI agent CLI and its optional integrations.
 type Agent struct {
-	Name           string             `yaml:"name"`
-	Command        string             `yaml:"command"`
-	Aliases        []string           `yaml:"aliases,omitempty"`
-	Path           string             `yaml:"path,omitempty"`
-	SourceURL      string             `yaml:"source_url,omitempty"`
-	SupportsMemory bool               `yaml:"supports_memory"`
-	SupportsYolo   bool               `yaml:"supports_yolo"`
-	Description    string             `yaml:"description,omitempty"`
-	YoloFlag       string             `yaml:"yolo_flag,omitempty"`
-	Params         []Param            `yaml:"params,omitempty"`
-	Release        *GitHubRelease     `yaml:"release,omitempty"`
-	Memory         *MemoryIntegration `yaml:"memory,omitempty"`
+	Name      string   `yaml:"name"`
+	Command   string   `yaml:"command"`
+	Aliases   []string `yaml:"aliases,omitempty"`
+	Path      string   `yaml:"path,omitempty"`
+	SourceURL string   `yaml:"source_url,omitempty"`
+	// AllowUnverified permits the checksum-less source_url install path.
+	// Without it a source_url recipe is refused (ARCHITECTURE invariant 4).
+	AllowUnverified bool               `yaml:"allow_unverified,omitempty"`
+	SupportsMemory  bool               `yaml:"supports_memory"`
+	SupportsYolo    bool               `yaml:"supports_yolo"`
+	Description     string             `yaml:"description,omitempty"`
+	YoloFlag        string             `yaml:"yolo_flag,omitempty"`
+	Params          []Param            `yaml:"params,omitempty"`
+	Release         *GitHubRelease     `yaml:"release,omitempty"`
+	Memory          *MemoryIntegration `yaml:"memory,omitempty"`
 }
 
 // Param declares a harness-specific CLI flag in the catalog so new agents or
@@ -121,13 +124,16 @@ type MemoryIntegration struct {
 // Tool describes an auxiliary CLI (for example ai-jail or ai-memory) that the
 // launcher can install on demand.
 type Tool struct {
-	Name        string         `yaml:"name"`
-	Command     string         `yaml:"command"`
-	Aliases     []string       `yaml:"aliases,omitempty"`
-	Path        string         `yaml:"path,omitempty"`
-	SourceURL   string         `yaml:"source_url,omitempty"`
-	Description string         `yaml:"description,omitempty"`
-	Release     *GitHubRelease `yaml:"release,omitempty"`
+	Name      string   `yaml:"name"`
+	Command   string   `yaml:"command"`
+	Aliases   []string `yaml:"aliases,omitempty"`
+	Path      string   `yaml:"path,omitempty"`
+	SourceURL string   `yaml:"source_url,omitempty"`
+	// AllowUnverified permits the checksum-less source_url install path.
+	// Without it a source_url recipe is refused (ARCHITECTURE invariant 4).
+	AllowUnverified bool           `yaml:"allow_unverified,omitempty"`
+	Description     string         `yaml:"description,omitempty"`
+	Release         *GitHubRelease `yaml:"release,omitempty"`
 }
 
 // Permission is a toggleable capability with optional dependencies on other
@@ -462,8 +468,8 @@ func DefaultGlobal() Global {
 				},
 			},
 			{
-				Name: "ai-memory", Command: "ai-memory", SourceURL: "https://raw.githubusercontent.com/akitaonrails/ai-memory/main/bin/ai-memory",
-				Description: "Memory wrapper; the source_url wrapper stays the primary install path and the native runner self-updates on first use",
+				Name: "ai-memory", Command: "ai-memory",
+				Description: "Memory wrapper; installed from the checksum-verified release assets and the native runner self-updates on first use",
 				Release: &GitHubRelease{
 					Repository: "akitaonrails/ai-memory",
 					// Native per-platform runners (used on Windows, where the

@@ -40,8 +40,10 @@ func TestDefaultGlobalJailRecipeMatchesPublishedAssets(t *testing.T) {
 		t.Errorf("ai-memory assets = %#v; want %#v", got, want)
 	}
 	for _, tool := range global.Tools {
-		if tool.Command == "ai-memory" && tool.SourceURL == "" {
-			t.Error("ai-memory must keep the source_url wrapper as the primary install path")
+		// The default catalog declares no unverified fallback: every tool
+		// installs from checksum-verified release assets (invariant 4).
+		if tool.SourceURL != "" {
+			t.Errorf("tool %q declares a checksum-less source_url in the default catalog", tool.Command)
 		}
 	}
 }

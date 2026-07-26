@@ -35,14 +35,15 @@ const nativeRunnerManagedPath = "~/.local/share/ai-launcher/bin/ai-memory"
 var installNativeRunner = installNativeMemoryRunner
 
 type installTarget struct {
-	Name        string
-	Command     string
-	Aliases     []string
-	Path        string
-	SourceURL   string
-	Release     *config.GitHubRelease
-	Memory      *config.MemoryIntegration
-	NeedsMemory bool
+	Name            string
+	Command         string
+	Aliases         []string
+	Path            string
+	SourceURL       string
+	AllowUnverified bool
+	Release         *config.GitHubRelease
+	Memory          *config.MemoryIntegration
+	NeedsMemory     bool
 }
 
 type installLog struct {
@@ -219,8 +220,14 @@ func installNativeMemoryRunner(client *installer.Installer, target installTarget
 
 // installWithoutRecipe handles targets with no usable GitHub release recipe:
 // either a trusted source URL download, or an already-available executable.
+// The source path validates nothing beyond an HTTPS scheme and a shebang, so
+// invariant 4 requires an explicit allow_unverified: true in the recipe —
+// anything else refuses instead of fetching from a mutable URL.
 func installWithoutRecipe(client *installer.Installer, target installTarget, selected string, force bool, out, errOut io.Writer, trace *installLog) (string, error) {
 	if target.SourceURL != "" {
+		if !target.AllowUnverified {
+			return "", fmt.Errorf("%s: source_url installs carry no checksum; set allow_unverified: true in the recipe to accept that, or add a release recipe", target.Name)
+		}
 		result, err := client.InstallSource(context.Background(), target.Name, target.Command, target.Path, target.SourceURL, force)
 		if err != nil {
 			trace.Printf("source install failed name=%q error=%v", target.Name, err)
@@ -282,17 +289,17 @@ func configuredInstallTargets(global config.Global, selected string) []installTa
 		}
 	}
 	for _, agent := range global.Agents {
-		appendTarget(installTarget{Name: agent.Name, Command: agent.Command, Aliases: agent.Aliases, Path: agent.Path, SourceURL: agent.SourceURL, Release: agent.Release, Memory: agent.Memory, NeedsMemory: agent.SupportsMemory})
+		appendTarget(installTarget{Name: agent.Name, Command: agent.Command, Aliases: agent.Aliases, Path: agent.Path, SourceURL: agent.SourceURL, AllowUnverified: agent.AllowUnverified, Release: agent.Release, Memory: agent.Memory, NeedsMemory: agent.SupportsMemory})
 	}
 	for _, tool := range global.Tools {
-		appendTarget(installTarget{Name: tool.Name, Command: tool.Command, Aliases: tool.Aliases, Path: tool.Path, SourceURL: tool.SourceURL, Release: tool.Release})
+		appendTarget(installTarget{Name: tool.Name, Command: tool.Command, Aliases: tool.Aliases, Path: tool.Path, SourceURL: tool.SourceURL, AllowUnverified: tool.AllowUnverified, Release: tool.Release})
 	}
 	if selected != "" && !containsInstallTarget(result, "ai-memory") {
 		for _, target := range result {
 			if target.Memory != nil || target.NeedsMemory {
 				for _, tool := range global.Tools {
 					if tool.Command == "ai-memory" {
-						result = append(result, installTarget{Name: tool.Name, Command: tool.Command, Aliases: tool.Aliases, Path: tool.Path, SourceURL: tool.SourceURL, Release: tool.Release})
+						result = append(result, installTarget{Name: tool.Name, Command: tool.Command, Aliases: tool.Aliases, Path: tool.Path, SourceURL: tool.SourceURL, AllowUnverified: tool.AllowUnverified, Release: tool.Release})
 					}
 				}
 				break
