@@ -514,11 +514,22 @@ Environment overrides:
 		}
 		return err
 	}
+	apiBase := envOr("AI_LAUNCHER_UPDATE_API", selfupdate.DefaultAPIBaseURL)
+	downloadBase := envOr("AI_LAUNCHER_UPDATE_URL", selfupdate.DefaultDownloadBaseURL)
+	token := os.Getenv("AI_LAUNCHER_UPDATE_TOKEN")
+	// Fail closed: the endpoint overrides come from the environment, so a
+	// hostile parent process could redirect the update flow to its own host.
+	// The Bearer token is only ever sent to the default release host; with an
+	// overridden endpoint it is withheld (and said so) rather than exfiltrated.
+	if token != "" && (apiBase != selfupdate.DefaultAPIBaseURL || downloadBase != selfupdate.DefaultDownloadBaseURL) {
+		_, _ = fmt.Fprintln(errOut, "warning: AI_LAUNCHER_UPDATE_TOKEN withheld: the update endpoint is overridden and the token is only sent to the default release host")
+		token = ""
+	}
 	updater := &selfupdate.Updater{
 		CurrentVersion:  version,
-		APIBaseURL:      envOr("AI_LAUNCHER_UPDATE_API", selfupdate.DefaultAPIBaseURL),
-		DownloadBaseURL: envOr("AI_LAUNCHER_UPDATE_URL", selfupdate.DefaultDownloadBaseURL),
-		Token:           os.Getenv("AI_LAUNCHER_UPDATE_TOKEN"),
+		APIBaseURL:      apiBase,
+		DownloadBaseURL: downloadBase,
+		Token:           token,
 	}
 	ctx := context.Background()
 	tag, err := upgradeResolveTag(ctx, updater, *wantVersion)
