@@ -10,16 +10,17 @@
 #   ./install.sh --bin-dir /opt/bin     # install somewhere else
 #
 # Env overrides: AI_LAUNCHER_API, AI_LAUNCHER_DOWNLOAD_BASE,
-# AI_LAUNCHER_INSTALL_DIR
+# AI_LAUNCHER_INSTALL_DIR, AI_LAUNCHER_UPDATE_TOKEN (or GITHUB_TOKEN).
 #
-# Note: while the repository is PRIVATE this script cannot download release
-# assets (the pretty download URLs 404). Use `ai-launcher upgrade` with
-# AI_LAUNCHER_UPDATE_TOKEN instead, which fetches assets through the API.
+# Default path uses public release download URLs. When those fail and a token
+# is set, assets are fetched via the GitHub assets API (private forks/mirrors).
+# The token is never printed.
 set -eu
 
 API="${AI_LAUNCHER_API:-https://api.github.com/repos/lgldsilva/ai-launcher}"
 DL_BASE="${AI_LAUNCHER_DOWNLOAD_BASE:-https://github.com/lgldsilva/ai-launcher/releases/download}"
 BIN_DIR="${AI_LAUNCHER_INSTALL_DIR:-$HOME/.local/bin}"
+TOKEN="${AI_LAUNCHER_UPDATE_TOKEN:-${GITHUB_TOKEN:-}}"
 VERSION=""
 
 die() { echo "install: $*" >&2; exit 1; }
@@ -28,12 +29,31 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="${2:?--version requires a value}"; shift 2 ;;
     --bin-dir) BIN_DIR="${2:?--bin-dir requires a value}"; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
 
 command -v curl >/dev/null 2>&1 || die "curl is required"
+
+# curl_auth URL ACCEPT OUTFILE — optional Bearer auth; never logs TOKEN.
+curl_auth() {
+  _url="$1"
+  _accept="$2"
+  _out="$3"
+  if [ -n "$TOKEN" ]; then
+    curl -fsSL \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Accept: ${_accept}" \
+      -H "User-Agent: ai-launcher-install" \
+      -o "$_out" "$_url"
+  else
+    curl -fsSL \
+      -H "Accept: ${_accept}" \
+      -H "User-Agent: ai-launcher-install" \
+      -o "$_out" "$_url"
+  fi
+}
 
 detect_os() {
   case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
@@ -55,6 +75,10 @@ detect_arch() {
 # suffix, e.g. v0.2.0-rc.1) are skipped unless nothing else remains.
 pick_highest() {
   tags="$(grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4 || true)"
+  # also handle pretty-printed "tag_name": "v1.2.3"
+  if [ -z "$tags" ]; then
+    tags="$(grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  fi
   stable="$(echo "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true)"
   if [ -z "$stable" ]; then
     stable="$(echo "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' || true)"
@@ -65,14 +89,62 @@ pick_highest() {
     | sort | tail -1 | awk '{ print $4 }'
 }
 
+# asset_api_url NAME RELEASE_JSON — print the API URL for the named asset.
+# Works on both pretty-printed and compact JSON (User-Agent may force compact).
+# Splits on '{' so each object is scanned independently.
+asset_api_url() {
+  want="$1"
+  rel_json="$2"
+  tr '{' '\n' <"$rel_json" | awk -v want="$want" '
+    {
+      url = ""
+      name = ""
+      if (match($0, /https:\/\/api\.github\.com\/repos\/[^"]+\/assets\/[0-9]+/)) {
+        url = substr($0, RSTART, RLENGTH)
+      }
+      if (match($0, /"name"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+        name = substr($0, RSTART, RLENGTH)
+        sub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", name)
+        sub(/".*/, "", name)
+      }
+      if (url != "" && name == want) {
+        print url
+        exit
+      }
+    }
+  '
+}
+
+# download_asset NAME DEST — public URL first; assets API if TOKEN and public fails.
+download_asset() {
+  _name="$1"
+  _dest="$2"
+  if curl -fsSL -H "User-Agent: ai-launcher-install" -o "$_dest" "$BASE/$_name" 2>/dev/null; then
+    return 0
+  fi
+  [ -n "$TOKEN" ] || die "download failed: $BASE/$_name (set AI_LAUNCHER_UPDATE_TOKEN or GITHUB_TOKEN for private releases)"
+  _rel="$WORK/release.json"
+  curl_auth "$API/releases/tags/$VERSION" "application/vnd.github+json" "$_rel" \
+    || die "could not fetch release $VERSION via API (check AI_LAUNCHER_UPDATE_TOKEN / GITHUB_TOKEN)"
+  _url="$(asset_api_url "$_name" "$_rel")"
+  [ -n "$_url" ] || die "asset $_name not found in release $VERSION"
+  curl_auth "$_url" "application/octet-stream" "$_dest" \
+    || die "download failed via assets API: $_name"
+}
+
 # Resolve the version from the latest release when not pinned. Some release
 # hosts return 404 on /releases/latest, so fall back to the release list.
 if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL "$API/releases/latest" 2>/dev/null \
-    | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
-  if [ -z "$VERSION" ]; then
-    VERSION="$(curl -fsSL "$API/releases?per_page=50" | pick_highest || true)"
+  _tmp="$(mktemp)"
+  if curl_auth "$API/releases/latest" "application/vnd.github+json" "$_tmp" 2>/dev/null; then
+    VERSION="$(grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' "$_tmp" | head -1 | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   fi
+  if [ -z "$VERSION" ]; then
+    if curl_auth "$API/releases?per_page=50" "application/vnd.github+json" "$_tmp" 2>/dev/null; then
+      VERSION="$(pick_highest <"$_tmp" || true)"
+    fi
+  fi
+  rm -f "$_tmp"
   [ -n "$VERSION" ] || die "could not resolve the latest release from $API"
 fi
 VER_NOV="${VERSION#v}"
@@ -86,13 +158,13 @@ BASE="$DL_BASE/$VERSION"
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 echo "Fetching $ARCHIVE ($VERSION) ..."
-curl -fsSL -o "$WORK/$ARCHIVE" "$BASE/$ARCHIVE" || die "download failed: $BASE/$ARCHIVE"
+download_asset "$ARCHIVE" "$WORK/$ARCHIVE"
 
 # Verify SHA-256 against the release checksums.txt. Verification is mandatory:
 # this script installs the executable you will run, so an unverifiable
 # download is a hard error.
-curl -fsSL -o "$WORK/checksums.txt" "$BASE/checksums.txt" \
-  || die "checksums.txt not found at $BASE — refusing to install an unverified binary"
+download_asset "checksums.txt" "$WORK/checksums.txt" \
+  || die "checksums.txt not found — refusing to install an unverified binary"
 want="$(grep " $ARCHIVE\$" "$WORK/checksums.txt" | awk '{print $1}')"
 [ -n "$want" ] || die "no checksum entry for $ARCHIVE in checksums.txt"
 if command -v sha256sum >/dev/null 2>&1; then

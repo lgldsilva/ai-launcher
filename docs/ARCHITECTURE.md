@@ -123,7 +123,27 @@ Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
 `workstream`, `workspace`, `project`, `jail_flags`, `extra_args`,
 `param_values`.
 
-`jail_flags` mirrors the ai-jail v1.15 toggles with tri-state booleans
+### Permission → jail argv (implementation)
+
+Permissions are **optional auxiliaries**. Pre-flight never requires host tools
+such as `gh`, `ssh`, or Docker to be installed; it only enforces dependency
+edges among permissions (e.g. permission requires jail; gpu requires docker).
+
+`internal/launcher.Build` / `appendJailArgs` maps **enabled** permissions to
+ai-jail (all require `UseJail` when on):
+
+| Permission id | Argv contribution |
+| --- | --- |
+| `ssh` | `--ssh` |
+| `gh` | `--rw-map $HOME/.config/gh` (config mount only; does not LookPath `gh`) |
+| `docker` | `--docker` |
+| `gpu` | `--gpu` |
+
+User-declared mounts are separate (`--map` / `--rw-map` from the mounts list).
+Home dotfile symlink targets outside `$HOME` are auto-merged when the jail is
+on. See the README section **Permissions: CLI + config** for the operator view.
+
+`jail_flags` mirrors the ai-jail toggles with tri-state booleans
 (absent = ai-jail default): `lockdown`, `private_home`, `tailscale`, `gpu`,
 `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `browser`
 (`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `deny_paths`,

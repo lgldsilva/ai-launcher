@@ -58,8 +58,8 @@ func (e *HTTPError) Error() string {
 }
 
 // Updater carries everything the self-update flow needs. Token authenticates
-// against private release hosts (the repository is private until the OSS
-// launch); it is sent as a Bearer header and is never printed or logged.
+// against private release hosts (forks/mirrors); it is sent as a Bearer
+// header and is never printed or logged.
 type Updater struct {
 	CurrentVersion  string
 	APIBaseURL      string

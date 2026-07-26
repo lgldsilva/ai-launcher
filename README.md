@@ -142,6 +142,10 @@ amd64/arm64), verifies its SHA-256 against the release `checksums.txt`
 `--bin-dir <dir>` or `AI_LAUNCHER_INSTALL_DIR` to change the destination. On
 Windows, download the `.zip` from the releases page instead.
 
+Optional env: `AI_LAUNCHER_UPDATE_TOKEN` or `GITHUB_TOKEN` (Bearer) so the
+script pulls assets through the GitHub assets API — needed only for private
+forks/mirrors. The public repo installs without any token.
+
 ### Self-update
 
 Once installed, the binary updates itself from the same GitHub releases:
@@ -223,7 +227,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | Flag | Effect |
 | --- | --- |
 | `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, …) |
-| `--ssh` / `--gh` / `--docker` / `--gpu` | Enables permissions inside the jail (gpu requires docker) |
+| `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; gpu needs docker) |
 | `--no-jail` / `--sandbox` | Explicitly disables / enables ai-jail |
 | `--memory` / `--no-memory` | Enables / disables the ai-memory layer |
 | `--yolo` / `--no-yolo` | Passes (or not) the agent's dangerous-mode flag |
@@ -232,7 +236,6 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--continue` | Continues the last ai-memory session of this checkout |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
-
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
 | `--extra-args "<args>"` / `--args` | Extra arguments forwarded to the harness (`--args` is an alias) |
 | `--profile <name>` | Loads a saved profile as the base selection |
@@ -240,6 +243,55 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--dry-run` | Prints the generated command without executing |
 | `--version` | Prints the binary version and exits |
 | `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
+
+### Permissions: CLI + config (what gets mounted)
+
+Jail permissions are **optional auxiliaries**. None of them (including GitHub
+CLI) is required to run ai-launcher or an agent. Leave every toggle off if you
+do not need SSH, `gh`, Docker, or GPU inside the sandbox — pre-flight never
+demands that those host tools be installed.
+
+When you **do** opt in, each permission maps to ai-jail flags and/or mounts so
+the host tool’s **config/state** stays usable inside the sandbox. All of them
+still **require Jail / Sandbox** when enabled (pre-flight fails if Jail is off
+and a permission is on). On Windows they are hidden: there is no ai-jail.
+
+| Permission (TUI / flag) | What ai-launcher adds | Optional on the host | Notes |
+| --- | --- | --- | --- |
+| **SSH access** / `--ssh` | `ai-jail --ssh` | OpenSSH client / agent if you use SSH from agents | Native ai-jail capability (not a free-form mount list) |
+| **GitHub CLI** / `--gh` | `--rw-map $HOME/.config/gh` | Only if you want `gh` inside the jail: install + `gh auth login` | **Auxiliary only.** Does not install `gh` and does not fail when `gh` is missing. Mounts host config so tokens travel with the tool |
+| **Docker socket** / `--docker` | `ai-jail --docker` | Docker (or compatible) socket if agents need containers | **Opt-in only.** Socket access is effectively host root — enable only for trusted projects |
+| **GPU passthrough** / `--gpu` | `ai-jail --gpu` | GPU devices (mainly Linux) if agents need GPU | Requires Docker permission in the catalog dependency graph |
+
+Model: the sandbox already sees normal system paths for tools (e.g. `/usr`,
+Homebrew layout depending on ai-jail). Sensitive **state** is withheld unless
+you opt in. Without `--gh`, a host `gh` binary may be visible on PATH but
+`~/.config/gh` is not mapped — so auth will not work until you enable the
+permission. If you never use `gh`, ignore the toggle entirely.
+
+When you *do* want GitHub CLI inside the agent:
+
+```bash
+# Host (only if you use gh): CLI installed and authenticated
+gh auth status
+
+# Dry-run: with --gh, argv includes --rw-map …/.config/gh
+ai-launcher --agent claude --gh --dry-run
+# example:
+#   ai-jail --exec --rw-map /home/user/.config/gh ai-memory run claude …
+```
+
+If `gh` fails inside the agent after you opted in:
+
+1. Confirm Jail is on and GitHub CLI is checked (or `--gh`).
+2. Confirm dry-run shows `--rw-map …/.config/gh`.
+3. If `gh` lives outside usual system prefixes (e.g. only under `~/bin`), add
+   that directory under **Mounts** as well.
+4. On native Windows, use WSL2 for jail + permissions; native Windows runs
+   without sandbox and without these permission rows.
+
+Extra mounts (project data, caches, second disks) stay under **Mounts** /
+`--mount` / `--rw-map` and are independent of the table above.
 
 When no mount is given by flags, local config, or profile, the global
 `default_mounts` are suggested (rw by default). Built-in candidates are
