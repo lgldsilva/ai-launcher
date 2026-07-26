@@ -2,11 +2,13 @@ package tui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
@@ -26,6 +28,7 @@ func runeKey(value string) tea.KeyMsg {
 }
 
 func TestModelRendersAndNavigatesAllSections(t *testing.T) {
+	stubWindows(t, false)
 	launch := launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "codex"},
 		UseJail:     true,
@@ -60,9 +63,15 @@ func TestModelRendersAndNavigatesAllSections(t *testing.T) {
 func TestModelAddsAndRejectsDuplicateMounts(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
 	model.section = 2
-	model = applyKey(t, model, runeKey("/"))
+	// a opens the add panel; Enter from Mounts must RUN, not open add.
+	model = applyKey(t, model, runeKey("a"))
+	if !model.inputActive {
+		t.Fatal("key a on Mounts did not open the add-folder panel")
+	}
+	if model.mountMode != "rw" {
+		t.Fatalf("default mount mode = %q; want rw", model.mountMode)
+	}
 	model = applyKey(t, model, runeKey("/tmp/data"))
-	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyTab})
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if len(model.launch.Mounts) != 1 || model.launch.Mounts[0].Path != "/tmp/data" || model.launch.Mounts[0].Mode != "rw" {
@@ -88,8 +97,14 @@ func TestModelNavigatesMountBrowser(t *testing.T) {
 	model = applyKey(t, model, runeKey("/"))
 	model.mountDir = root
 	model.refreshMountEntries()
-	if !strings.Contains(model.View(), "Browser: "+root) {
+	if !strings.Contains(model.View(), "Looking in: "+root) {
 		t.Fatalf("mount browser view = %s", model.View())
+	}
+	if !strings.Contains(model.View(), "Enter will add:") {
+		t.Fatalf("mount browser missing Enter hint: %s", model.View())
+	}
+	if !strings.Contains(model.View(), "Keys:") {
+		t.Fatalf("mount browser missing key legend: %s", model.View())
 	}
 	for index, entry := range model.mountEntries {
 		if entry == "project" {
@@ -153,12 +168,15 @@ func TestMountInputLetterNavigatesWhenNotTyping(t *testing.T) {
 	if model.mountDir != child {
 		t.Fatalf("l navigation directory = %q; want %q", model.mountDir, child)
 	}
-	if model.mountInput != "" {
-		t.Fatalf("l while browsing must not type into the input: %q", model.mountInput)
+	// Entering a directory fills the path input so further typing continues
+	// from there; it must not leave a bare letter in the field.
+	wantInput := child + string(filepath.Separator)
+	if model.mountInput != wantInput {
+		t.Fatalf("l while browsing input = %q; want %q", model.mountInput, wantInput)
 	}
 }
 
-func TestMountInputArrowRightWhileTypingDoesNotAppendOrNavigate(t *testing.T) {
+func TestMountInputArrowRightWhileTypingEntersHighlightedDir(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "project")
 	if err := os.Mkdir(child, 0o750); err != nil {
@@ -167,15 +185,216 @@ func TestMountInputArrowRightWhileTypingDoesNotAppendOrNavigate(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
 	model.section = 2
 	model = applyKey(t, model, runeKey("/"))
-	model.mountDir = root
-	model.refreshMountEntries()
-	model = applyKey(t, model, runeKey("/ho"))
-	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyRight})
-	if model.mountInput != "/ho" {
-		t.Fatalf("arrow right while typing changed the input to %q", model.mountInput)
+	// Type the root with a trailing slash so the browser lists its children
+	// and filters by empty prefix; then highlight "project" and press →.
+	model = applyKey(t, model, runeKey(root+"/"))
+	for index, entry := range model.mountEntries {
+		if entry == "project" {
+			model.mountCursor = index
+		}
 	}
-	if model.mountDir != root {
-		t.Fatalf("arrow right while typing navigated to %q", model.mountDir)
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyRight})
+	wantInput := child + string(filepath.Separator)
+	if model.mountInput != wantInput {
+		t.Fatalf("arrow right while typing = input %q; want %q", model.mountInput, wantInput)
+	}
+	if model.mountDir != child {
+		t.Fatalf("arrow right while typing navigated to %q; want %q", model.mountDir, child)
+	}
+}
+
+func TestMountPathTabCompletion(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha-app")
+	alphaLib := filepath.Join(root, "alpha-lib")
+	beta := filepath.Join(root, "beta")
+	for _, dir := range []string{alpha, alphaLib, beta} {
+		if err := os.Mkdir(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 2
+	model = applyKey(t, model, runeKey("/"))
+	model = applyKey(t, model, runeKey(filepath.Join(root, "al")))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	// Two alpha-* matches share the prefix "alpha-".
+	if !strings.HasPrefix(filepath.Base(strings.TrimSuffix(model.mountInput, string(filepath.Separator))), "alpha") &&
+		!strings.Contains(model.mountInput, "alpha") {
+		t.Fatalf("Tab completion input = %q; want alpha prefix under %s", model.mountInput, root)
+	}
+	if !strings.Contains(model.status, "2 matches") {
+		t.Fatalf("status after partial complete = %q; want 2 matches", model.status)
+	}
+	// Finish unique: type enough to leave only alpha-app, then Tab.
+	model.mountInput = filepath.Join(root, "alpha-a")
+	model.mountTyped = true
+	model.syncMountBrowserFromInput()
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	want := alpha + string(filepath.Separator)
+	if model.mountInput != want || model.mountDir != alpha {
+		t.Fatalf("unique Tab complete: input=%q dir=%q; want input=%q dir=%q", model.mountInput, model.mountDir, want, alpha)
+	}
+}
+
+func TestMountPathFiltersBrowserWhileTyping(t *testing.T) {
+	root := t.TempDir()
+	keep := filepath.Join(root, "keepme")
+	drop := filepath.Join(root, "dropme")
+	for _, dir := range []string{keep, drop} {
+		if err := os.Mkdir(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 2
+	model = applyKey(t, model, runeKey("/"))
+	model = applyKey(t, model, runeKey(filepath.Join(root, "ke")))
+	if model.mountFilter != "ke" {
+		t.Fatalf("filter = %q; want ke", model.mountFilter)
+	}
+	if !containsString(model.mountEntries, "keepme") {
+		t.Fatalf("entries = %#v; want keepme", model.mountEntries)
+	}
+	if containsString(model.mountEntries, "dropme") {
+		t.Fatalf("entries = %#v; dropme must be filtered out", model.mountEntries)
+	}
+}
+
+func TestMountPathExpandsTildeOnAdd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 2
+	model = applyKey(t, model, runeKey("/"))
+	model = applyKey(t, model, runeKey("~/projects"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	want := filepath.Join(home, "projects")
+	if len(model.launch.Mounts) != 1 || model.launch.Mounts[0].Path != want {
+		t.Fatalf("mounts = %#v; want %q", model.launch.Mounts, want)
+	}
+}
+
+func TestMountCtrlTTogglesMode(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 2
+	model = applyKey(t, model, runeKey("a"))
+	if !model.inputActive {
+		t.Fatal("key a on Mounts did not open the add-folder panel")
+	}
+	if model.mountMode != "rw" {
+		t.Fatalf("mode = %q; want rw", model.mountMode)
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyCtrlT})
+	if model.mountMode != "ro" {
+		t.Fatalf("mode after Ctrl+T = %q; want ro", model.mountMode)
+	}
+}
+
+func TestMountsSectionShowsHowToAddHint(t *testing.T) {
+	// Tips must be visible even when Mounts is not the focused section.
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.section = 0
+	view := model.View()
+	for _, want := range []string{"Tips", "add a folder", "a  or  +  or  /", "r                    RUN"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("mounts block missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestEnterOnMountsDoesNotRunOrOpenAdd(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip(err)
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Name: "Shell", Command: "sh"},
+		Executable:  sh,
+		UseJail:     false,
+		UseMemory:   false,
+		Permissions: map[string]bool{},
+		Mounts:      []config.Mount{{Path: "/tmp", Mode: "rw"}},
+	})
+	model.section = 2
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if model.inputActive {
+		t.Fatal("Enter on Mounts must not open add panel (use a)")
+	}
+	if len(model.result) != 0 {
+		t.Fatal("Enter on Mounts must not run (use r)")
+	}
+	model = applyKey(t, model, runeKey("r"))
+	if len(model.result) == 0 {
+		t.Fatalf("r on Mounts should run; status=%q", model.status)
+	}
+}
+
+func TestRunBlockedByPreflightStaysInTUI(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Name: "Claude Code", Command: "claude"},
+		UseJail:     true, // requires ai-jail on PATH — force missing via empty LookPath in validator... use missing mount instead
+		UseMemory:   false,
+		Permissions: map[string]bool{},
+		Mounts:      []config.Mount{{Path: "/this/path/does/not/exist-ai-launcher-test", Mode: "rw"}},
+	})
+	model.section = 0
+	model.agents = []catalog.AgentStatus{{
+		Agent: config.Agent{Name: "Claude Code", Command: "claude"}, Path: "/bin/claude", Installed: true,
+	}}
+	model.cursor = 1
+	model = applyKey(t, model, runeKey("r"))
+	if len(model.result) != 0 {
+		t.Fatal("r must not quit/launch when pre-flight fails")
+	}
+	if !strings.Contains(model.status, "Cannot run") && !strings.Contains(model.status, "mount-not-found") {
+		t.Fatalf("status = %q; want pre-flight failure message", model.status)
+	}
+}
+
+func TestVisibleAgentsInstalledOnlySortedByRecent(t *testing.T) {
+	all := []catalog.AgentStatus{
+		{Agent: config.Agent{Name: "A", Command: "aaa"}, Installed: true},
+		{Agent: config.Agent{Name: "B", Command: "bbb"}, Installed: false},
+		{Agent: config.Agent{Name: "C", Command: "ccc"}, Installed: true},
+		{Agent: config.Agent{Name: "D", Command: "ddd"}, Installed: true},
+	}
+	got := visibleAgents(all, []string{"ddd", "missing", "aaa"}, launcher.LaunchConfig{})
+	if len(got) != 3 {
+		t.Fatalf("visible = %#v; want 3 installed agents", got)
+	}
+	if got[0].Agent.Command != "ddd" || got[1].Agent.Command != "aaa" || got[2].Agent.Command != "ccc" {
+		t.Fatalf("order = %s,%s,%s; want ddd,aaa,ccc", got[0].Agent.Command, got[1].Agent.Command, got[2].Agent.Command)
+	}
+}
+
+func TestVisibleAgentsKeepsSelectedEvenIfMissing(t *testing.T) {
+	all := []catalog.AgentStatus{
+		{Agent: config.Agent{Name: "Missing", Command: "gone"}, Installed: false},
+		{Agent: config.Agent{Name: "OK", Command: "ok"}, Installed: true},
+	}
+	got := visibleAgents(all, nil, launcher.LaunchConfig{Agent: config.Agent{Command: "gone"}})
+	if len(got) != 2 || got[0].Agent.Command != "gone" {
+		t.Fatalf("visible = %#v; want selected missing agent first plus installed", got)
+	}
+}
+
+func TestMountBrowserListsSymlinkedDirectories(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "real-dir")
+	if err := os.Mkdir(target, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link-dir")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.mountDir = root
+	model.mountFilter = ""
+	model.refreshMountEntries()
+	if !containsString(model.mountEntries, "link-dir") {
+		t.Fatalf("entries = %#v; want symlink dir listed", model.mountEntries)
 	}
 }
 
@@ -208,12 +427,97 @@ func TestNewModelInitializesNilPermissions(t *testing.T) {
 }
 
 func TestModelCanExecuteFromTheAgentSection(t *testing.T) {
-	launch := launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}, Permissions: map[string]bool{}}
+	// Use a real PATH binary so in-TUI pre-flight validation passes.
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not on PATH")
+	}
+	launch := launcher.LaunchConfig{
+		Agent:       config.Agent{Name: "Shell", Command: "sh"},
+		Executable:  sh,
+		UseJail:     false,
+		UseMemory:   false,
+		Permissions: map[string]bool{},
+	}
 	model := NewModel(config.DefaultGlobal(), launch)
-	model.cursor = 1 // first agent row; row 0 is "continue last session"
+	model.agents = []catalog.AgentStatus{{
+		Agent: config.Agent{Name: "Shell", Command: "sh"}, Path: sh, Installed: true, ResolvedCommand: "sh",
+	}}
+	model.cursor = 1
+	model.section = 0
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if model.launch.Agent.Command != "sh" {
+		t.Fatalf("launch agent = %q; want sh", model.launch.Agent.Command)
+	}
+	if len(model.result) != 0 {
+		t.Fatal("Enter must not launch")
+	}
+	model = applyKey(t, model, runeKey("r"))
 	if len(model.result) == 0 {
-		t.Fatal("Enter on the already-selected agent did not build a command")
+		t.Fatalf("r did not build a command; status=%q", model.status)
+	}
+}
+
+func TestEnterOnPiSelectsWithoutClosing(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not on PATH")
+	}
+	// "pi" here is simulated with sh so pre-flight can pass when r is pressed.
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Name: "Other", Command: "other"},
+		Executable:  sh,
+		UseJail:     false,
+		UseMemory:   false,
+		Permissions: map[string]bool{},
+	})
+	model.agents = []catalog.AgentStatus{
+		{Agent: config.Agent{Name: "Other", Command: "other"}, Path: sh, Installed: true, ResolvedCommand: "other"},
+		{Agent: config.Agent{Name: "Pi", Command: "sh", Aliases: []string{"pi"}}, Path: sh, Installed: true, ResolvedCommand: "sh"},
+	}
+	model.cursor = 2
+	model.section = 0
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if model.launch.ContinueSession {
+		t.Fatal("Enter on Pi must not activate Continue last session")
+	}
+	if model.launch.Agent.Command != "sh" {
+		t.Fatalf("after Enter agent = %q; want sh (simulated pi)", model.launch.Agent.Command)
+	}
+	if len(model.result) != 0 {
+		t.Fatal("Enter on Pi must NOT launch (must not set result / quit)")
+	}
+	if !strings.Contains(model.status, "press r to RUN") {
+		t.Fatalf("status = %q; want hint to press r", model.status)
+	}
+	if !strings.Contains(model.View(), "Selected: Pi") {
+		t.Fatalf("view missing Selected Pi:\n%s", model.View())
+	}
+	model = applyKey(t, model, runeKey("r"))
+	if len(model.result) == 0 {
+		t.Fatalf("r did not launch; status=%q", model.status)
+	}
+	joined := strings.Join(model.result, " ")
+	if !strings.Contains(joined, "sh") {
+		t.Fatalf("argv = %q; want sh harness", joined)
+	}
+}
+
+func TestAgentListShowsSelectedMarker(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Name: "Pi", Command: "pi"},
+		Permissions: map[string]bool{},
+	})
+	model.agents = []catalog.AgentStatus{
+		{Agent: config.Agent{Name: "Pi", Command: "pi"}, Installed: true},
+	}
+	model.cursor = 1
+	view := model.View()
+	if !strings.Contains(view, "Selected: Pi (pi)") {
+		t.Fatalf("missing Selected line:\n%s", view)
+	}
+	if !strings.Contains(view, "[●]") {
+		t.Fatalf("missing selected marker:\n%s", view)
 	}
 }
 
@@ -255,8 +559,8 @@ func TestModelEditsDeclaredParamValues(t *testing.T) {
 	}
 	model := NewModel(config.DefaultGlobal(), launch)
 	model.section = 3
-	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	for range 3 {
+	model.cursor = 0 // NewModel parks cursor on the selected agent; reset for options.
+	for range len(model.optionRows()) {
 		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	}
 	if model.cursor != len(model.optionRows()) {

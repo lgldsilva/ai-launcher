@@ -153,7 +153,10 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 			mountConfig = append(mountConfig, parseMount(value, "rw"))
 		}
 	} else if len(mountConfig) == 0 {
-		for _, value := range defaultMounts {
+		// Built-in / catalog default_mounts are suggestions. Skip paths that
+		// do not exist on this host so a Linux layout on macOS (or an
+		// unplugged external volume) does not fail pre-flight validation.
+		for _, value := range config.ExistingPaths(defaultMounts) {
 			mountConfig = append(mountConfig, parseMount(value, "rw"))
 		}
 	}
@@ -301,8 +304,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		ExtraArgs:       local.Options.ExtraArgs,
 		ParamValues:     local.Options.ParamValues,
 	}
-	// Drop integrations the platform cannot run (ai-jail on Windows) with an
-	// explanatory warning instead of an error.
+	// Drop integrations the host cannot run (ai-jail on Windows) with an
+	// explanatory warning. macOS keeps the jail — sandbox-exec is supported.
 	var platformIssues []launcher.Issue
 	launchConfig, platformIssues = launcher.ConstrainToPlatform(launchConfig, runtime.GOOS, global.Permissions)
 	for _, issue := range platformIssues {
@@ -506,7 +509,8 @@ func decideLaunchAction(dryRun bool) launchAction {
 // launch confirms the configuration (TUI when interactive), optionally saves
 // it, and builds, validates, and executes the resulting argv.
 func launch(args []string, opts cliOptions, global config.Global, local config.Local, launchConfig launcher.LaunchConfig, in io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 {
+	fromTUI := len(args) == 0
+	if fromTUI {
 		confirmed, err := tui.RunWithHooks(global, launchConfig, tui.Hooks{
 			Save: func(updated launcher.LaunchConfig) error {
 				return saveIfRequested(true, opts.localPath, local, updated)
@@ -519,6 +523,7 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 			},
 		})
 		if err != nil {
+			// Cancelled or empty result — quiet exit, no "failed to start".
 			return nil
 		}
 		launchConfig = confirmed
@@ -546,10 +551,56 @@ func launch(args []string, opts cliOptions, global config.Global, local config.L
 	if fatal {
 		return errors.New("pre-flight validation failed")
 	}
-	if in == os.Stdin && out == os.Stdout && errOut == os.Stderr {
-		return launcher.ReplaceWithEnv(argv, launcher.Environment(launchConfig))
+	// Remember the harness for the TUI MRU list (best-effort; never block launch).
+	if !launchConfig.ContinueSession {
+		if cmd := strings.TrimSpace(launchConfig.Agent.Command); cmd != "" {
+			config.TouchRecentAgent(&global, cmd)
+			_ = config.SaveGlobal(opts.globalPath, global)
+		}
 	}
-	return launcher.PTYExecutor{}.RunWithEnv(context.Background(), argv, launcher.Environment(launchConfig), in, out, errOut)
+	label := launchConfig.Agent.Command
+	if launchConfig.ContinueSession {
+		label = "continue session"
+	}
+	cmdLine := shellJoin(argv)
+	// Always announce what is about to run so a TUI close is never silent.
+	_, _ = fmt.Fprintf(errOut, "ai-launcher: starting %s\n", label)
+	_, _ = fmt.Fprintf(errOut, "ai-launcher: %s\n", cmdLine)
+
+	// After the interactive TUI, keep ai-launcher as the parent (PTY) so a
+	// child that exits immediately (ai-memory TLS, jail cwd, etc.) is reported
+	// as our error instead of looking like the UI just vanished.
+	// CLI non-TUI launches still Replace into the child for a thin process tree.
+	useReplace := !fromTUI && in == os.Stdin && out == os.Stdout && errOut == os.Stderr
+	if useReplace {
+		if err := launcher.ReplaceWithEnv(argv, launcher.Environment(launchConfig)); err != nil {
+			return fmt.Errorf("failed to start %s: %w\ncommand: %s", label, err, cmdLine)
+		}
+		return nil
+	}
+	execErr := (launcher.PTYExecutor{}).RunWithEnv(context.Background(), argv, launcher.Environment(launchConfig), in, out, errOut)
+	if execErr != nil {
+		return fmt.Errorf("failed to start %s: %w\ncommand: %s\n%s", label, execErr, cmdLine, launchFailureHint(execErr.Error()))
+	}
+	return nil
+}
+
+// launchFailureHint maps common child stderr/exit text to a short recovery tip.
+func launchFailureHint(errText string) string {
+	switch {
+	case strings.Contains(errText, "409") && strings.Contains(errText, "workstream is already active"):
+		return "hint: another ai-memory run still holds this workstream (or left a stale lock).\n" +
+			"  - wait until the lease time in the error, then retry\n" +
+			"  - if the owner PID is dead: just retry (lease expires in ~1–2 min)\n" +
+			"  - or start a parallel stream: ai-launcher --agent <name> --new my-stream\n" +
+			"  - or skip memory: ai-launcher --agent <name> --no-memory"
+	case strings.Contains(errText, "certificate") || strings.Contains(errText, "TLS") || strings.Contains(errText, "x509"):
+		return "hint: memory server TLS failed — check memory_server_url (expect *.internal.lgldsilva.com.br) or use --no-memory"
+	case strings.Contains(errText, "canonicalizing managed run cwd") || strings.Contains(errText, "Operation not permitted"):
+		return "hint: ai-memory inside the jail failed on this cwd — try --no-memory (keep Jail) or run from a path under $HOME"
+	default:
+		return "hint: try --no-memory if the memory server fails, or --no-jail if the project is on an external volume"
+	}
 }
 
 func saveIfRequested(save bool, path string, local config.Local, launch launcher.LaunchConfig) error {

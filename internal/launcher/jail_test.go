@@ -299,6 +299,24 @@ func TestConstrainToPlatformIsANoOpElsewhere(t *testing.T) {
 	_ = constrained
 }
 
+func TestConstrainForHostIsNoOpOnMacOSExternalVolume(t *testing.T) {
+	// ai-jail works on macOS (sandbox-exec), including under /Volumes — do not strip it.
+	cfg := LaunchConfig{
+		UseJail:     true,
+		Permissions: map[string]bool{"ssh": true, "gh": true},
+	}
+	constrained, issues := ConstrainForHost(cfg, "darwin", "/Volumes/MSD512/Projetos/app", config.DefaultGlobal().Permissions)
+	if !constrained.UseJail {
+		t.Fatal("jail must stay enabled on macOS external volume")
+	}
+	if !constrained.Permissions["ssh"] || !constrained.Permissions["gh"] {
+		t.Fatalf("permissions must stay: %#v", constrained.Permissions)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("issues = %#v; want none (ConstrainForHost is a no-op)", issues)
+	}
+}
+
 func TestValidatorWarnsForJailOptionsWithoutJail(t *testing.T) {
 	v := Validator{
 		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },

@@ -11,10 +11,22 @@ import (
 )
 
 // writeTestConfigs creates a global config with a custom harness and two
-// profiles plus a local config, returning their paths.
-func writeTestConfigs(t *testing.T, localYAML string) (string, string) {
+// profiles plus a local config. The returned mounts are three existing
+// directories used as default_mounts so tests stay independent of the host OS
+// layout (production defaults come from config.DefaultMountCandidates).
+func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath string, defaultMounts []string) {
 	t.Helper()
 	dir := t.TempDir()
+	defaultMounts = []string{
+		filepath.Join(dir, "storage"),
+		filepath.Join(dir, "storage", "Projetos"),
+		filepath.Join(dir, "storage", "cache"),
+	}
+	for _, mount := range defaultMounts {
+		if err := os.MkdirAll(mount, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
 	globalYAML := `agents:
   - name: Custom
     command: custom-cli
@@ -27,6 +39,10 @@ permissions:
   - id: jail
     name: Jail
     default: true
+default_mounts:
+  - ` + defaultMounts[0] + `
+  - ` + defaultMounts[1] + `
+  - ` + defaultMounts[2] + `
 profiles:
   review:
     agent: custom-cli
@@ -38,15 +54,24 @@ profiles:
   minimal:
     agent: custom-cli
 `
-	globalPath := filepath.Join(dir, "global.yaml")
+	globalPath = filepath.Join(dir, "global.yaml")
 	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	localPath := filepath.Join(dir, "local.yaml")
+	localPath = filepath.Join(dir, "local.yaml")
 	if err := os.WriteFile(localPath, []byte(localYAML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return globalPath, localPath
+	return globalPath, localPath, defaultMounts
+}
+
+// defaultMountArgv formats the fixture default mounts as ai-jail --rw-map args.
+func defaultMountArgv(mounts []string) string {
+	parts := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		parts = append(parts, "--rw-map "+mount)
+	}
+	return strings.Join(parts, " ")
 }
 
 func runDryRun(t *testing.T, args ...string) (string, error) {
@@ -57,7 +82,7 @@ func runDryRun(t *testing.T, args ...string) (string, error) {
 }
 
 func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "review", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -68,7 +93,7 @@ func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 }
 
 func TestExplicitFlagsOverrideProfile(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
 		"--profile", "review", "--agent", "codex", "--param", "model=v2", "--dry-run")
 	if err != nil {
@@ -83,7 +108,7 @@ func TestExplicitFlagsOverrideProfile(t *testing.T) {
 }
 
 func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: true\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: true\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "minimal", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -94,7 +119,7 @@ func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
 }
 
 func TestSaveProfilePersistsMergedSelectionWithoutLaunching(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
 		"--save-profile", "saved", "--param", "model=v9", "--yolo")
 	if err != nil {
@@ -117,7 +142,7 @@ func TestSaveProfilePersistsMergedSelectionWithoutLaunching(t *testing.T) {
 }
 
 func TestListAndDeleteProfiles(t *testing.T) {
-	globalPath, _ := writeTestConfigs(t, "agent: custom-cli\n")
+	globalPath, _, _ := writeTestConfigs(t, "agent: custom-cli\n")
 	out, err := runDryRun(t, "--config", globalPath, "--list-profiles")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -143,7 +168,7 @@ func TestListAndDeleteProfiles(t *testing.T) {
 }
 
 func TestListProfilesWithNoneSaved(t *testing.T) {
-	globalPath, _ := writeTestConfigs(t, "agent: custom-cli\n")
+	globalPath, _, _ := writeTestConfigs(t, "agent: custom-cli\n")
 	if _, err := runDryRun(t, "--config", globalPath, "--delete-profile", "review"); err != nil {
 		t.Fatal(err)
 	}
@@ -157,14 +182,14 @@ func TestListProfilesWithNoneSaved(t *testing.T) {
 }
 
 func TestUnknownProfileReturnsError(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\n")
 	if _, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "nope", "--dry-run"); err == nil || !strings.Contains(err.Error(), `profile "nope" not found`) {
 		t.Fatalf("run() error = %v; want unknown profile error", err)
 	}
 }
 
 func TestInvalidParamFlagReturnsError(t *testing.T) {
-	globalPath, localPath := writeTestConfigs(t, "agent: custom-cli\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\n")
 	if _, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--param", "novalue", "--dry-run"); err == nil || !strings.Contains(err.Error(), "expected name=value") {
 		t.Fatalf("run() error = %v; want invalid --param error", err)
 	}
@@ -182,5 +207,16 @@ func TestVersionFlagPrintsBuildMetadata(t *testing.T) {
 	want := "ai-launcher " + version + " (" + commit + ", " + date + ")"
 	if trimmed != want {
 		t.Fatalf("--version output = %q; want %q", trimmed, want)
+	}
+}
+
+func TestLaunchFailureHintWorkstreamConflict(t *testing.T) {
+	got := launchFailureHint(`server returned 409 Conflict: {"error":"workstream is already active: owned by host:1 until 2099"}`)
+	if !strings.Contains(got, "workstream") || !strings.Contains(got, "--new") {
+		t.Fatalf("hint = %q; want workstream recovery tips", got)
+	}
+	got = launchFailureHint("certificate not valid for name")
+	if !strings.Contains(got, "TLS") && !strings.Contains(got, "memory_server_url") {
+		t.Fatalf("TLS hint = %q", got)
 	}
 }

@@ -127,7 +127,9 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		} else if cfg.Workstream != "" {
 			command = append(command, "--workstream", cfg.Workstream)
 		}
-		command = append(command, cfg.Agent.Command)
+		// Harness name must be one ai-memory accepts (claude, opencode, …).
+		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
+		command = append(command, memoryRunHarness(cfg.Agent))
 		if cfg.Executable != "" {
 			command = append(command, "--executable", cfg.Executable)
 		}
@@ -142,6 +144,23 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	command = appendYoloFlag(command, cfg)
 	command = append(command, cfg.ExtraArgs...)
 	return command, nil
+}
+
+// memoryRunHarness is the token after `ai-memory run`. Prefer an explicit
+// Memory.RunHarness; otherwise fall back to known wrapper remaps, then Command.
+func memoryRunHarness(agent config.Agent) string {
+	if agent.Memory != nil {
+		if h := strings.TrimSpace(agent.Memory.RunHarness); h != "" {
+			return h
+		}
+	}
+	// Built-in remaps for catalog wrappers when the user's config.yaml still
+	// lacks run_harness (configs are not deep-merged with defaults per agent).
+	switch strings.TrimSpace(agent.Command) {
+	case "oc":
+		return "opencode"
+	}
+	return agent.Command
 }
 
 // buildContinue composes "ai-memory run" without a harness, which auto-resumes
@@ -364,6 +383,32 @@ func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Per
 	if goos != "windows" {
 		return cfg, nil
 	}
+	hadJail := cfg.UseJail
+	cfg, dropped := dropJailAndDependents(cfg, permissions)
+	if !hadJail && len(dropped) == 0 {
+		return cfg, nil
+	}
+	message := "ai-jail is not supported on Windows; continuing without sandbox"
+	if len(dropped) > 0 {
+		message += "; disabled jail-only permissions: " + strings.Join(dropped, ", ")
+	}
+	return cfg, []Issue{{Code: "jail-unsupported-windows", Message: message, Warning: true}}
+}
+
+// ConstrainForHost used to auto-disable the jail on external volumes. That was
+// wrong on macOS: ai-jail (sandbox-exec) is supported there, including under
+// /Volumes. Kept as a no-op so callers still compile; use jailMemoryVolumeIssues
+// for the optional advisory about ai-memory+jail on external disks.
+func ConstrainForHost(cfg LaunchConfig, _, _ string, _ []config.Permission) (LaunchConfig, []Issue) {
+	return cfg, nil
+}
+
+// dropJailAndDependents turns off UseJail and every jail-backed permission.
+// It returns the sorted list of permission IDs that were on and got cleared.
+func dropJailAndDependents(cfg LaunchConfig, permissions []config.Permission) (LaunchConfig, []string) {
+	if cfg.Permissions == nil {
+		cfg.Permissions = make(map[string]bool)
+	}
 	dropped := make([]string, 0, len(cfg.Permissions))
 	dependent := config.JailDependentIDs(permissions)
 	for id, enabled := range cfg.Permissions {
@@ -372,16 +417,9 @@ func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Per
 			dropped = append(dropped, id)
 		}
 	}
-	if !cfg.UseJail && len(dropped) == 0 {
-		return cfg, nil
-	}
 	cfg.UseJail = false
 	sort.Strings(dropped)
-	message := "ai-jail is not supported on Windows; continuing without sandbox"
-	if len(dropped) > 0 {
-		message += "; disabled jail-only permissions: " + strings.Join(dropped, ", ")
-	}
-	return cfg, []Issue{{Code: "jail-unsupported-windows", Message: message, Warning: true}}
+	return cfg, dropped
 }
 
 // Validator checks a LaunchConfig against the host (PATH lookups and mount
@@ -389,6 +427,9 @@ func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Per
 type Validator struct {
 	LookPath func(string) (string, error)
 	Stat     func(string) (os.FileInfo, error)
+	// Getwd overrides the process working directory used by jail/cwd checks;
+	// empty means os.Getwd.
+	Getwd func() (string, error)
 	// GOOS overrides the platform used by platform-specific checks; empty
 	// means the runtime platform.
 	GOOS string
@@ -396,7 +437,7 @@ type Validator struct {
 
 // NewValidator returns a Validator backed by the real PATH and filesystem.
 func NewValidator() Validator {
-	return Validator{LookPath: exec.LookPath, Stat: os.Stat}
+	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd}
 }
 
 // Validate returns every issue found in cfg, or an empty slice when the
@@ -418,6 +459,12 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	onWindows := goos == "windows"
 	issues = append(issues, agentIssues(cfg, lookPath)...)
 	issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
+	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
+	if v.Getwd != nil {
+		// Advisory only — ai-jail works on macOS; the friction is ai-memory
+		// canonicalizing a /Volumes cwd *inside* the sandbox.
+		issues = append(issues, jailMemoryVolumeIssues(cfg, v.Getwd, goos)...)
+	}
 	if cfg.UseMemory {
 		if _, err := lookPath("ai-memory"); err != nil {
 			issues = append(issues, Issue{Code: "memory-not-found", Message: "ai-memory is required when memory integration is enabled"})
@@ -462,6 +509,46 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 	}
 	return nil
 }
+
+// jailMemoryVolumeIssues warns when Jail + ai-memory run on an external-volume
+// project. ai-jail itself works on macOS; ai-memory's managed-run client may
+// fail with "canonicalizing managed run cwd … Operation not permitted" inside
+// the sandbox for /Volumes paths. Advisory only — do not auto-disable the jail.
+func jailMemoryVolumeIssues(cfg LaunchConfig, getwd func() (string, error), goos string) []Issue {
+	if !cfg.UseJail || !cfg.UseMemory {
+		return nil
+	}
+	cwd, err := getwd()
+	if err != nil || strings.TrimSpace(cwd) == "" {
+		return nil
+	}
+	if !externalVolumeCwd(cwd, goos) {
+		return nil
+	}
+	return []Issue{{
+		Code:    "jail-memory-external-volume",
+		Warning: true,
+		Message: fmt.Sprintf(
+			"project is on external volume %q — Jail is kept on (ai-jail supports macOS); if ai-memory fails with cwd Operation not permitted, retry with --no-memory or from a path under your home directory",
+			cwd,
+		),
+	}}
+}
+
+// ExternalVolumeCwd reports host paths on removable/external media where some
+// in-sandbox tools (notably ai-memory managed-run) struggle with cwd realpath.
+func ExternalVolumeCwd(cwd, goos string) bool {
+	switch goos {
+	case "darwin":
+		return strings.HasPrefix(cwd, "/Volumes/")
+	case "linux":
+		return strings.HasPrefix(cwd, "/media/") || strings.HasPrefix(cwd, "/mnt/") || strings.HasPrefix(cwd, "/run/media/")
+	default:
+		return false
+	}
+}
+
+func externalVolumeCwd(cwd, goos string) bool { return ExternalVolumeCwd(cwd, goos) }
 
 // mountIssues reports configured mounts that do not exist on the host.
 func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {

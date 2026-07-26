@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -19,8 +20,14 @@ import (
 const CurrentVersion = "2.0"
 
 // DefaultMemoryServerURL is the ai-memory server used when the global config
-// does not override it.
-const DefaultMemoryServerURL = "https://aimemory.raspberrypi.lan"
+// does not override it. The cert on the homelab reverse proxy is issued for
+// *.internal.lgldsilva.com.br (not the old *.raspberrypi.lan names).
+const DefaultMemoryServerURL = "https://aimemory.internal.lgldsilva.com.br"
+
+// legacyMemoryServerURL is the pre-DNS-migration default. Existing
+// config.yaml files that still pin this host get rewritten on load so TLS
+// stops failing with "certificate not valid for name aimemory.raspberrypi.lan".
+const legacyMemoryServerURL = "https://aimemory.raspberrypi.lan"
 
 // Agent describes a launchable AI agent CLI and its optional integrations.
 type Agent struct {
@@ -66,8 +73,13 @@ type GitHubRelease struct {
 // wiring commands. Unsupported harnesses leave this nil instead of receiving
 // guessed configuration.
 type MemoryIntegration struct {
-	Client          string `yaml:"client"`
-	Agent           string `yaml:"agent"`
+	Client string `yaml:"client"`
+	Agent  string `yaml:"agent"`
+	// RunHarness is the name passed to `ai-memory run <harness>`. When empty,
+	// the launcher uses Agent.Command. Set this when the catalog command is a
+	// wrapper whose name is not in ai-memory's fixed harness list (for example
+	// command "oc" → RunHarness "opencode").
+	RunHarness      string `yaml:"run_harness,omitempty"`
 	InstallMCP      bool   `yaml:"install_mcp"`
 	InstallHooks    bool   `yaml:"install_hooks"`
 	MCPConfigFile   string `yaml:"mcp_config_file,omitempty"`
@@ -194,14 +206,45 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 
 // Global is the machine-wide catalog of agents, tools, and permissions.
 type Global struct {
-	Version         string             `yaml:"version"`
-	MemoryServerURL string             `yaml:"memory_server_url,omitempty"`
-	MemoryAuthToken string             `yaml:"memory_auth_token,omitempty"`
-	Agents          []Agent            `yaml:"agents"`
-	Tools           []Tool             `yaml:"tools,omitempty"`
-	Permissions     []Permission       `yaml:"permissions"`
-	DefaultMounts   []string           `yaml:"default_mounts,omitempty"`
-	Profiles        map[string]Profile `yaml:"profiles,omitempty"`
+	Version         string       `yaml:"version"`
+	MemoryServerURL string       `yaml:"memory_server_url,omitempty"`
+	MemoryAuthToken string       `yaml:"memory_auth_token,omitempty"`
+	Agents          []Agent      `yaml:"agents"`
+	Tools           []Tool       `yaml:"tools,omitempty"`
+	Permissions     []Permission `yaml:"permissions"`
+	DefaultMounts   []string     `yaml:"default_mounts,omitempty"`
+	// RecentAgents is the most-recently-used agent commands (newest first).
+	// The TUI lists installed agents in this order so the usual tools float
+	// to the top. Updated on every successful launch.
+	RecentAgents []string           `yaml:"recent_agents,omitempty"`
+	Profiles     map[string]Profile `yaml:"profiles,omitempty"`
+}
+
+// recentAgentsMax is the cap on the MRU list stored in the global config.
+const recentAgentsMax = 32
+
+// TouchRecentAgent records command as the most recently used agent (newest
+// first), deduplicating and capping the list. Empty commands are ignored.
+func TouchRecentAgent(cfg *Global, command string) {
+	if cfg == nil {
+		return
+	}
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return
+	}
+	out := make([]string, 0, len(cfg.RecentAgents)+1)
+	out = append(out, command)
+	for _, existing := range cfg.RecentAgents {
+		if existing == command {
+			continue
+		}
+		out = append(out, existing)
+	}
+	if len(out) > recentAgentsMax {
+		out = out[:recentAgentsMax]
+	}
+	cfg.RecentAgents = out
 }
 
 // Profile is a named, reusable selection snapshot stored in the global
@@ -325,7 +368,9 @@ func DefaultGlobal() Global {
 			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: false, Description: "Grok CLI", Memory: defaultMemoryIntegration("grok", "grok")},
 			{Name: "Zero", Command: "zero", SupportsMemory: true, SupportsYolo: false, Description: "Zero agent CLI", Memory: defaultMemoryIntegration("zero", "zero")},
 			{Name: "Devin", Command: "devin", SupportsMemory: true, SupportsYolo: false, Description: "Devin CLI", Memory: defaultMemoryIntegration("devin", "devin")},
-			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector"},
+			// oc is a local preset TUI that ends up launching opencode; ai-memory
+			// only knows the harness name "opencode", so RunHarness remaps it.
+			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: &MemoryIntegration{Client: "opencode", Agent: "opencode", RunHarness: "opencode", InstallMCP: true, InstallHooks: true}},
 			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{"gemini-cli"}, SupportsMemory: true, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration("gemini-cli", "gemini-cli")},
 			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: true, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
 			{Name: "Aider", Command: "aider", SupportsMemory: true, SupportsYolo: true, Description: "Aider CLI"},
@@ -376,8 +421,49 @@ func DefaultGlobal() Global {
 			{ID: "docker", Name: "Docker socket", Requires: []string{"jail"}},
 			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"docker"}},
 		},
-		DefaultMounts: []string{"/storage", "/storage/Projetos", "/storage/cache"},
+		DefaultMounts: DefaultMountCandidates(runtime.GOOS),
 	}
+}
+
+// DefaultMountCandidates returns the built-in mount suggestions for goos.
+// Paths mirror the dual-machine layout used by this project:
+//
+//	linux  → /storage, /storage/Projetos, /storage/cache
+//	darwin → /Volumes/MSD512, /Volumes/MSD512/Projetos
+//
+// Other platforms get no built-in mounts. Callers that apply these as
+// suggested mounts should drop entries whose path does not exist on the
+// host (see ExistingPaths) so a missing volume does not fail pre-flight.
+func DefaultMountCandidates(goos string) []string {
+	switch goos {
+	case "linux":
+		return []string{"/storage", "/storage/Projetos", "/storage/cache"}
+	case "darwin":
+		return []string{"/Volumes/MSD512", "/Volumes/MSD512/Projetos"}
+	default:
+		return nil
+	}
+}
+
+// ExistingPaths returns the subset of paths that currently exist on the host.
+// Empty and whitespace-only entries are skipped. The order of paths is
+// preserved.
+func ExistingPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 // DefaultLocal returns the safe-by-default local configuration.
@@ -615,6 +701,12 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 		cfg.Version = defaults.Version
 	}
 	if strings.TrimSpace(cfg.MemoryServerURL) == "" {
+		cfg.MemoryServerURL = defaults.MemoryServerURL
+	}
+	// Homelab DNS migration: the Let's Encrypt cert covers
+	// *.internal.lgldsilva.com.br only. Keep pointing at the legacy
+	// raspberrypi.lan host would break every TLS handshake.
+	if strings.TrimSpace(cfg.MemoryServerURL) == legacyMemoryServerURL {
 		cfg.MemoryServerURL = defaults.MemoryServerURL
 	}
 	if len(cfg.Agents) == 0 {

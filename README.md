@@ -41,64 +41,92 @@ directly — nothing is downloaded inside the jail.
 
 ## Screenshots
 
-The interface is terminal-native. The frames below are text reproductions of
-what you see when running `ai-launcher` without arguments.
+Terminal captures below are **sanitized** (generic paths, no hostnames or
+tokens). On your machine, `--dry-run` prints the real argv for your mounts and
+PATH. The TUI frame matches the current select ≠ run flow (`Space`/`Enter`
+select, **`r`** runs).
 
 ### Interactive TUI
 
 ```text
-┌────────────────────────────────────────────┐
-│ AI Agent Launcher                          │
-│ Current directory: /storage/Projetos/myapp │
-└────────────────────────────────────────────┘
+ai-launcher
 
-❯ Agent
-  [●] Anthropic Claude Code (claude)
-  [ ] OpenAI Codex CLI (codex)
-  [ ] Moonshot Kimi Code (kimi)
-  [ ] OpenCode (opencode)
-  [ ] Pi Coding Agent (pi)
-  [ ] Charmbracelet Crush (crush)
+Agent
+  (installed only · most recently used first · Space/Enter select · r RUN)
+  Selected: Pi (pi)
+  [ ] Continue last session  (ai-memory run)
+  [●] Pi                 (pi) · last used
+  [ ] Claude Code        (claude) · ready
+  [ ] Codex              (codex) · ready
+  …
 
-❯ Permissions
-  [X] ai-jail (sandbox isolation)
-  [X] ai-memory (memory / workstream)
-  [ ] SSH
+Permissions
+  [◆] Jail / Sandbox
+  [ ] SSH access
   [ ] GitHub CLI
   [ ] Docker socket
+  [ ] GPU passthrough
 
-❯ Mounts
-  [X] /storage
-  [X] /storage/Projetos
-  [ ] /storage/cache
-  [ ] + add custom path
+Mounts
+  Tips
+    a  or  +  or  /     add a folder
+    Space                toggle read-only ↔ read-write
+    Backspace            remove highlighted mount
+    r                    RUN the selected agent
+  /Volumes/Data              (read-write)   # macOS example
+  /Volumes/Data/Projetos     (read-write)   # Linux: /storage, /storage/Projetos
 
-❯ Options
-  [X] --yolo (autonomous mode)
-  [ ] --new workstream
+Options
+  [✓] Jail / Sandbox
+  [✓] ai-memory
+  [ ] New workstream
+  [ ] --yolo
 
-Preview:
-ai-jail --rw-map /storage --rw-map /storage/Projetos ai-memory run claude
+Preview: ai-jail --exec --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+  ai-memory run pi --executable /usr/local/bin/pi
 ```
 
-### Command confirmation / dry-run
+Typical sequence: `↑/↓` highlight → `Space`/`Enter` **select** → (optional
+Permissions/Mounts/Options) → **`r`** RUN. Pre-flight runs *inside* the TUI;
+on failure the UI stays open with the error. After a successful `r`, stderr
+shows a short start banner and the child runs under a PTY (raw mode so nested
+TUIs such as `oc` still get arrow keys).
 
-```text
-┌────────────────────── Confirmation ──────────────────────┐
-│ Command generated:                                       │
-│                                                          │
-│ $ ai-jail --rw-map /storage ai-memory run opencode       │
-│   --executable /home/user/.local/bin/opencode --yolo     │
-└──────────────────────────────────────────────────────────┘
-```
+### Dry-run (CLI)
 
-Use `--dry-run` anywhere to print the argv and exit without executing:
+Use `--dry-run` to print argv and exit without executing. Captures below use
+placeholder paths; your output will list your real mounts and executables.
 
 ```bash
-ai-launcher --agent claude --ssh --dry-run
-# ai-jail --exec --ssh --rw-map /home/user/.config/gh ai-memory run claude
-```
+# Full chain: jail + ai-memory + harness
+ai-launcher --agent pi --dry-run
+# ai-jail --exec --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+#   ai-memory run pi --executable /usr/local/bin/pi
 
+# Linux-style mounts (when default_mounts exist on the host)
+# ai-jail --exec --rw-map /storage --rw-map /storage/Projetos \
+#   ai-memory run pi --executable /usr/local/bin/pi
+
+# OpenCode Presets (catalog command "oc") maps to ai-memory harness "opencode"
+ai-launcher --agent oc --dry-run
+# ai-jail --exec --rw-map … ai-memory run opencode --executable ~/.local/bin/oc
+
+# Continue last managed session (no harness name)
+ai-launcher --continue --dry-run
+# ai-jail --exec --rw-map … ai-memory run
+
+# Jail only (no memory layer)
+ai-launcher --agent pi --no-memory --dry-run
+# ai-jail --exec --rw-map … /usr/local/bin/pi
+
+# Memory only (no jail)
+ai-launcher --agent claude --no-jail --dry-run
+# ai-memory run claude
+
+# Permissions are opt-in (Docker off by default — prefer enabling only when needed)
+ai-launcher --agent claude --ssh --gh --dry-run
+# ai-jail --exec --ssh --rw-map …/.config/gh ai-memory run claude
+```
 ## Installation
 
 ### Curl installer (recommended)
@@ -205,11 +233,6 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
 
-When no mount is given by flags, local config, or profile, the global
-`default_mounts` are suggested (rw by default). With the jail enabled, every
-home dotfile symlink that resolves outside `$HOME` (for example
-`~/.cache -> /storage/cache`) is also auto-mounted rw, because ai-jail
-recreates those symlinks inside the sandbox without their targets.
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
 | `--extra-args "<args>"` / `--args` | Extra arguments forwarded to the harness (`--args` is an alias) |
 | `--profile <name>` | Loads a saved profile as the base selection |
@@ -217,6 +240,22 @@ recreates those symlinks inside the sandbox without their targets.
 | `--dry-run` | Prints the generated command without executing |
 | `--version` | Prints the binary version and exits |
 | `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
+
+When no mount is given by flags, local config, or profile, the global
+`default_mounts` are suggested (rw by default). Built-in candidates are
+platform-specific and only paths that exist on the host are applied:
+
+| OS | Built-in `default_mounts` |
+| --- | --- |
+| Linux | `/storage`, `/storage/Projetos`, `/storage/cache` |
+| macOS | `/Volumes/MSD512`, `/Volumes/MSD512/Projetos` |
+| other | (none) |
+
+Override them in `~/.config/ai-launch/config.yaml` if your layout differs.
+With the jail enabled, every home dotfile symlink that resolves outside
+`$HOME` (for example `~/.android -> /Volumes/MSD512/.android` or
+`~/.cache -> /storage/cache`) is also auto-mounted rw, because ai-jail
+recreates those symlinks inside the sandbox without their targets.
 
 Precedence of the final selection: **built-in defaults < local
 `.ai-launch.yaml` < profile (`--profile`) < explicit flags**.
@@ -262,19 +301,24 @@ saved).
 | `Tab` / `Shift+Tab`, `1`–`5` | Cycle / jump between sections |
 | `↑/↓` or `j/k` | Move within the current section |
 | `Space` | Toggle permission/option, mount mode, or load profile |
-| `/` | Open the mount browser (`→/l` enters, `←/h` goes up, `Tab` toggles ro/rw) |
-| `Backspace` | Remove the selected mount |
-| `Enter` | Select agent, edit parameter, or execute |
-| `d` / `Ctrl+D` | Dry-run (shows the command without leaving the TUI) |
+| `Space` / `Enter` (Agent) | **Select** the highlighted agent (UI stays open) |
+| `r` / `Ctrl+Enter` | **RUN** the selected agent (UI closes only if pre-flight passes) |
+| `a` / `+` / `/` | Mounts: open add-folder panel |
+| `Backspace` | Remove the selected mount (or edit path while adding) |
+| `d` / `Ctrl+D` | Dry-run (preview argv, stay open) |
 | `Ctrl+S` | Save the selection to `.ai-launch.yaml` |
 | `Ctrl+P` | Save the selection as a named profile in the global config |
-| `?` | Help |
-| `q` / `Esc` / `Ctrl+C` | Quit |
+| `?` | Help (full key list) |
+| `q` / `Esc` / `Ctrl+C` | Quit without running |
 
-In the mount browser you can also type a path directly — including paths
-containing the letters `j`/`k`/`l`/`h`: once typing starts, those letters go
-to the input instead of navigating, and the arrow keys stay browser-only
-no-ops until the input is submitted or cancelled.
+**Typical sequence**
+
+1. `↑/↓` highlight an agent (e.g. Pi)  
+2. `Space` or `Enter` → **select** (`Selected: Pi`, interface stays open)  
+3. (optional) `Tab` → Permissions / Mounts / Options  
+4. `r` → **RUN** (pre-flight runs inside the TUI; on failure you stay there)
+
+**Add a folder:** `a` → browse → `Enter` to add → `Esc` cancel.
 
 On Windows the Jail toggle and the permissions that depend on it (ssh, gh,
 docker, gpu) do not appear in the TUI at all.
@@ -297,14 +341,16 @@ permissions that depend on it. To run sandboxed from Windows, use WSL2.
 
 | File | Scope | Contents |
 | --- | --- | --- |
-| `~/.config/ai-launch/config.yaml` | Global (machine) | Catalog of `agents`, `tools`, `permissions`, `default_mounts`, `profiles`, `memory_server_url`, `memory_auth_token` |
+| `~/.config/ai-launch/config.yaml` | Global (machine) | Catalog of `agents`, `tools`, `permissions`, `default_mounts`, `recent_agents`, `profiles`, `memory_server_url`, `memory_auth_token` |
 | `<project>/.ai-launch.yaml` | Workspace | Selection: `agent`, `permissions`, `mounts`, `options` (includes `jail_flags`, `param_values`, `extra_args`) |
 | `~/.config/ai-launch/install-state.json` | Global | Already-installed release tags |
 | `~/.config/ai-launch/install.log` | Global | Install log (0600, no tokens) |
 | `~/.local/share/ai-launcher/bin/ai-memory` | Global | Managed ai-memory native runner (exported as `AI_MEMORY_NATIVE_BIN`) |
 
-The full schema (fields, defaults, ai-jail v1.15 `jail_flags`) is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The full schema (fields, defaults, ai-jail `jail_flags`) is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Docker passthrough is **opt-in**
+via the Docker permission / `--docker` (aligned with recent ai-jail defaults:
+do not pass the host socket unless you trust the workload).
 
 ## Security
 
@@ -338,6 +384,22 @@ What it does **NOT** protect against:
 - It does not replace token hygiene: anyone with access to the global config
   reads `memory_auth_token`.
 
+## Ecosystem
+
+ai-launcher is a **companion** to the [ai-jail](https://github.com/akitaonrails/ai-jail)
++ [ai-memory](https://github.com/akitaonrails/ai-memory) stack (Fabio Akita / community).
+It does not reimplement those tools; it builds the same chain you would type by hand,
+with a TUI, profiles, and a verified installer.
+
+Optional third piece of the daily toolkit (not integrated here — use alongside):
+[ai-usagebar](https://github.com/akitaonrails/ai-usagebar) for provider quota / spend.
+
+Background reading (author):
+[ai-jail](https://akitaonrails.com/tags/ai-jail/),
+[ai-memory](https://akitaonrails.com/tags/ai-memory/).
+
+Documentation and UI strings in this repository are **English**.
+
 ## Documentation
 
 | Document | Contents |
@@ -350,13 +412,15 @@ What it does **NOT** protect against:
 
 ## Roadmap
 
-- [x] Interactive TUI with real execution (Enter launches the harness)
+- [x] Interactive TUI with real execution (`r` / Ctrl+Enter runs; Space/Enter select)
 - [x] Named profiles and harness-declared parameters
 - [x] Installer with mandatory SHA-256 checksum
 - [x] Windows as a first-class citizen without jail
 - [x] Gherkin contract suite against ai-jail/ai-memory drift
 - [x] Automated release pipeline (autotag semver + GoReleaser: archives, `checksums.txt`, SBOM)
 - [x] Self-update (`ai-launcher upgrade`) and POSIX curl installer (`install.sh`)
+- [x] Platform default mounts (Linux `/storage…`, macOS `/Volumes…`) + home-symlink auto-mounts
+- [x] `ai-memory run` harness remap for wrappers (e.g. catalog `oc` → harness `opencode`)
 - [ ] Native sandbox on Windows (depends on upstream; unlikely)
 - [ ] GUI (not planned; the TUI is the interface)
 

@@ -152,3 +152,17 @@ func TestPTYExecutorReportsOutputError(t *testing.T) {
 		t.Fatalf("output error = %v", err)
 	}
 }
+
+func TestPrepareHostTTYNoopsForPipes(t *testing.T) {
+	// Non-file readers and non-TTY files must not panic; restore is a no-op.
+	restore := prepareHostTTY(strings.NewReader("x"), nil)
+	restore()
+	// A regular file is not a terminal → no raw mode.
+	f, err := os.CreateTemp(t.TempDir(), "notty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	restore = prepareHostTTY(f, f)
+	restore()
+}
