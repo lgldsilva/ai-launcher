@@ -510,14 +510,6 @@ func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Per
 	return cfg, []Issue{{Code: "jail-unsupported-windows", Message: message, Warning: true}}
 }
 
-// ConstrainForHost used to auto-disable the jail on external volumes. That was
-// wrong on macOS: ai-jail (sandbox-exec) is supported there, including under
-// /Volumes. Kept as a no-op so callers still compile; use jailMemoryVolumeIssues
-// for the optional advisory about ai-memory+jail on external disks.
-func ConstrainForHost(cfg LaunchConfig, _, _ string, _ []config.Permission) (LaunchConfig, []Issue) {
-	return cfg, nil
-}
-
 // dropJailAndDependents turns off UseJail and every jail-backed permission.
 // It returns the sorted list of permission IDs that were on and got cleared.
 func dropJailAndDependents(cfg LaunchConfig, permissions []config.Permission) (LaunchConfig, []string) {
