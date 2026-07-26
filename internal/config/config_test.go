@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"pgregory.net/rapid"
 )
 
@@ -887,5 +888,178 @@ func TestJailDependentIDsResolvesTransitiveChainInAnyOrder(t *testing.T) {
 		if !dependent[id] {
 			t.Errorf("JailDependentIDs() missing %q with leaf-first declaration order", id)
 		}
+	}
+}
+
+// A document that neither the list form nor the scalar form can decode must
+// surface an error instead of silently producing a zero Options.
+func TestOptionsUnmarshalRejectsUndecodableDocuments(t *testing.T) {
+	var options Options
+	if err := yaml.Unmarshal([]byte("- 1\n- 2\n"), &options); err == nil {
+		t.Fatal("UnmarshalYAML(sequence) = nil; want the list-form error")
+	}
+
+	// The scalar fallback only applies when the list form fails: a mapping
+	// with a scalar extra_args decodes through the second attempt.
+	var scalar Options
+	if err := yaml.Unmarshal([]byte("jail: true\nextra_args: --model sonnet\n"), &scalar); err != nil {
+		t.Fatalf("UnmarshalYAML(scalar extra_args) error = %v", err)
+	}
+	if !reflect.DeepEqual(scalar.ExtraArgs, []string{"--model", "sonnet"}) || !scalar.Jail {
+		t.Fatalf("scalar form decoded to %#v", scalar)
+	}
+}
+
+// Both save paths must stamp the schema version into the file itself, not
+// just into the in-memory struct.
+func TestSaveFunctionsStampCurrentVersionIntoTheFile(t *testing.T) {
+	readVersion := func(t *testing.T, path string) string {
+		t.Helper()
+		raw, err := os.ReadFile(path) // #nosec G304 -- test-written file
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string]any
+		if err := yaml.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
+		}
+		version, _ := document["version"].(string)
+		return version
+	}
+
+	globalPath := filepath.Join(t.TempDir(), "global.yaml")
+	if err := SaveGlobal(globalPath, Global{Version: "stale", Agents: []Agent{{Name: "X", Command: "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readVersion(t, globalPath); got != CurrentVersion {
+		t.Fatalf("saved global version = %q; want %q", got, CurrentVersion)
+	}
+
+	localPath := filepath.Join(t.TempDir(), "local.yaml")
+	if err := SaveLocal(localPath, Local{Version: "stale", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readVersion(t, localPath); got != CurrentVersion {
+		t.Fatalf("saved local version = %q; want %q", got, CurrentVersion)
+	}
+}
+
+// SaveRecentAgents is a surgical update: it stamps the version and the MRU
+// list while leaving every other key in the document untouched.
+func TestSaveRecentAgentsPreservesOtherKeysAndStampsTheDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	body := "version: '1.0'\nmemory_server_url: https://example.test\nagents:\n  - name: Claude\n    command: claude\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRecentAgents(path, []string{"kimi", "claude"}); err != nil {
+		t.Fatalf("SaveRecentAgents() error = %v", err)
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- test-written file
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["version"] != CurrentVersion {
+		t.Fatalf("version = %#v; want %q", document["version"], CurrentVersion)
+	}
+	if document["memory_server_url"] != "https://example.test" {
+		t.Fatalf("memory_server_url = %#v; the untouched key must survive", document["memory_server_url"])
+	}
+	agents, ok := document["agents"].([]any)
+	if !ok || len(agents) != 1 {
+		t.Fatalf("agents = %#v; the untouched list must survive", document["agents"])
+	}
+	recent, ok := document["recent_agents"].([]any)
+	if !ok || len(recent) != 2 || recent[0] != "kimi" || recent[1] != "claude" {
+		t.Fatalf("recent_agents = %#v; want [kimi claude]", document["recent_agents"])
+	}
+}
+
+// An empty existing file decodes to a nil document; the save must treat it
+// like a missing file instead of choking on the nil map.
+func TestSaveRecentAgentsHandlesAnEmptyExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.yaml")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRecentAgents(path, []string{"claude"}); err != nil {
+		t.Fatalf("SaveRecentAgents(empty file) error = %v", err)
+	}
+	loaded, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	if !reflect.DeepEqual(loaded.RecentAgents, []string{"claude"}) {
+		t.Fatalf("RecentAgents = %#v; want [claude]", loaded.RecentAgents)
+	}
+}
+
+// An empty memory_server_url inherits the default, while a single configured
+// tool must not be replaced by the built-in pair.
+func TestLoadGlobalDefaultsEmptyMemoryURLAndKeepsConfiguredTools(t *testing.T) {
+	tempDir := t.TempDir()
+	emptyURL := filepath.Join(tempDir, "empty-url.yaml")
+	if err := os.WriteFile(emptyURL, []byte("agents:\n  - name: Test\n    command: test-agent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadGlobal(emptyURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MemoryServerURL != DefaultMemoryServerURL {
+		t.Fatalf("MemoryServerURL = %q; want default %q", got.MemoryServerURL, DefaultMemoryServerURL)
+	}
+	if len(got.Tools) != len(DefaultGlobal().Tools) {
+		t.Fatalf("Tools = %#v; omitted tools must fall back to the built-ins", got.Tools)
+	}
+
+	customTool := filepath.Join(tempDir, "custom-tool.yaml")
+	body := "tools:\n  - name: mine\n    command: mine\n"
+	if err := os.WriteFile(customTool, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadGlobal(customTool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].Command != "mine" {
+		t.Fatalf("Tools = %#v; a configured tool list must be kept as-is", got.Tools)
+	}
+}
+
+// UpsertAgent trims the identifying fields before validating and storing, so
+// a padded entry does not slip past the required-field checks or get
+// persisted with whitespace.
+func TestUpsertAgentTrimsNameCommandAndPath(t *testing.T) {
+	global := Global{}
+	if err := UpsertAgent(&global, Agent{Name: "  Xpto  ", Command: " xpto ", Path: " /opt/xpto "}); err != nil {
+		t.Fatal(err)
+	}
+	stored := global.Agents[0]
+	if stored.Name != "Xpto" || stored.Command != "xpto" || stored.Path != "/opt/xpto" {
+		t.Fatalf("stored agent = %#v; want all fields trimmed", stored)
+	}
+	// A padded re-upsert of the same command must update, not duplicate.
+	if err := UpsertAgent(&global, Agent{Name: "Xpto", Command: "  xpto", Path: "/new"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(global.Agents) != 1 || global.Agents[0].Path != "/new" {
+		t.Fatalf("agents after padded re-upsert = %#v", global.Agents)
+	}
+}
+
+// The upsert match is on name OR command: dropping the name side of the
+// disjunction turns a rename into a duplicate entry.
+func TestUpsertAgentMatchesOnNameAlone(t *testing.T) {
+	global := Global{Agents: []Agent{{Name: "Xpto", Command: "xpto", Path: "/old"}}}
+	if err := UpsertAgent(&global, Agent{Name: "Xpto", Command: "renamed-xpto", Path: "/new"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(global.Agents) != 1 || global.Agents[0].Command != "renamed-xpto" || global.Agents[0].Path != "/new" {
+		t.Fatalf("agents = %#v; want the existing entry updated in place", global.Agents)
 	}
 }
