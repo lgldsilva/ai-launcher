@@ -17,7 +17,7 @@ import (
 func stubRunTUI(t *testing.T, confirmed launcher.LaunchConfig) func() {
 	t.Helper()
 	previous := runTUI
-	runTUI = func(config.Global, launcher.LaunchConfig, tui.Hooks) (launcher.LaunchConfig, error) {
+	runTUI = func(config.Global, launcher.LaunchConfig, tui.Hooks, string) (launcher.LaunchConfig, error) {
 		return confirmed, nil
 	}
 	return func() { runTUI = previous }
@@ -52,7 +52,7 @@ func TestTuiRunAutosavesTheConfirmedSelection(t *testing.T) {
 		launchConfig: launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}, UseJail: true},
 		errOut:       &bytes.Buffer{},
 	}
-	proceed, err := req.confirmSelection()
+	proceed, err := req.confirmSelection("")
 	if err != nil || !proceed {
 		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
 	}
@@ -87,7 +87,7 @@ func TestTuiRunAutosaveFailureWarnsButProceeds(t *testing.T) {
 		opts:   cliOptions{globalPath: filepath.Join(blocker, "global.yaml"), localPath: filepath.Join(blocker, "local.yaml")},
 		errOut: &errOut,
 	}
-	proceed, err := req.confirmSelection()
+	proceed, err := req.confirmSelection("")
 	if err != nil || !proceed {
 		t.Fatalf("confirmSelection() = %t, %v; a save failure must not block the launch", proceed, err)
 	}

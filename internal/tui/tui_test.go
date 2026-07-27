@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"unsafe"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
@@ -649,5 +651,25 @@ func TestModelSavesProfileWithCtrlP(t *testing.T) {
 	}
 	if len(model.profileNames) != 1 || model.profileNames[0] != "review" || model.sectionCount() != 5 {
 		t.Fatalf("profiles after save = %#v", model.profileNames)
+	}
+}
+
+// TestNewProgramEnablesAltScreen guards the cross-platform rendering fix: the
+// TUI must start in the alternate screen buffer, otherwise a View taller than
+// the terminal (or whose line count changes between frames) drifts down the
+// screen instead of repainting in place — the bug seen on short Linux
+// terminals. startupOptions is unexported on *tea.Program, so the first bit
+// (withAltScreen = 1 << iota = 1) is read via reflection.
+func TestNewProgramEnablesAltScreen(t *testing.T) {
+	p := newProgram(NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}}))
+
+	field := reflect.ValueOf(p).Elem().FieldByName("startupOptions")
+	if !field.IsValid() {
+		t.Skip("tea.Program.startupOptions not found; bubbletea API changed — re-check alt screen")
+	}
+	// #nosec G103 -- reading one known unexported int16 field on a value we just built, for a regression test.
+	opts := *(*int16)(unsafe.Pointer(field.UnsafeAddr()))
+	if opts&1 == 0 {
+		t.Fatal("newProgram must be created with tea.WithAltScreen() to keep the layout stable on short terminals")
 	}
 }

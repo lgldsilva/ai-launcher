@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	launchcmd "github.com/lgldsilva/ai-launcher/internal/cmd"
@@ -780,42 +781,80 @@ type launchRequest struct {
 
 // launch confirms the configuration (TUI when interactive), optionally saves
 // it, and builds, validates, and executes the resulting argv.
+//
+// In the interactive (TUI) flow a launch failure is recoverable in place:// the TUI is re-opened seeded with the failure so the operator can adjust
+// (toggle New workstream / ai-memory off) and retry with r, or quit, without
+// restarting ai-launcher. The CLI flow (argv present) stays one-shot and
+// exits with the error, since prompts are not an option there.
 func launch(req launchRequest) error {
-	proceed, err := req.confirmSelection()
-	if err != nil || !proceed {
-		return err
-	}
-	argv, err := launcher.Build(req.launchConfig)
-	if err != nil {
-		return err
-	}
-	// Validate before printing: --dry-run is the advertised diagnostic surface,
-	// so it must not present a command pre-flight would reject. The argv is
-	// still printed when there are issues — seeing what would run is the point.
-	printOnly := decideLaunchAction(req.opts.dryRun) == actionPrint
-	issues := launcher.NewValidator().WithPermissions(req.global.Permissions).Validate(req.launchConfig)
-	fatal := reportPreflight(req.errOut, issues)
-	if printOnly {
-		_, _ = fmt.Fprintln(req.out, shellJoin(argv))
-	}
-	if fatal {
-		return errors.New("pre-flight validation failed")
-	}
-	if printOnly {
+	tuiFlow := len(req.args) == 0
+	status := ""
+	autoArmedNew := false // true when --new was armed to recover from a 409 (cleared on success)
+	for {
+		proceed, err := req.confirmSelection(status)
+		if err != nil || !proceed {
+			return err
+		}
+		argv, err := launcher.Build(req.launchConfig)
+		if err != nil {
+			return err
+		}
+		// Validate before printing: --dry-run is the advertised diagnostic surface,
+		// so it must not present a command pre-flight would reject. The argv is
+		// still printed when there are issues — seeing what would run is the point.
+		printOnly := decideLaunchAction(req.opts.dryRun) == actionPrint
+		issues := launcher.NewValidator().WithPermissions(req.global.Permissions).Validate(req.launchConfig)
+		fatal := reportPreflight(req.errOut, issues)
+		if printOnly {
+			_, _ = fmt.Fprintln(req.out, shellJoin(argv))
+		}
+		if fatal {
+			return errors.New("pre-flight validation failed")
+		}
+		if printOnly {
+			return nil
+		}
+		req.rememberRecentAgent()
+		if err := req.execute(argv); err != nil {
+			if !tuiFlow {
+				return err
+			}
+			// TUI flow: surface the failure and re-open the selection screen.
+			status = launchFailureStatus(err.Error())
+			// A busy workstream (ai-memory 409 "workstream is already active")
+			// is recovered by starting a parallel stream: arm --new so the
+			// next r sidesteps the conflict instead of re-hitting it. The
+			// operator is warned and can still turn it off (or wait ~90s for
+			// the lease to expire). The recovery name is dropped again on a
+			// successful launch so it is not baked into the saved selection.
+			if isWorkstreamConflict(err.Error()) && strings.TrimSpace(req.launchConfig.NewWorkstream) == "" {
+				req.launchConfig.NewWorkstream = fmt.Sprintf("recovery-%d", time.Now().Unix())
+				autoArmedNew = true
+				status = "Workstream busy (409) — armed 'New workstream' (" + req.launchConfig.NewWorkstream +
+					") for the retry so the next r starts a parallel stream.\n" +
+					"Turn it off if you'd rather wait ~90s, or q to quit.\n" + launchFailureHint(err.Error())
+			}
+			continue
+		}
+		if autoArmedNew && req.launchConfig.NewWorkstream != "" {
+			req.launchConfig.NewWorkstream = ""
+			if err := saveLocalSelection(req.opts.globalPath, true, req.opts.localPath, req.local, req.launchConfig); err != nil {
+				_, _ = fmt.Fprintf(req.errOut, "warning: could not clear the recovery workstream from %s: %v\n", req.opts.localPath, err)
+			}
+		}
 		return nil
 	}
-	req.rememberRecentAgent()
-	return req.execute(argv)
 }
 
 // runTUI is the interactive selection loop; a variable so tests can confirm
-// a selection without a terminal.
-var runTUI = tui.RunWithHooks
+// a selection without a terminal. The trailing string seeds the initial
+// status line (used to surface a launch failure on re-open).
+var runTUI = tui.RunWithMessage
 
 // confirmSelection runs the interactive TUI when the launch came from one, or
 // persists the selection for a CLI invocation. proceed is false when the flow
 // ends here (a --save run, a TUI cancellation, or a TUI error).
-func (r *launchRequest) confirmSelection() (bool, error) {
+func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 	if len(r.args) > 0 {
 		if err := saveLocalSelection(r.opts.globalPath, r.opts.save, r.opts.localPath, r.local, r.launchConfig); err != nil {
 			return false, err
@@ -832,7 +871,7 @@ func (r *launchRequest) confirmSelection() (bool, error) {
 			}
 			return config.SaveGlobal(r.opts.globalPath, r.global)
 		},
-	})
+	}, initialStatus)
 	if err != nil {
 		// A cancellation is a quiet exit; any other failure is reported.
 		return false, classifyTUIError(err)
@@ -890,15 +929,24 @@ func (r *launchRequest) execute(argv []string) error {
 	return nil
 }
 
+// isWorkstreamConflict reports whether a launch error is ai-memory's
+// "409 workstream is already active" — a busy or stale lease that a parallel
+// workstream (--new) sidesteps. The launcher uses it to arm that recovery.
+func isWorkstreamConflict(errText string) bool {
+	return strings.Contains(errText, "409") && strings.Contains(errText, "workstream is already active")
+}
+
 // launchFailureHint maps common child stderr/exit text to a short recovery tip.
 func launchFailureHint(errText string) string {
 	switch {
 	case strings.Contains(errText, "409") && strings.Contains(errText, "workstream is already active"):
-		return "hint: another ai-memory run still holds this workstream (or left a stale lock).\n" +
+		return "hint: another ai-memory run still holds this workstream (or left a stale lease).\n" +
 			"  - wait until the lease time in the error, then retry\n" +
-			"  - if the owner PID is dead: just retry (lease expires in ~1–2 min)\n" +
+			"  - if the owner PID is dead: just retry (the lease expires within 90 seconds)\n" +
 			"  - or start a parallel stream: ai-launcher --agent <name> --new my-stream\n" +
 			"  - or skip memory: ai-launcher --agent <name> --no-memory"
+	case strings.Contains(errText, "401") || strings.Contains(errText, "Unauthorized") || strings.Contains(errText, "auth required"):
+		return "hint: ai-memory rejected the token (401). Set memory_auth_token in the global config (~/.config/ai-launch/config.yaml), or use --no-memory"
 	case strings.Contains(errText, "certificate") || strings.Contains(errText, "TLS") || strings.Contains(errText, "x509"):
 		return "hint: memory server TLS failed — check memory_server_url (expect *.internal.lgldsilva.com.br) or use --no-memory"
 	case strings.Contains(errText, "canonicalizing managed run cwd") || strings.Contains(errText, "Operation not permitted"):
@@ -906,6 +954,14 @@ func launchFailureHint(errText string) string {
 	default:
 		return "hint: try --no-memory if the memory server fails, or --no-jail if the project is on an external volume"
 	}
+}
+
+// launchFailureStatus turns an execute error into a concise status block for
+// the TUI recovery screen: a one-line call to action plus the matching hint.
+// It is shown when the TUI is re-opened after a launch failure so the operator
+// knows what went wrong and how to recover before pressing r again.
+func launchFailureStatus(errText string) string {
+	return "Last launch failed — adjust and press r to retry, or q to quit:\n" + launchFailureHint(errText)
 }
 
 func saveIfRequested(save bool, path string, local config.Local, launch launcher.LaunchConfig) error {
