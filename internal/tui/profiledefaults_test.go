@@ -51,6 +51,116 @@ func TestLoadingAProfileWithoutJailKeyKeepsTheSandboxOn(t *testing.T) {
 	}
 }
 
+// homeWithEscapingSymlink builds a home directory containing one hidden
+// symlink whose target resolves outside it — the shape ARCHITECTURE invariant
+// 9 exists for — and returns the home and the resolved target.
+func homeWithEscapingSymlink(t *testing.T) (home, target string) {
+	t.Helper()
+	home = t.TempDir()
+	outside := t.TempDir()
+	target = filepath.Join(outside, "cache")
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(home, ".cache")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return home, resolved
+}
+
+// Invariant 9 mounts every home dotfile symlink target that escapes $HOME,
+// because ai-jail recreates the symlink inside the sandbox without its target.
+// The launcher merges those before opening the TUI, but loadProfile replaced
+// m.launch.Mounts wholesale — so loading any profile that declares mounts
+// silently dropped them and the invariant stopped holding for that launch,
+// with ~/.cache dangling inside the jail again and no warning anywhere.
+func TestLoadingAProfileKeepsTheHomeSymlinkAutoMounts(t *testing.T) {
+	stubWindows(t, false)
+	home, autoTarget := homeWithEscapingSymlink(t)
+	global := loadGlobalWithProfile(t,
+		"  scoped:\n    agent: claude\n    mounts:\n      - path: /reference\n        mode: ro\n")
+
+	model := NewModel(global, launcher.LaunchConfig{
+		HomeDir:     home,
+		UseJail:     true,
+		Permissions: map[string]bool{},
+		Mounts:      []config.Mount{{Path: autoTarget, Mode: "rw"}},
+	})
+	model = applyKey(t, model, runeKey("5"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+
+	var sawAuto, sawProfile bool
+	for _, mount := range model.launch.Mounts {
+		switch mount.Path {
+		case autoTarget:
+			sawAuto = true
+		case "/reference":
+			sawProfile = true
+		}
+	}
+	if !sawProfile {
+		t.Errorf("mounts = %#v; the profile's own mounts must be applied", model.launch.Mounts)
+	}
+	if !sawAuto {
+		t.Errorf("mounts = %#v; want the home symlink auto-mount %q kept (invariant 9)", model.launch.Mounts, autoTarget)
+	}
+}
+
+// With the jail off there is no tmpfs $HOME and nothing dangles, so the
+// auto-mounts have no reason to exist and a profile's mount list stands alone.
+func TestLoadingAProfileWithoutJailDoesNotReaddAutoMounts(t *testing.T) {
+	stubWindows(t, false)
+	home, autoTarget := homeWithEscapingSymlink(t)
+	global := loadGlobalWithProfile(t,
+		"  scoped:\n    agent: claude\n    mounts:\n      - path: /reference\n        mode: ro\n    options:\n      jail: false\n")
+
+	model := NewModel(global, launcher.LaunchConfig{
+		HomeDir:     home,
+		UseJail:     false,
+		Permissions: map[string]bool{},
+	})
+	model = applyKey(t, model, runeKey("5"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+
+	for _, mount := range model.launch.Mounts {
+		if mount.Path == autoTarget {
+			t.Fatalf("mounts = %#v; no jail means no dangling symlinks to compensate for", model.launch.Mounts)
+		}
+	}
+}
+
+// The same gap through the other door: applyJailAutoDetection runs in the
+// launcher only when the jail is already on, so an `ai-launcher --no-jail` run
+// whose operator turns Jail back on in the Options section reached a state
+// nobody had prepared the mounts for.
+func TestTurningTheJailOnInTheTUIAddsTheAutoMounts(t *testing.T) {
+	stubWindows(t, false)
+	home, autoTarget := homeWithEscapingSymlink(t)
+
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		HomeDir:     home,
+		UseJail:     false,
+		Permissions: map[string]bool{},
+	})
+	// Options is the fourth section; Jail is its first row.
+	model = applyKey(t, model, runeKey("4"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+	if !model.launch.UseJail {
+		t.Fatalf("UseJail = false; the toggle did not fire (section=%d cursor=%d)", model.section, model.cursor)
+	}
+
+	for _, mount := range model.launch.Mounts {
+		if mount.Path == autoTarget {
+			return
+		}
+	}
+	t.Fatalf("mounts = %#v; want the home symlink auto-mount %q after enabling the jail", model.launch.Mounts, autoTarget)
+}
+
 // The counterpart: a profile that does say jail: false is an operator decision
 // stored in the trusted global config, and loading it must still turn the
 // sandbox off.

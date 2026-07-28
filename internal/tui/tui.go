@@ -50,9 +50,14 @@ type Hooks struct {
 // Model is the bubbletea model for the interactive launcher. All durable
 // state lives in launch so the CLI and TUI share the same builder.
 type Model struct {
-	catalog         catalog.Catalog
-	launch          launcher.LaunchConfig
-	hooks           Hooks
+	catalog catalog.Catalog
+	launch  launcher.LaunchConfig
+	hooks   Hooks
+	// autoMounts are the home dotfile symlink targets escaping $HOME that the
+	// jail needs mapped (ARCHITECTURE invariant 9). They are kept apart from
+	// launch.Mounts because a profile replaces that list wholesale and they
+	// have to survive it — see reapplyAutoMounts.
+	autoMounts      []config.Mount
 	agents          []catalog.AgentStatus
 	recentTop       string // command of the most-recently-used agent, if any
 	permissionIDs   []string
@@ -91,9 +96,15 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	if len(global.RecentAgents) > 0 {
 		recentTop = global.RecentAgents[0]
 	}
+	// Detected once, here, and never inside the event loop: this is a scan of
+	// $HOME plus one EvalSymlinks per dotfile. The refused entries are dropped
+	// because the launcher already reported them on stderr before the TUI
+	// opened; re-listing them would only repeat warnings the operator has seen.
+	autoMounts, _ := launcher.HomeSymlinkMounts(launch.HomeDir)
 	model := Model{
 		catalog:       c,
 		launch:        launch,
+		autoMounts:    autoMounts,
 		agents:        visibleAgents(c.Agents(), global.RecentAgents, launch),
 		recentTop:     recentTop,
 		permissionIDs: make([]string, 0, len(global.Permissions)),
@@ -776,6 +787,11 @@ func (m *Model) toggleOption() {
 		return
 	}
 	rows[m.cursor].toggle(m)
+	// Turning the jail on here reaches a state the launcher never prepared:
+	// applyJailAutoDetection only runs when the jail was already on at startup,
+	// so a --no-jail launch that the operator re-enables would otherwise emit an
+	// argv without the auto-mounts invariant 9 requires.
+	m.reapplyAutoMounts()
 	m.status = "Option toggled"
 }
 
@@ -832,7 +848,26 @@ func (m *Model) loadProfile(name string) {
 		m.launch.ExtraArgs = append([]string(nil), profile.Options.ExtraArgs...)
 		m.launch.ParamValues = copyParamValues(profile.Options.ParamValues)
 	}
+	// After the options block, because whether the auto-mounts are needed at all
+	// depends on the UseJail the profile just set.
+	m.reapplyAutoMounts()
 	m.status = "Profile loaded: " + name
+}
+
+// reapplyAutoMounts re-merges the home dotfile symlink targets that escape
+// $HOME (ARCHITECTURE invariant 9). The launcher merges them once before the
+// TUI opens, but a profile replaces the mount list wholesale, so without this
+// loading any profile with a mounts block left ~/.cache and friends dangling
+// inside the jail — a silent regression of the very bug the invariant fixes.
+//
+// MergeAutoMounts skips targets an existing mount already covers, so a profile
+// that maps a parent directory is not duplicated. With the jail off there is no
+// tmpfs $HOME and nothing dangles, so nothing is added.
+func (m *Model) reapplyAutoMounts() {
+	if !m.launch.UseJail || len(m.autoMounts) == 0 {
+		return
+	}
+	m.launch.Mounts = launcher.MergeAutoMounts(m.launch.Mounts, m.autoMounts)
 }
 
 func copyParamValues(values map[string]string) map[string]string {

@@ -139,6 +139,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    and the mount-point roots that aggregate every attached volume (`/Volumes`,
    `/media`, `/mnt`, `/run`, `/srv`). A refused target is never mounted and is
    reported by name as a pre-flight warning.
+   The merge is re-applied whenever the mount list can change underneath it:
+   the TUI keeps the detected targets aside from `launch.Mounts` and re-merges
+   them after loading a profile (which replaces the list wholesale) and after
+   the Jail toggle turns the sandbox on (which the launcher never prepared
+   mounts for). Both paths used to emit an argv with the symlinks dangling
+   again, silently.
    Only the tree **itself** is denied — paths beneath it stay auto-mountable,
    which is what keeps the operator's own project volume (`/Volumes/MSD512`)
    and home working. Comparison happens against the *resolved* target, so the
