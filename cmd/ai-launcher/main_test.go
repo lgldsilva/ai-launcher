@@ -149,9 +149,13 @@ func TestCorruptLocalConfigWarnsAndContinues(t *testing.T) {
 	}
 }
 
+// No --no-jail here on purpose: the `review` profile declares its own options
+// block, so it — not the workspace file — owns the jail toggle. Passing
+// --no-jail used to be required only because the profile's value leaked into
+// the trust check and got attributed to .ai-launch.yaml.
 func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "review", "--dry-run")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--profile", "review", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -162,7 +166,7 @@ func TestProfileFlagLayersOverLocalConfig(t *testing.T) {
 
 func TestExplicitFlagsOverrideProfile(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: false\n")
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail",
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
 		"--profile", "review", "--agent", "codex", "--param", "model=v2", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -175,6 +179,10 @@ func TestExplicitFlagsOverrideProfile(t *testing.T) {
 	}
 }
 
+// --no-jail is genuinely required here: the `minimal` profile declares no
+// options block, so the workspace file still owns the toggles — and a file
+// disabling the sandbox is exactly what the trust boundary refuses without an
+// explicit opt-in.
 func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: other-cli\noptions:\n  jail: false\n  memory: true\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--profile", "minimal", "--dry-run")

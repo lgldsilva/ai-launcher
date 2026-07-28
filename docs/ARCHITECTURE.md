@@ -89,6 +89,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    trusted global config (`trusted_local_configs`), and a byte-identical file
    is honored like operator input. Any later edit changes the hash and the
    boundary applies again — a cloned repository cannot forge the record.
+   The check reads the workspace file **as loaded, before a profile is layered
+   on**, and only for the blocks the file still owns (`localTrustFrom` mirrors
+   the conditions in `applyProfile`). Deriving it from the merged selection
+   attributed a trusted profile's `jail: false` to `.ai-launch.yaml` and refused
+   the launch; conversely, a value a profile replaced never reaches the argv, so
+   there is nothing left to refuse.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
 4. **Mandatory checksum on installs**: without a verifiable checksum the
    install fails, unless an explicit `allow_unverified: true` in the recipe.
@@ -104,6 +110,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    search over the raw bytes: `jail:` also occurs inside `permissions`, inside
    comments and inside mount paths, and a false positive there skips the
    default and leaves the sandbox off.
+   The rule belongs to `Options.UnmarshalYAML`, so it holds for **every**
+   `options:` block in the schema — the workspace file and a global-config
+   profile alike. Applying it only in `LoadLocal` left profiles decoding into
+   Go's zero values, and a profile naming just `yolo` launched with the sandbox
+   off. A profile with no `options:` block at all keeps a nil pointer, which is
+   how it leaves the toggles to the workspace file.
 6b. **Harness must be one ai-memory accepts**: `ai-memory run` takes a fixed
    list (`config.MemoryRunHarnesses`). Pre-flight fails with
    `memory-harness-unsupported` instead of emitting an argv whose rejection
