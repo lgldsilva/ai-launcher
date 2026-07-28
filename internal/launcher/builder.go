@@ -803,9 +803,9 @@ func jailMemoryVolumeIssues(cfg LaunchConfig, getwd func() (string, error), goos
 	}}
 }
 
-// ExternalVolumeCwd reports host paths on removable/external media where some
+// externalVolumeCwd reports host paths on removable/external media where some
 // in-sandbox tools (notably ai-memory managed-run) struggle with cwd realpath.
-func ExternalVolumeCwd(cwd, goos string) bool {
+func externalVolumeCwd(cwd, goos string) bool {
 	switch goos {
 	case "darwin":
 		return strings.HasPrefix(cwd, "/Volumes/")
@@ -815,8 +815,6 @@ func ExternalVolumeCwd(cwd, goos string) bool {
 		return false
 	}
 }
-
-func externalVolumeCwd(cwd, goos string) bool { return ExternalVolumeCwd(cwd, goos) }
 
 // mountIssues reports configured mounts that do not exist on the host.
 func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {

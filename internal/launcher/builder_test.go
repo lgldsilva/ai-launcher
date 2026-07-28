@@ -156,8 +156,8 @@ func TestExternalVolumeCwdByPlatform(t *testing.T) {
 		{"C:\\Users\\dev", "windows", false},
 	}
 	for _, tc := range cases {
-		if got := ExternalVolumeCwd(tc.cwd, tc.goos); got != tc.want {
-			t.Errorf("ExternalVolumeCwd(%q, %q) = %v; want %v", tc.cwd, tc.goos, got, tc.want)
+		if got := externalVolumeCwd(tc.cwd, tc.goos); got != tc.want {
+			t.Errorf("externalVolumeCwd(%q, %q) = %v; want %v", tc.cwd, tc.goos, got, tc.want)
 		}
 	}
 }

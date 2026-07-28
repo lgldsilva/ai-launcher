@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -25,74 +24,93 @@ func stubVersionCommand(t *testing.T, outputs map[string]string, errs map[string
 
 func lookPathAll(command string) (string, error) { return "/bin/" + command, nil }
 
-func TestCheckUpstreamVersionsWarnsWhenInstalledIsOlder(t *testing.T) {
+// These exercise UpstreamReport rather than a wrapper around it: --doctor is
+// the only caller, and it formats the report itself. An earlier
+// CheckUpstreamVersions turned the same data into []Issue for a pre-flight
+// warning that was never wired up, so it was tested code nothing ran.
+
+func TestUpstreamReportFlagsInstallsBelowTheSupportedFloor(t *testing.T) {
 	stubVersionCommand(t, map[string]string{
 		"/bin/ai-jail":   "ai-jail version 1.14.2",
 		"/bin/ai-memory": "ai-memory 1.18.0",
 	}, nil)
-	issues := CheckUpstreamVersions(lookPathAll, "linux")
-	if len(issues) != 2 {
-		t.Fatalf("issues = %#v; want both tools reported", issues)
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 2 {
+		t.Fatalf("report = %#v; want both tools probed", report)
 	}
-	for _, issue := range issues {
-		if !issue.Warning {
-			t.Fatalf("issue = %#v; version mismatches must be warnings, never fatal", issue)
+	for _, status := range report {
+		if !status.TooOld {
+			t.Errorf("%s TooOld = false; %s is below the floor %s", status.Command, status.Version, status.Minimum)
 		}
 	}
-	if issues[0].Code != "ai-jail-version-too-old" || issues[1].Code != "ai-memory-version-too-old" {
-		t.Fatalf("codes = %q, %q; want ai-jail-version-too-old, ai-memory-version-too-old", issues[0].Code, issues[1].Code)
+	if report[0].Code != "ai-jail-version-too-old" || report[1].Code != "ai-memory-version-too-old" {
+		t.Fatalf("codes = %q, %q", report[0].Code, report[1].Code)
 	}
-	if !strings.Contains(issues[0].Message, "1.14.2") || !strings.Contains(issues[0].Message, "1.15.0") {
-		t.Fatalf("ai-jail message = %q; want the detected version and the supported floor", issues[0].Message)
+	// --doctor prints the detected version against the floor, so both have to
+	// survive the probe.
+	if report[0].Version != "1.14.2" || report[0].Minimum != "1.15.0" {
+		t.Errorf("ai-jail status = %#v; want the detected version and the supported floor", report[0])
 	}
-	if !strings.Contains(issues[1].Message, "1.18.0") || !strings.Contains(issues[1].Message, "1.19.0") {
-		t.Fatalf("ai-memory message = %q; want the detected version and the supported floor", issues[1].Message)
-	}
-}
-
-func TestCheckUpstreamVersionsIsSilentWhenCurrentOrNewer(t *testing.T) {
-	stubVersionCommand(t, map[string]string{
-		"/bin/ai-jail":   "ai-jail 1.15.0 (abc123)",
-		"/bin/ai-memory": "ai-memory 1.19.0",
-	}, nil)
-	if issues := CheckUpstreamVersions(lookPathAll, "linux"); len(issues) != 0 {
-		t.Fatalf("minimum versions produced issues: %#v", issues)
-	}
-	stubVersionCommand(t, map[string]string{
-		"/bin/ai-jail":   "v2.0.0",
-		"/bin/ai-memory": "ai-memory 1.20.1",
-	}, nil)
-	if issues := CheckUpstreamVersions(lookPathAll, "linux"); len(issues) != 0 {
-		t.Fatalf("newer versions produced issues: %#v", issues)
+	if report[1].Version != "1.18.0" || report[1].Minimum != "1.19.0" {
+		t.Errorf("ai-memory status = %#v; want the detected version and the supported floor", report[1])
 	}
 }
 
-func TestCheckUpstreamVersionsIsSilentOnProbeFailures(t *testing.T) {
-	// LookPath failure: availability is reported by the caller's own checks.
-	if issues := CheckUpstreamVersions(func(string) (string, error) {
-		return "", errors.New("missing")
-	}, "linux"); len(issues) != 0 {
-		t.Fatalf("lookPath failure produced issues: %#v", issues)
+func TestUpstreamReportAcceptsCurrentOrNewerInstalls(t *testing.T) {
+	for _, outputs := range []map[string]string{
+		{"/bin/ai-jail": "ai-jail 1.15.0 (abc123)", "/bin/ai-memory": "ai-memory 1.19.0"},
+		{"/bin/ai-jail": "v2.0.0", "/bin/ai-memory": "ai-memory 1.20.1"},
+	} {
+		stubVersionCommand(t, outputs, nil)
+		for _, status := range UpstreamReport(lookPathAll, "linux") {
+			if status.TooOld {
+				t.Errorf("%s TooOld = true for %q; the floor is met", status.Command, status.Version)
+			}
+		}
 	}
-	// Probe execution failure (hung wrapper, non-zero exit) stays silent.
-	stubVersionCommand(t, nil, map[string]error{
-		"/bin/ai-jail":   errors.New("exit status 1"),
-		"/bin/ai-memory": errors.New("exit status 1"),
+}
+
+// A probe that cannot answer must never be reported as too old: availability is
+// the LookPath-based pre-flight check's job, and an unreadable version is not
+// evidence of an outdated one.
+func TestUpstreamReportNeverGuessesFromAFailedProbe(t *testing.T) {
+	t.Run("binary missing", func(t *testing.T) {
+		report := UpstreamReport(func(string) (string, error) {
+			return "", errors.New("missing")
+		}, "linux")
+		for _, status := range report {
+			if !status.Missing || status.TooOld {
+				t.Errorf("status = %#v; want Missing without TooOld", status)
+			}
+		}
 	})
-	if issues := CheckUpstreamVersions(lookPathAll, "linux"); len(issues) != 0 {
-		t.Fatalf("probe failure produced issues: %#v", issues)
-	}
-	// Unparseable output (no semver token) stays silent.
-	stubVersionCommand(t, map[string]string{
-		"/bin/ai-jail":   "ai-jail dev-build",
-		"/bin/ai-memory": "ai-memory dev-build",
-	}, nil)
-	if issues := CheckUpstreamVersions(lookPathAll, "linux"); len(issues) != 0 {
-		t.Fatalf("unparseable output produced issues: %#v", issues)
-	}
+
+	t.Run("probe exits non-zero", func(t *testing.T) {
+		stubVersionCommand(t, nil, map[string]error{
+			"/bin/ai-jail":   errors.New("exit status 1"),
+			"/bin/ai-memory": errors.New("exit status 1"),
+		})
+		for _, status := range UpstreamReport(lookPathAll, "linux") {
+			if status.TooOld || status.Version != "" {
+				t.Errorf("status = %#v; a failed probe reports no version", status)
+			}
+		}
+	})
+
+	t.Run("output carries no semver", func(t *testing.T) {
+		stubVersionCommand(t, map[string]string{
+			"/bin/ai-jail":   "ai-jail dev-build",
+			"/bin/ai-memory": "ai-memory dev-build",
+		}, nil)
+		for _, status := range UpstreamReport(lookPathAll, "linux") {
+			if status.TooOld || status.Version != "" {
+				t.Errorf("status = %#v; unparseable output reports no version", status)
+			}
+		}
+	})
 }
 
-func TestCheckUpstreamVersionsSkipsAIJailOnWindows(t *testing.T) {
+func TestUpstreamReportSkipsAIJailOnWindows(t *testing.T) {
 	probed := make([]string, 0)
 	original := runVersionCommand
 	runVersionCommand = func(path string) ([]byte, error) {
@@ -100,12 +118,12 @@ func TestCheckUpstreamVersionsSkipsAIJailOnWindows(t *testing.T) {
 		return []byte("9.9.9"), nil
 	}
 	t.Cleanup(func() { runVersionCommand = original })
-	lookPath := func(command string) (string, error) { return "/bin/" + command, nil }
-	if issues := CheckUpstreamVersions(lookPath, "windows"); len(issues) != 0 {
-		t.Fatalf("windows issues = %#v; want none", issues)
+	report := UpstreamReport(lookPathAll, "windows")
+	if len(report) != 1 || report[0].Command != "ai-memory" {
+		t.Fatalf("report = %#v; ai-jail has no Windows build and must be skipped", report)
 	}
 	if len(probed) != 1 || probed[0] != "/bin/ai-memory" {
-		t.Fatalf("probed = %#v; ai-jail must be skipped on Windows", probed)
+		t.Fatalf("probed = %#v; ai-jail must not even be executed on Windows", probed)
 	}
 }
 

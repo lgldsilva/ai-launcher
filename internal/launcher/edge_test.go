@@ -153,9 +153,9 @@ func TestValidatorWarnsOnUndeclaredParamsInSortedOrder(t *testing.T) {
 
 func TestPTYExecutorRunsCommand(t *testing.T) {
 	var output bytes.Buffer
-	err := (PTYExecutor{}).Run(context.Background(), []string{"sh", "-c", "printf hi"}, strings.NewReader(""), &output, nil)
+	err := (PTYExecutor{}).RunWithEnv(context.Background(), []string{"sh", "-c", "printf hi"}, nil, strings.NewReader(""), &output, nil)
 	if err != nil {
-		t.Fatalf("PTYExecutor.Run() error = %v", err)
+		t.Fatalf("PTYExecutor.RunWithEnv() error = %v", err)
 	}
 	if !strings.Contains(output.String(), "hi") {
 		t.Fatalf("PTY output = %q; want hi", output.String())
@@ -168,14 +168,14 @@ func TestPTYExecutorDrainsOutputWhenWriterIsNil(t *testing.T) {
 	// PTY buffer size to prove it.
 	done := make(chan error, 1)
 	go func() {
-		done <- (PTYExecutor{}).Run(context.Background(),
-			[]string{"sh", "-c", "head -c 1048576 /dev/zero | tr '\\000' x"},
+		done <- (PTYExecutor{}).RunWithEnv(context.Background(),
+			[]string{"sh", "-c", "head -c 1048576 /dev/zero | tr '\\000' x"}, nil,
 			strings.NewReader(""), nil, nil)
 	}()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("PTYExecutor.Run() error = %v", err)
+			t.Fatalf("PTYExecutor.RunWithEnv() error = %v", err)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("Run blocked on a full PTY buffer with out == nil")
@@ -183,13 +183,13 @@ func TestPTYExecutorDrainsOutputWhenWriterIsNil(t *testing.T) {
 }
 
 func TestPTYExecutorRejectsEmptyCommand(t *testing.T) {
-	if err := (PTYExecutor{}).Run(context.Background(), nil, nil, nil, nil); err == nil {
+	if err := (PTYExecutor{}).RunWithEnv(context.Background(), nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("empty command should fail")
 	}
 }
 
 func TestPTYExecutorReportsStartError(t *testing.T) {
-	err := (PTYExecutor{}).Run(context.Background(), []string{"definitely-not-an-ai-launcher-command"}, nil, nil, nil)
+	err := (PTYExecutor{}).RunWithEnv(context.Background(), []string{"definitely-not-an-ai-launcher-command"}, nil, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "start") {
 		t.Fatalf("start error = %v", err)
 	}
@@ -220,7 +220,7 @@ func TestPTYExecutorCapturesChildOutputInError(t *testing.T) {
 func TestPTYExecutorReturnsContextError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := (PTYExecutor{}).Run(ctx, []string{"sh", "-c", "sleep 1"}, nil, nil, nil)
+	err := (PTYExecutor{}).RunWithEnv(ctx, []string{"sh", "-c", "sleep 1"}, nil, nil, nil, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("context error = %v; want context canceled", err)
 	}
@@ -231,7 +231,7 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("output failure") }
 
 func TestPTYExecutorReportsOutputError(t *testing.T) {
-	err := (PTYExecutor{}).Run(context.Background(), []string{"sh", "-c", "printf hi"}, nil, failingWriter{}, nil)
+	err := (PTYExecutor{}).RunWithEnv(context.Background(), []string{"sh", "-c", "printf hi"}, nil, nil, failingWriter{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "read command output") {
 		t.Fatalf("output error = %v", err)
 	}

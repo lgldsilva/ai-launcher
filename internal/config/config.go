@@ -57,7 +57,7 @@ func SupportsMemoryRunHarness(name string) bool {
 
 // MinAIJailVersion and MinAIMemoryVersion pin the minimum upstream CLI
 // versions this launcher composes against. Older installs still launch;
-// `ai-launcher --doctor` reports them (see launcher.CheckUpstreamVersions).
+// `ai-launcher --doctor` reports them (see launcher.UpstreamReport).
 const (
 	MinAIJailVersion   = "1.15.0"
 	MinAIMemoryVersion = "1.19.0"

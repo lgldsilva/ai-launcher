@@ -3,7 +3,6 @@ package launcher
 
 import (
 	"context"
-	"fmt"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -60,26 +59,6 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 	}
 	report = append(report, probeUpstream(lookPath, "ai-memory", config.MinAIMemoryVersion, "ai-memory-version-too-old"))
 	return report
-}
-
-// CheckUpstreamVersions reports advisory warnings when an installed upstream
-// CLI is older than the minimum pinned in the config package. Any probe failure
-// (missing binary, timeout, unparseable output) is silent: availability
-// problems are already reported by the LookPath-based pre-flight checks, and an
-// old version must never block a launch.
-func CheckUpstreamVersions(lookPath func(string) (string, error), goos string) []Issue {
-	issues := make([]Issue, 0)
-	for _, status := range UpstreamReport(lookPath, goos) {
-		if !status.TooOld {
-			continue
-		}
-		issues = append(issues, Issue{
-			Code:    status.Code,
-			Message: fmt.Sprintf("%s %s is older than the required %s; upgrade with --upgrade", status.Command, status.Version, status.Minimum),
-			Warning: true,
-		})
-	}
-	return issues
 }
 
 // probeUpstream resolves one tool and reads its --version output.
