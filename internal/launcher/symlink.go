@@ -89,29 +89,65 @@ type RefusedMount struct {
 	Reason string
 }
 
-// autoMountDenylist are the trees a single hidden symlink must never expose
-// read-write to a sandboxed agent. The whole point of the jail is that these
-// stay outside it, and the auto-mount path is not an operator decision — it
-// triggers on whatever the home directory happens to contain.
-// Entries are compared against the *resolved* target, so the macOS forms are
-// listed too: there, /etc and /var are themselves symlinks into /private.
-var autoMountDenylist = []string{
-	"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc",
-	"/sys", "/var", "/tmp", "/opt", "/root", "/System", "/Library", "/Applications",
-	"/private", "/private/etc", "/private/var", "/private/tmp", "/Volumes",
+// deniedTrees are the trees a single hidden symlink must never expose
+// read-write to a sandboxed agent, grouped by why they are refused — the
+// grouping is what the operator sees in the warning, and "the system directory
+// /Users" would misdescribe the most serious case.
+//
+// The whole point of the jail is that these stay outside it, and the auto-mount
+// path is not an operator decision: it triggers on whatever the home directory
+// happens to contain. Entries are compared against the *resolved* target, so
+// the platform-specific spellings are listed alongside the logical ones — on
+// macOS /etc and /var are symlinks into /private, and /home is a firmlink into
+// /System/Volumes/Data.
+var deniedTrees = []struct {
+	reason string
+	paths  []string
+}{
+	{
+		reason: "a system directory",
+		paths: []string{
+			"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev",
+			"/proc", "/sys", "/var", "/tmp", "/opt", "/root", "/System",
+			"/Library", "/Applications", "/private", "/private/etc",
+			"/private/var", "/private/tmp", "/nix", "/snap",
+		},
+	},
+	{
+		// One hidden symlink here would hand the agent read-write access to
+		// every account on the machine — strictly worse than the system trees
+		// above, and these were the entries the list was missing.
+		reason: "the home directory of every user on this machine",
+		paths: []string{
+			"/home", "/Users",
+			"/System/Volumes/Data", "/System/Volumes/Data/home",
+			"/System/Volumes/Data/Users",
+		},
+	},
+	{
+		// The roots aggregate every attached volume. Paths beneath them stay
+		// allowed, which is what keeps the operator's own project volume (for
+		// example /Volumes/MSD512) auto-mountable.
+		reason: "a mount-point root covering every attached volume",
+		paths:  []string{"/Volumes", "/media", "/mnt", "/run", "/srv"},
+	},
 }
 
-// deniedAutoMount reports whether target is a filesystem root or one of the
-// system trees on the denylist. A path *beneath* a denied tree is allowed: the
-// concern is handing over the tree itself.
+// deniedAutoMount reports whether target is the filesystem root or one of the
+// denied trees, along with the reason to show the operator. A path *beneath* a
+// denied tree is allowed: the concern is handing over the tree itself.
 func deniedAutoMount(target string) (string, bool) {
 	clean := filepath.Clean(target)
 	if clean == string(filepath.Separator) {
 		return "the filesystem root", true
 	}
-	for _, denied := range autoMountDenylist {
-		if clean == denied {
-			return "the system directory " + denied, true
+	for _, group := range deniedTrees {
+		for _, denied := range group.paths {
+			// The match is an exact one, so the caller's warning already names
+			// this path; repeating it in the reason would only stutter.
+			if clean == denied {
+				return group.reason, true
+			}
 		}
 	}
 	return "", false

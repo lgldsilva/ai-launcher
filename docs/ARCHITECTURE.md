@@ -132,9 +132,19 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    the sandbox). With the jail enabled, the launcher mounts every home
    dotfile symlink target that resolves outside `$HOME` as `--rw-map`
    (`internal/launcher/symlink.go`), skipping targets already covered by a
-   configured mount. A denylist refuses filesystem roots and system trees
-   (`/`, `/etc`, `/usr`, `/var`, `/System`, `/private/*`, …): a refused
-   target is never mounted and is reported by name as a pre-flight warning.
+   configured mount. A denylist refuses three kinds of target: the filesystem
+   root and system trees (`/`, `/etc`, `/usr`, `/var`, `/System`, `/private/*`,
+   `/nix`, `/snap`, …), the trees holding **other accounts' data** (`/home`,
+   `/Users`, and the macOS firmlink spellings under `/System/Volumes/Data`),
+   and the mount-point roots that aggregate every attached volume (`/Volumes`,
+   `/media`, `/mnt`, `/run`, `/srv`). A refused target is never mounted and is
+   reported by name as a pre-flight warning.
+   Only the tree **itself** is denied — paths beneath it stay auto-mountable,
+   which is what keeps the operator's own project volume (`/Volumes/MSD512`)
+   and home working. Comparison happens against the *resolved* target, so the
+   platform-specific spellings must be listed alongside the logical ones:
+   on macOS `/home` is a firmlink to `/System/Volumes/Data/home`, and `/etc`
+   and `/var` are symlinks into `/private`.
 10. **The harness binary must be reachable inside the jail**: `--executable`
     names an absolute host path, and ai-jail hides everything not explicitly
     mapped. With the jail enabled, the launcher maps the directory holding
