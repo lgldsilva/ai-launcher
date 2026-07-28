@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,6 +192,28 @@ func TestPTYExecutorReportsStartError(t *testing.T) {
 	err := (PTYExecutor{}).Run(context.Background(), []string{"definitely-not-an-ai-launcher-command"}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "start") {
 		t.Fatalf("start error = %v", err)
+	}
+}
+
+// TestPTYExecutorCapturesChildOutputInError is the regression test for the
+// ai-memory 409 recovery: the PTY streams the child's output to the caller's
+// out, but the launcher also needs that text (the underlying error) in the
+// returned error so it can pattern-match a recovery hint and arm --new. The
+// executor tees into a rolling tail and appends it on failure.
+func TestPTYExecutorCapturesChildOutputInError(t *testing.T) {
+	var out bytes.Buffer
+	err := (PTYExecutor{}).RunWithEnv(context.Background(),
+		[]string{"sh", "-c", `printf '%s\n' 'server returned 409 Conflict: workstream is already active: owned by host:1' >/dev/tty 2>/dev/null || printf '%s\n' 'server returned 409 Conflict: workstream is already active: owned by host:1'; exit 1`},
+		nil, strings.NewReader(""), &out, io.Discard)
+	if err == nil {
+		t.Fatal("expected a non-nil error from the failing child")
+	}
+	if !strings.Contains(err.Error(), "409") || !strings.Contains(err.Error(), "workstream is already active") {
+		t.Fatalf("error = %q; want it to carry the child's 409 output via the tail", err.Error())
+	}
+	// The live stream still reached the caller's out — the capture is additive.
+	if !strings.Contains(out.String(), "workstream is already active") {
+		t.Fatalf("live output lost: out = %q", out.String())
 	}
 }
 

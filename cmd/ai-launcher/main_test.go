@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -281,8 +283,56 @@ func TestLaunchFailureHintWorkstreamConflict(t *testing.T) {
 	if !strings.Contains(got, "workstream") || !strings.Contains(got, "--new") {
 		t.Fatalf("hint = %q; want workstream recovery tips", got)
 	}
+	// The upstream lease expires within 90 seconds (docs/managed-workstreams.md),
+	// not the stale "~1-2 min" the hint used to claim.
+	if !strings.Contains(got, "90 seconds") {
+		t.Fatalf("hint = %q; want the 90-second lease window from the ai-memory docs", got)
+	}
 	got = launchFailureHint("certificate not valid for name")
 	if !strings.Contains(got, "TLS") && !strings.Contains(got, "memory_server_url") {
 		t.Fatalf("TLS hint = %q", got)
+	}
+}
+
+func TestLaunchFailureHintAuthRejection(t *testing.T) {
+	got := launchFailureHint("Error: server returned 401 Unauthorized: auth required")
+	if !strings.Contains(got, "401") || !strings.Contains(got, "memory_auth_token") {
+		t.Fatalf("401 hint = %q; want memory_auth_token guidance", got)
+	}
+}
+
+func TestLaunchFailureStatusWrapsHint(t *testing.T) {
+	got := launchFailureStatus(`server returned 409 Conflict: {"error":"workstream is already active"}`)
+	if !strings.Contains(got, "Last launch failed") || !strings.Contains(got, "r to retry") || !strings.Contains(got, "90 seconds") {
+		t.Fatalf("status = %q; want retry call-to-action + the hint", got)
+	}
+}
+
+func TestIsWorkstreamConflict(t *testing.T) {
+	if !isWorkstreamConflict(`Caused by: server returned 409 Conflict: {"error":"workstream is already active: owned by host:1 until 2099"}`) {
+		t.Fatal("expected the 409 active-workstream text to be detected")
+	}
+	if isWorkstreamConflict("server returned 401 Unauthorized: auth required") {
+		t.Fatal("401 must not be classified as a workstream conflict")
+	}
+	if isWorkstreamConflict("some unrelated exit status 1") {
+		t.Fatal("generic failure must not be classified as a workstream conflict")
+	}
+}
+
+// TestWorkstreamConflictDetectedThroughExecuteErrorShape proves the end-to-end
+// chain after the executor fix: execute() wraps the PTY error as
+// "failed to start <agent>: <waitErr>\ncommand: ...\nhint: ...", and the
+// executor appends "last output:" with the child's stderr. The 409 detector
+// and the workstream hint must still match through that full wrapping — this
+// is what arms --new on recovery.
+func TestWorkstreamConflictDetectedThroughExecuteErrorShape(t *testing.T) {
+	execErr := errors.New("exit status 1\nlast output:\nserver returned 409 Conflict: {\"error\":\"workstream is already active: owned by host:1\"}")
+	wrapped := fmt.Errorf("failed to start pi: %w\ncommand: ai-jail ... ai-memory run pi\n%s", execErr, launchFailureHint(execErr.Error()))
+	if !isWorkstreamConflict(wrapped.Error()) {
+		t.Fatalf("isWorkstreamConflict missed the real execute() error shape:\n%s", wrapped.Error())
+	}
+	if hint := launchFailureHint(wrapped.Error()); !strings.Contains(hint, "90 seconds") {
+		t.Fatalf("hint = %q; want the 90s workstream recovery tip", hint)
 	}
 }

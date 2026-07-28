@@ -136,9 +136,21 @@ func Run(global config.Global, launch launcher.LaunchConfig) (launcher.LaunchCon
 // RunWithHooks is Run with optional save hooks invoked on Ctrl+S (local
 // config) and Ctrl+P (named profile in the global config).
 func RunWithHooks(global config.Global, launch launcher.LaunchConfig, hooks Hooks) (launcher.LaunchConfig, error) {
+	return RunWithMessage(global, launch, hooks, "")
+}
+
+// RunWithMessage is RunWithHooks with an initial status line. It is used to
+// surface a launch failure when the TUI is re-opened for recovery: the
+// operator sees why the last run failed and can adjust (toggle New
+// workstream / ai-memory off) and retry with r, or quit, without restarting
+// ai-launcher. An empty message keeps the default section hint.
+func RunWithMessage(global config.Global, launch launcher.LaunchConfig, hooks Hooks, message string) (launcher.LaunchConfig, error) {
 	model := NewModel(global, launch)
 	model.hooks = hooks
-	final, err := tea.NewProgram(model).Run()
+	if msg := strings.TrimSpace(message); msg != "" {
+		model.status = msg
+	}
+	final, err := newProgram(model).Run()
 	if err != nil {
 		return launch, err
 	}
@@ -147,6 +159,21 @@ func RunWithHooks(global config.Global, launch launcher.LaunchConfig, hooks Hook
 		return launch, ErrCancelled
 	}
 	return model.launch, nil
+}
+
+// newProgram builds the bubbletea program for the TUI.
+//
+// The alternate screen buffer is mandatory: View() renders the whole screen
+// (agents, permissions, mounts, options, profiles and a live command preview)
+// and its line count changes as the user toggles options or adds mounts. In
+// the default (inline) mode bubbletea repaints in place by moving the cursor
+// up by the previous frame's line count; when the new frame has a different
+// number of lines the repaint desyncs and the layout drifts down the screen
+// — the symptom seen on short Linux terminals. The alt screen gives a
+// fixed-size canvas with a full repaint every frame, so neither the variable
+// line count nor a view taller than the terminal scrolls the layout.
+func newProgram(model tea.Model) *tea.Program {
+	return tea.NewProgram(model, tea.WithAltScreen())
 }
 
 // Init implements tea.Model; the TUI has no startup command.
