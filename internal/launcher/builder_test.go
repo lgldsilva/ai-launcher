@@ -121,6 +121,17 @@ func TestEnvironmentPropagatesMemoryServerURL(t *testing.T) {
 	}
 }
 
+func TestEnvironmentPreservesEnvironmentMemoryServerURLWhenConfigIsEmpty(t *testing.T) {
+	t.Setenv("AI_MEMORY_SERVER_URL", "https://configured-by-environment.example")
+	env := Environment(LaunchConfig{UseMemory: true})
+	for _, entry := range env {
+		if entry == "AI_MEMORY_SERVER_URL=https://configured-by-environment.example" {
+			return
+		}
+	}
+	t.Fatal("AI_MEMORY_SERVER_URL from the environment was discarded")
+}
+
 func TestValidatorFindsIssues(t *testing.T) {
 	v := Validator{
 		LookPath: func(command string) (string, error) {

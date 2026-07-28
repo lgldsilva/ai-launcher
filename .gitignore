@@ -10,6 +10,7 @@ coverage.html
 .slim/
 .agents/
 .codex/
+.idea/
 .ai-jail
 internal/**/testdata/rapid/
 .scannerwork/

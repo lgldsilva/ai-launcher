@@ -119,9 +119,9 @@ func TestLoadGlobalUsesDefaultsAndMergesOmittedSections(t *testing.T) {
 	}
 }
 
-func TestLoadGlobalMigratesLegacyMemoryServerURL(t *testing.T) {
+func TestLoadGlobalPreservesConfiguredMemoryServerURL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "global.yaml")
-	body := "memory_server_url: " + legacyMemoryServerURL + "\nagents:\n  - name: Test\n    command: test-agent\n"
+	body := "memory_server_url: https://memory.example.test\nagents:\n  - name: Test\n    command: test-agent\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +129,8 @@ func TestLoadGlobalMigratesLegacyMemoryServerURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
-	if got.MemoryServerURL != DefaultMemoryServerURL {
-		t.Fatalf("MemoryServerURL = %q; want migrated default %q", got.MemoryServerURL, DefaultMemoryServerURL)
+	if got.MemoryServerURL != "https://memory.example.test" {
+		t.Fatalf("MemoryServerURL = %q; want configured endpoint", got.MemoryServerURL)
 	}
 	// Explicit non-legacy override must be kept.
 	custom := "https://aimemory.example.test"
@@ -1020,9 +1020,10 @@ func TestSaveRecentAgentsHandlesAnEmptyExistingFile(t *testing.T) {
 	}
 }
 
-// An empty memory_server_url inherits the default, while a single configured
-// tool must not be replaced by the built-in pair.
-func TestLoadGlobalDefaultsEmptyMemoryURLAndKeepsConfiguredTools(t *testing.T) {
+// An empty memory_server_url stays empty so the deployment can provide
+// AI_MEMORY_SERVER_URL, while a single configured tool must not be replaced by
+// the built-in pair.
+func TestLoadGlobalKeepsEmptyMemoryURLAndConfiguredTools(t *testing.T) {
 	tempDir := t.TempDir()
 	emptyURL := filepath.Join(tempDir, "empty-url.yaml")
 	if err := os.WriteFile(emptyURL, []byte("agents:\n  - name: Test\n    command: test-agent\n"), 0o600); err != nil {
@@ -1032,8 +1033,8 @@ func TestLoadGlobalDefaultsEmptyMemoryURLAndKeepsConfiguredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MemoryServerURL != DefaultMemoryServerURL {
-		t.Fatalf("MemoryServerURL = %q; want default %q", got.MemoryServerURL, DefaultMemoryServerURL)
+	if got.MemoryServerURL != "" {
+		t.Fatalf("MemoryServerURL = %q; want empty configurable default", got.MemoryServerURL)
 	}
 	if len(got.Tools) != len(DefaultGlobal().Tools) {
 		t.Fatalf("Tools = %#v; omitted tools must fall back to the built-ins", got.Tools)

@@ -35,7 +35,11 @@ var isWindows = func() bool { return runtime.GOOS == "windows" }
 func Environment(cfg LaunchConfig) []string {
 	env := append([]string(nil), os.Environ()...)
 	if cfg.UseMemory {
-		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", strings.TrimSpace(cfg.MemoryServerURL))
+		// An empty config value means the operator chose environment-based
+		// configuration. A non-empty config value remains authoritative.
+		if serverURL := strings.TrimSpace(cfg.MemoryServerURL); serverURL != "" {
+			env = upsertEnv(env, "AI_MEMORY_SERVER_URL", serverURL)
+		}
 		env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
 		// The ai-memory wrapper skips its own download/refresh logic (fragile
 		// inside ai-jail) when AI_MEMORY_NATIVE_BIN points at an executable

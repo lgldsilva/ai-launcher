@@ -21,10 +21,9 @@ import (
 // ldflags at build time and printed by --version).
 const CurrentVersion = "2.0"
 
-// DefaultMemoryServerURL is the ai-memory server used when the global config
-// does not override it. The cert on the homelab reverse proxy is issued for
-// *.internal.lgldsilva.com.br (not the old *.raspberrypi.lan names).
-const DefaultMemoryServerURL = "https://aimemory.internal.lgldsilva.com.br"
+// DefaultMemoryServerURL is intentionally empty. Deployments configure the
+// ai-memory endpoint in the global config or through AI_MEMORY_SERVER_URL.
+const DefaultMemoryServerURL = ""
 
 // memoryRunHarnesses is the fixed set of names `ai-memory run <HARNESS>`
 // accepts, verified against ai-memory 1.19.0. Anything else is rejected by
@@ -79,11 +78,6 @@ const (
 	antigravID   = "antigravity-cli"
 	geminiCLIID  = "gemini-cli"
 )
-
-// legacyMemoryServerURL is the pre-DNS-migration default. Existing
-// config.yaml files that still pin this host get rewritten on load so TLS
-// stops failing with "certificate not valid for name aimemory.raspberrypi.lan".
-const legacyMemoryServerURL = "https://aimemory.raspberrypi.lan"
 
 // Agent describes a launchable AI agent CLI and its optional integrations.
 type Agent struct {
@@ -980,12 +974,6 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 		cfg.Version = defaults.Version
 	}
 	if strings.TrimSpace(cfg.MemoryServerURL) == "" {
-		cfg.MemoryServerURL = defaults.MemoryServerURL
-	}
-	// Homelab DNS migration: the Let's Encrypt cert covers
-	// *.internal.lgldsilva.com.br only. Keep pointing at the legacy
-	// raspberrypi.lan host would break every TLS handshake.
-	if strings.TrimSpace(cfg.MemoryServerURL) == legacyMemoryServerURL {
 		cfg.MemoryServerURL = defaults.MemoryServerURL
 	}
 	cfg.Agents = mergeAgents(defaults.Agents, cfg.Agents)
