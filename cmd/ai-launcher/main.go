@@ -1011,7 +1011,7 @@ func launchFailureHint(errText string) string {
 	case strings.Contains(errText, "401") || strings.Contains(errText, "Unauthorized") || strings.Contains(errText, "auth required"):
 		return "hint: ai-memory rejected the token (401). Set memory_auth_token in the global config (~/.config/ai-launch/config.yaml), or use --no-memory"
 	case strings.Contains(errText, "certificate") || strings.Contains(errText, "TLS") || strings.Contains(errText, "x509"):
-		return "hint: memory server TLS failed — check memory_server_url (expect *.internal.lgldsilva.com.br) or use --no-memory"
+		return "hint: memory server TLS failed — check memory_server_url or AI_MEMORY_SERVER_URL, or use --no-memory"
 	case strings.Contains(errText, "canonicalizing managed run cwd") || strings.Contains(errText, "Operation not permitted"):
 		return "hint: ai-memory inside the jail failed on this cwd — try --no-memory (keep Jail) or run from a path under $HOME"
 	default:

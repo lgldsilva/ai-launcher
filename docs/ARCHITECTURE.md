@@ -179,7 +179,7 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | Key | Type | Purpose |
 | --- | --- | --- |
 | `version` | string | Schema (`2.0`; accepts `1`/`1.0`) |
-| `memory_server_url` | string | ai-memory server (default `https://aimemory.internal.lgldsilva.com.br`) |
+| `memory_server_url` | string | ai-memory server; configure this or `AI_MEMORY_SERVER_URL` for the deployment |
 | `memory_auth_token` | string | Bearer token, forwarded via env only |
 | `agents[]` | list | `name`, `command`, `aliases`, `path`, `supports_memory`, `supports_yolo`, `yolo_flag`, `params[]` (`name`/`flag`/`takes_value`), `release` (GitHub recipe), `memory` (MCP/hooks adapter), `source_url` |
 | `tools[]` | list | Auxiliary tool recipes (ai-jail, ai-memory) |
