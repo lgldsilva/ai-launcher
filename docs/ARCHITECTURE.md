@@ -100,6 +100,14 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    install fails, unless an explicit `allow_unverified: true` in the recipe.
    A recipe that publishes release assets always installs from them; the
    unverified `source_url` path is reserved for recipes with no assets.
+   Sources are tried in descending order of strength: the GitHub API's own
+   asset digest, then a checksum asset, then the **release body** text. That
+   last one is weaker than it looks and is deliberately last — release notes
+   are mutable markdown, editable without re-uploading any asset, so it is a
+   convenience for upstreams that publish no checksum file, not a guarantee.
+   Every source is matched by filename (`checksumFor` refuses a bare hash), so
+   a body quoting the hash of a *different* asset never satisfies verification.
+   Self-update deliberately does not share this ladder — see invariant 5.
 5. **Strict checksum on self-update**: `ai-launcher upgrade` and `install.sh`
    require the release `checksums.txt`; a missing file, a missing entry, or a
    mismatch is a hard error with no `allow_unverified` escape hatch, because
