@@ -89,11 +89,25 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    trusted global config (`trusted_local_configs`), and a byte-identical file
    is honored like operator input. Any later edit changes the hash and the
    boundary applies again — a cloned repository cannot forge the record.
+   The check reads the workspace file **as loaded, before a profile is layered
+   on**, and only for the blocks the file still owns (`localTrustFrom` mirrors
+   the conditions in `applyProfile`). Deriving it from the merged selection
+   attributed a trusted profile's `jail: false` to `.ai-launch.yaml` and refused
+   the launch; conversely, a value a profile replaced never reaches the argv, so
+   there is nothing left to refuse.
 3. **Atomic 0600 saves** in the global and local configs (`internal/config`).
 4. **Mandatory checksum on installs**: without a verifiable checksum the
    install fails, unless an explicit `allow_unverified: true` in the recipe.
    A recipe that publishes release assets always installs from them; the
    unverified `source_url` path is reserved for recipes with no assets.
+   Sources are tried in descending order of strength: the GitHub API's own
+   asset digest, then a checksum asset, then the **release body** text. That
+   last one is weaker than it looks and is deliberately last — release notes
+   are mutable markdown, editable without re-uploading any asset, so it is a
+   convenience for upstreams that publish no checksum file, not a guarantee.
+   Every source is matched by filename (`checksumFor` refuses a bare hash), so
+   a body quoting the hash of a *different* asset never satisfies verification.
+   Self-update deliberately does not share this ladder — see invariant 5.
 5. **Strict checksum on self-update**: `ai-launcher upgrade` and `install.sh`
    require the release `checksums.txt`; a missing file, a missing entry, or a
    mismatch is a hard error with no `allow_unverified` escape hatch, because
@@ -104,6 +118,12 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    search over the raw bytes: `jail:` also occurs inside `permissions`, inside
    comments and inside mount paths, and a false positive there skips the
    default and leaves the sandbox off.
+   The rule belongs to `Options.UnmarshalYAML`, so it holds for **every**
+   `options:` block in the schema — the workspace file and a global-config
+   profile alike. Applying it only in `LoadLocal` left profiles decoding into
+   Go's zero values, and a profile naming just `yolo` launched with the sandbox
+   off. A profile with no `options:` block at all keeps a nil pointer, which is
+   how it leaves the toggles to the workspace file.
 6b. **Harness must be one ai-memory accepts**: `ai-memory run` takes a fixed
    list (`config.MemoryRunHarnesses`). Pre-flight fails with
    `memory-harness-unsupported` instead of emitting an argv whose rejection
@@ -120,9 +140,25 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    the sandbox). With the jail enabled, the launcher mounts every home
    dotfile symlink target that resolves outside `$HOME` as `--rw-map`
    (`internal/launcher/symlink.go`), skipping targets already covered by a
-   configured mount. A denylist refuses filesystem roots and system trees
-   (`/`, `/etc`, `/usr`, `/var`, `/System`, `/private/*`, …): a refused
-   target is never mounted and is reported by name as a pre-flight warning.
+   configured mount. A denylist refuses three kinds of target: the filesystem
+   root and system trees (`/`, `/etc`, `/usr`, `/var`, `/System`, `/private/*`,
+   `/nix`, `/snap`, …), the trees holding **other accounts' data** (`/home`,
+   `/Users`, and the macOS firmlink spellings under `/System/Volumes/Data`),
+   and the mount-point roots that aggregate every attached volume (`/Volumes`,
+   `/media`, `/mnt`, `/run`, `/srv`). A refused target is never mounted and is
+   reported by name as a pre-flight warning.
+   The merge is re-applied whenever the mount list can change underneath it:
+   the TUI keeps the detected targets aside from `launch.Mounts` and re-merges
+   them after loading a profile (which replaces the list wholesale) and after
+   the Jail toggle turns the sandbox on (which the launcher never prepared
+   mounts for). Both paths used to emit an argv with the symlinks dangling
+   again, silently.
+   Only the tree **itself** is denied — paths beneath it stay auto-mountable,
+   which is what keeps the operator's own project volume (`/Volumes/MSD512`)
+   and home working. Comparison happens against the *resolved* target, so the
+   platform-specific spellings must be listed alongside the logical ones:
+   on macOS `/home` is a firmlink to `/System/Volumes/Data/home`, and `/etc`
+   and `/var` are symlinks into `/private`.
 10. **The harness binary must be reachable inside the jail**: `--executable`
     names an absolute host path, and ai-jail hides everything not explicitly
     mapped. With the jail enabled, the launcher maps the directory holding

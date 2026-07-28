@@ -57,7 +57,7 @@ func SupportsMemoryRunHarness(name string) bool {
 
 // MinAIJailVersion and MinAIMemoryVersion pin the minimum upstream CLI
 // versions this launcher composes against. Older installs still launch;
-// `ai-launcher --doctor` reports them (see launcher.CheckUpstreamVersions).
+// `ai-launcher --doctor` reports them (see launcher.UpstreamReport).
 const (
 	MinAIJailVersion   = "1.15.0"
 	MinAIMemoryVersion = "1.19.0"
@@ -261,12 +261,20 @@ type Options struct {
 // UnmarshalYAML accepts both the current lossless list form and the scalar
 // form used by the original launcher documentation (for example,
 // extra_args: "--model sonnet"). SaveLocal always emits the list form.
+//
+// Whichever form is used, an omitted jail or memory key keeps the safe default
+// (ARCHITECTURE invariant 6). Applying it here rather than at each call site is
+// what makes the rule hold for every Options in the schema: a profile's options
+// block used to land on Go's zero value, so a profile naming only `yolo`
+// silently launched with the sandbox off — invariant 6's defect, reintroduced
+// through the global config instead of the workspace file.
 func (o *Options) UnmarshalYAML(data []byte) error {
 	type optionsWithoutMethods Options
 	var list optionsWithoutMethods
 	listErr := yaml.Unmarshal(data, &list)
 	if listErr == nil {
 		*o = Options(list)
+		applyOptionDefaults(o, declaredKeys(data))
 		return nil
 	}
 
@@ -297,7 +305,38 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		ExtraArgs:     strings.Fields(scalar.ExtraArgs),
 		ParamValues:   scalar.ParamValues,
 	}
+	applyOptionDefaults(o, declaredKeys(data))
 	return nil
+}
+
+// applyOptionDefaults turns the safe defaults back on for the toggles the
+// document did not name. An explicit `jail: false` stays false — the point is
+// that omission and denial are different answers, and only omission gets the
+// default. declared == nil means the keys could not be read, in which case the
+// safest reading is that nothing was declared.
+func applyOptionDefaults(o *Options, declared map[string]bool) {
+	if !declared["jail"] {
+		o.Jail = true
+	}
+	if !declared["memory"] {
+		o.Memory = true
+	}
+}
+
+// declaredKeys returns the set of top-level keys of a YAML mapping. It decodes
+// into a plain map on purpose: decoding into Options would run the custom
+// unmarshaler above, which fills in defaults and would therefore erase the very
+// distinction between "declared" and "absent" this is asked to report.
+func declaredKeys(data []byte) map[string]bool {
+	var probe map[string]any
+	if err := yaml.Unmarshal(data, &probe); err != nil || probe == nil {
+		return nil
+	}
+	declared := make(map[string]bool, len(probe))
+	for key := range probe {
+		declared[key] = true
+	}
+	return declared
 }
 
 // Global is the machine-wide catalog of agents, tools, and permissions.
@@ -874,18 +913,11 @@ func LoadLocal(path string) (Local, error) {
 	if loaded.Permissions == nil {
 		loaded.Permissions = map[string]bool{}
 	}
-	// An omitted options block must retain safe defaults. Once the block is
-	// present, inspect each key so explicit false values remain meaningful.
-	declared := declaredOptionKeys(b)
-	if declared == nil {
+	// An omitted options block must retain safe defaults. When the block IS
+	// present, Options.UnmarshalYAML has already restored the default for each
+	// key the document left out, so explicit false values remain meaningful.
+	if !hasOptionsBlock(b) {
 		loaded.Options = cfg.Options
-	} else {
-		if !declared["jail"] {
-			loaded.Options.Jail = true
-		}
-		if !declared["memory"] {
-			loaded.Options.Memory = true
-		}
 	}
 	if err := ValidateVersion(loaded.Version); err != nil {
 		return cfg, err
@@ -1068,27 +1100,23 @@ func mergePermissions(defaults, user []Permission) []Permission {
 	return merged
 }
 
-// declaredOptionKeys returns the set of keys the document's top-level options
-// block declares, or nil when there is no such block. Presence has to come from
-// the parsed document: substring search over the raw bytes matches "jail:"
-// anywhere in the file — nested in a permissions block, in a comment, in a
-// mount path — and a false positive there silently skips the safety default,
-// leaving Options.Jail at Go's zero value. Writing the config that looks like
-// it enables the sandbox was exactly what turned it off.
+// hasOptionsBlock reports whether the document declares a top-level options
+// block at all. Presence has to come from the parsed document: a substring
+// search over the raw bytes matches "options:" or "jail:" anywhere in the file
+// — nested in a permissions block, in a comment, in a mount path — and a false
+// positive there silently skips the safety default, leaving Options.Jail at
+// Go's zero value. Writing the config that looks like it enables the sandbox
+// was exactly what turned it off.
 //
 // The probe deliberately decodes into a plain map instead of Options: Options
 // has a custom unmarshaler that fills in defaults, which would erase the
 // distinction between "declared" and "absent".
-func declaredOptionKeys(data []byte) map[string]bool {
+func hasOptionsBlock(data []byte) bool {
 	var probe struct {
 		Options map[string]any `yaml:"options"`
 	}
-	if err := yaml.Unmarshal(data, &probe); err != nil || probe.Options == nil {
-		return nil
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return false
 	}
-	declared := make(map[string]bool, len(probe.Options))
-	for key := range probe.Options {
-		declared[key] = true
-	}
-	return declared
+	return probe.Options != nil
 }

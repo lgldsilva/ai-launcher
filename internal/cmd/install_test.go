@@ -115,6 +115,51 @@ func TestInstallLogNeverContainsTheAuthToken(t *testing.T) {
 	_ = global
 }
 
+// --add used to hardcode supports_memory: true. `ai-memory run` accepts a
+// fixed harness list, so any agent whose command is not on it failed pre-flight
+// with memory-harness-unsupported the first time it was launched — the operator
+// registered a working binary and got an error that named neither --add nor the
+// list. The flag now follows what ai-memory actually accepts.
+func TestAddAgentDerivesMemorySupportFromTheHarnessList(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+	for _, tc := range []struct {
+		command string
+		want    bool
+	}{
+		{command: "opencode", want: true}, // on ai-memory's list
+		{command: "definitely-not-a-harness", want: false},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			executable := filepath.Join(dir, tc.command)
+			if err := os.WriteFile(executable, []byte("#!/bin/sh\n"), 0o755); err != nil { // #nosec G306 -- the fixture must be executable to exercise --add
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if err := AddAgent(globalPath, "Agent "+tc.command, executable, tc.command, "", &out); err != nil {
+				t.Fatalf("AddAgent() error = %v", err)
+			}
+			global, err := config.LoadGlobal(globalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *config.Agent
+			for i := range global.Agents {
+				if global.Agents[i].Command == tc.command {
+					found = &global.Agents[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("agent %q not in the catalog", tc.command)
+			}
+			if found.SupportsMemory != tc.want {
+				t.Errorf("SupportsMemory = %v; want %v for a command ai-memory %s accept",
+					found.SupportsMemory, tc.want, map[bool]string{true: "does", false: "does not"}[tc.want])
+			}
+		})
+	}
+}
+
 func TestAddAgentUpsertsIntoGlobalCatalog(t *testing.T) {
 	dir := t.TempDir()
 	executable := filepath.Join(dir, "custom-cli")

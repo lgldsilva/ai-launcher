@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/installer"
@@ -42,6 +43,33 @@ const configFileFlag = "--config-file"
 // wrapper; it is a variable so tests can observe the invocation without
 // network access.
 var installNativeRunner = installNativeMemoryRunner
+
+// Deadlines for the two kinds of work an install step does. Both were
+// context.Background() before, which is no deadline at all: a release host that
+// accepts the connection without answering, or an ai-memory child that hangs
+// waiting on something, froze `--install` until the operator killed it.
+//
+// They are variables rather than constants so tests can shorten them; nothing
+// in production reassigns them.
+var (
+	// installStepTimeout bounds one target's download-and-install. It is
+	// generous because it covers several requests plus a release archive on a
+	// slow link; internal/installer bounds each individual request as well.
+	installStepTimeout = 10 * time.Minute
+	// memoryWireTimeout bounds one `ai-memory install-mcp` / `install-hooks`
+	// child. That child edits a config file, so it should be quick; the limit
+	// is a stuck-process guard, not a performance budget.
+	memoryWireTimeout = 2 * time.Minute
+	// memoryWireCleanupDelay is how long Wait may still block on the child's
+	// pipes after the deadline killed it — see the WaitDelay comment in
+	// runMemoryCommand. Short: by then the process is already gone.
+	memoryWireCleanupDelay = 5 * time.Second
+)
+
+// withInstallTimeout derives a bounded context for one install step.
+func withInstallTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, installStepTimeout)
+}
 
 type installTarget struct {
 	Name            string
@@ -212,13 +240,17 @@ func installOne(client *installer.Installer, target installTarget, selected stri
 		// that actual executable instead of creating a second canonical one.
 		installPath = executableAvailable(target.Command, target.Aliases, "")
 	}
-	result, err := client.Install(context.Background(), target.Name, target.Command, installPath, target.Release, force)
+	ctx, cancel := withInstallTimeout(context.Background())
+	defer cancel()
+	result, err := client.Install(ctx, target.Name, target.Command, installPath, target.Release, force)
 	if err != nil && target.Path == "" && installPath != "" && errors.Is(err, os.ErrPermission) {
 		// A discovered system-wide binary may be readable but not writable by
 		// the current user. Retry in ~/.local/bin instead of requiring sudo.
 		trace.Printf("release install retry name=%q blocked_path=%q fallback=%q error=%v", target.Name, installPath, filepath.Join(home, ".local", "bin", target.Command), err)
 		installPath = ""
-		result, err = client.Install(context.Background(), target.Name, target.Command, installPath, target.Release, force)
+		retryCtx, retryCancel := withInstallTimeout(context.Background())
+		defer retryCancel()
+		result, err = client.Install(retryCtx, target.Name, target.Command, installPath, target.Release, force)
 	}
 	if err != nil {
 		trace.Printf("release install failed name=%q path=%q error=%v", target.Name, installPath, err)
@@ -254,7 +286,9 @@ func installNativeMemoryRunner(client *installer.Installer, target installTarget
 		trace.Printf("native runner skipped name=%q platform=%q: no release asset", target.Name, platform)
 		return installer.Result{}, nil
 	}
-	result, err := client.Install(context.Background(), target.Name, target.Command, nativeRunnerManagedPath, target.Release, force)
+	ctx, cancel := withInstallTimeout(context.Background())
+	defer cancel()
+	result, err := client.Install(ctx, target.Name, target.Command, nativeRunnerManagedPath, target.Release, force)
 	if err != nil {
 		trace.Printf("native runner install failed name=%q error=%v", target.Name, err)
 		return installer.Result{}, fmt.Errorf("%s native runner: %w", target.Name, err)
@@ -273,7 +307,9 @@ func installWithoutRecipe(client *installer.Installer, target installTarget, sel
 		if !target.AllowUnverified {
 			return "", fmt.Errorf("%s: source_url installs carry no checksum; set allow_unverified: true in the recipe to accept that, or add a release recipe (note: an agent overridden in the global config re-declares scalar fields — allow_unverified must be set on your entry, it is not inherited)", target.Name)
 		}
-		result, err := client.InstallSource(context.Background(), target.Name, target.Command, target.Path, target.SourceURL, force)
+		ctx, cancel := withInstallTimeout(context.Background())
+		defer cancel()
+		result, err := client.InstallSource(ctx, target.Name, target.Command, target.Path, target.SourceURL, force)
 		if err != nil {
 			trace.Printf("source install failed name=%q error=%v", target.Name, err)
 			return "", err
@@ -576,7 +612,17 @@ func resolveSymlinkParent(path string) string {
 // argv.
 func runMemoryCommand(ctx context.Context, memoryPath string, args []string, authToken string, out, errOut io.Writer, trace *installLog) error {
 	trace.Printf("run memory command path=%q args=%q", memoryPath, args)
+	// The child is the launcher's own subprocess, so bounding it is the
+	// launcher's job: an ai-memory stuck on a prompt or a dead server would
+	// otherwise hold --install open indefinitely with no output.
+	ctx, cancel := context.WithTimeout(ctx, memoryWireTimeout)
+	defer cancel()
 	command := exec.CommandContext(ctx, memoryPath, args...) // #nosec G204 -- memoryPath is the ai-memory executable resolved from the launcher's own install or PATH; running it is the integration's purpose
+	// Killing the child is not enough on its own: Wait also blocks until the
+	// stdout/stderr pipes close, and a grandchild that outlives its parent
+	// keeps the write end open. WaitDelay bounds that second wait, so the
+	// timeout above cannot be defeated by a process ai-memory forked.
+	command.WaitDelay = memoryWireCleanupDelay
 	command.Stdin = os.Stdin
 	command.Stdout = out
 	command.Stderr = errOut
@@ -642,7 +688,19 @@ func AddAgent(globalPath, name, path, command, description string, out io.Writer
 	if err != nil {
 		return err
 	}
-	agent := config.Agent{Name: name, Command: command, Path: path, SupportsMemory: true, SupportsYolo: true, Description: description}
+	// SupportsMemory follows what `ai-memory run` actually accepts. Hardcoding
+	// true registered agents that then failed pre-flight with
+	// memory-harness-unsupported on their first launch — an error about a
+	// decision --add had made, not one the operator did. A wrapper whose real
+	// harness has another name declares memory.run_harness in the catalog.
+	agent := config.Agent{
+		Name:           name,
+		Command:        command,
+		Path:           path,
+		SupportsMemory: config.SupportsMemoryRunHarness(command),
+		SupportsYolo:   true,
+		Description:    description,
+	}
 	if err := config.UpsertAgent(&global, agent); err != nil {
 		return err
 	}

@@ -224,31 +224,79 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 }
 
 // resolveAgentSelection picks the agent (the --agent flag wins over the local
-// config) and records what the workspace file asked for, so the trust check can
-// tell an operator's choice from a repository's. An unresolved agent is still
-// synthesized here; enforceLocalConfigTrust decides whether it may be used.
-func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) (catalog.AgentStatus, localTrust) {
+// config). An unresolved agent is still synthesized here; enforceLocalConfigTrust
+// decides whether it may be used.
+func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) catalog.AgentStatus {
 	selected := flagAgent
 	if selected == "" {
 		selected = local.Agent
 	}
 	status, err := catalogue.Resolve(selected)
-	trust := localTrust{
-		agent:      local.Agent,
-		agentKnown: err == nil,
-		fromFile:   flagAgent == "",
-		jail:       local.Options.Jail,
-		mounts:     local.Mounts,
-	}
 	if err != nil {
-		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}, trust
+		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}
 	}
 	if status.ResolvedCommand != "" {
 		// Keep the configured catalog name for display, but invoke the alias
 		// that was actually found on this machine (for example kilocode).
 		status.Agent.Command = status.ResolvedCommand
 	}
-	return status, trust
+	return status
+}
+
+// localTrustFrom records what the workspace file itself asked for, so the trust
+// check can tell an operator's choice from a repository's.
+//
+// It reads the config as LoadLocal returned it, BEFORE any profile is layered
+// on: a profile lives in the global config, which ARCHITECTURE invariant 2b
+// lists as trusted alongside the command line. Deriving this from the merged
+// selection made a profile's own `jail: false` indistinguishable from a
+// repository lowering the sandbox — `--profile` was refused outright, and the
+// error blamed a .ai-launch.yaml that had said nothing of the sort.
+//
+// Only the fields the file still decides are checked. A value a trusted source
+// replaced never reaches the argv, so refusing the launch over it would block
+// on input that was already discarded: `agent: other-cli` in the workspace file
+// is harmless once --agent or a profile picks something else.
+func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Local, profile *config.Profile) localTrust {
+	overrides := profileOverrides(profile)
+	trust := localTrust{
+		fromFile: flagAgent == "" && !overrides.agent,
+	}
+	if trust.fromFile {
+		trust.agent = raw.Agent
+		_, err := catalogue.Resolve(raw.Agent)
+		trust.agentKnown = err == nil
+	}
+	// jail defaults to true so an overridden block never reads as "the file
+	// turned the sandbox off"; the profile's own value is trusted on its own.
+	trust.jail = true
+	if !overrides.options {
+		trust.jail = raw.Options.Jail
+	}
+	if !overrides.mounts {
+		trust.mounts = raw.Mounts
+	}
+	return trust
+}
+
+// profileBlocks names the selection blocks a profile replaced. It mirrors the
+// conditions in applyProfile one-for-one: whatever the profile takes over stops
+// being the workspace file's responsibility, so the two must be read together.
+type profileBlocks struct {
+	agent   bool
+	mounts  bool
+	options bool
+}
+
+func profileOverrides(profile *config.Profile) profileBlocks {
+	if profile == nil {
+		return profileBlocks{}
+	}
+	return profileBlocks{
+		agent:   strings.TrimSpace(profile.Agent) != "",
+		mounts:  profile.Mounts != nil,
+		options: profile.Options != nil,
+	}
 }
 
 // localTrust captures the security-relevant values a workspace-local
@@ -404,7 +452,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	// warn and continue with safe defaults. LoadLocal already returns
 	// DefaultLocal() on error, so blocking every launch on a broken
 	// .ai-launch.yaml was pure asymmetry, not extra safety.
-	local, err := loadLocalSelection(&opts, global, errOut)
+	local, rawLocal, appliedProfile, err := loadLocalSelection(&opts, global, errOut)
 	if err != nil {
 		return err
 	}
@@ -415,7 +463,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	positionalArgs := append([]string(nil), flags.Args()...)
 
-	status, trust := resolveAgentSelection(catalogue, opts.agent, local)
+	status := resolveAgentSelection(catalogue, opts.agent, local)
+	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile)
 	permissions := resolvePermissions(flags, &opts, local, catalogue)
 	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
 		return err
@@ -518,21 +567,35 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, out,
 }
 
 // loadLocalSelection loads the workspace config and layers the requested
-// profile over it.
-func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer) (config.Local, error) {
+// profile over it. It returns both the merged selection and the file as it was
+// read, because the two answer different questions: the merged one drives the
+// launch, while the raw one is the only honest input to the trust boundary
+// (see localTrustFrom).
+func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer) (merged, raw config.Local, applied *config.Profile, err error) {
 	local, localErr := config.LoadLocal(opts.localPath)
 	if localErr != nil {
 		_, _ = fmt.Fprintln(errOut, warningLabel, localErr)
 	}
+	raw = cloneLocal(local)
 	if opts.profile == "" {
-		return local, nil
+		return local, raw, nil, nil
 	}
 	profile, ok := global.Profiles[opts.profile]
 	if !ok {
-		return local, fmt.Errorf("profile %q not found in %s", opts.profile, opts.globalPath)
+		return local, raw, nil, fmt.Errorf("profile %q not found in %s", opts.profile, opts.globalPath)
 	}
 	applyProfile(&local, profile)
-	return local, nil
+	return local, raw, &profile, nil
+}
+
+// cloneLocal deep-copies the mutable parts of a local config so applyProfile
+// cannot reach the snapshot the trust check reads.
+func cloneLocal(local config.Local) config.Local {
+	clone := local
+	clone.Permissions = copyPermissions(local.Permissions)
+	clone.Mounts = append([]config.Mount(nil), local.Mounts...)
+	clone.Options.ExtraArgs = append([]string(nil), local.Options.ExtraArgs...)
+	return clone
 }
 
 // resolvePermissions merges the configured permissions with the CLI flag

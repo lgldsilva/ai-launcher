@@ -26,6 +26,13 @@ import (
 
 const maxDownloadSize int64 = 512 << 20
 
+// requestTimeout bounds a single release query or asset download. It matches
+// the self-update flow's own deadline: both fetch the same kind of artifact
+// from the same host, and a release archive on a slow link is the reason it is
+// generous rather than seconds. Without it a host that accepts the connection
+// and never answers hangs `--install` until the operator kills it.
+const requestTimeout = 120 * time.Second
+
 // Installer downloads and verifies executables from GitHub releases and
 // trusted HTTPS sources, tracking installed versions in a state file.
 type Installer struct {
@@ -74,9 +81,12 @@ type stateEntry struct {
 }
 
 // New returns an Installer rooted at homeDir using the public GitHub API.
+// The HTTP client is the Installer's own, never http.DefaultClient: that one
+// is shared process-wide, so giving it a deadline would change every other
+// caller's, and leaving it alone means no deadline at all.
 func New(homeDir string) *Installer {
 	return &Installer{
-		HTTPClient: http.DefaultClient,
+		HTTPClient: &http.Client{Timeout: requestTimeout},
 		APIBaseURL: "https://api.github.com",
 		HomeDir:    homeDir,
 		GOOS:       runtime.GOOS,

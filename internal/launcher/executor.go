@@ -14,20 +14,9 @@ import (
 	"golang.org/x/term"
 )
 
-// Executor runs an argv attached to a PTY so interactive agents behave as if
-// launched directly from a terminal.
-type Executor interface {
-	// Run executes argv with the given stdio streams until it exits.
-	Run(context.Context, []string, io.Reader, io.Writer, io.Writer) error
-}
-
-// PTYExecutor is the production Executor backed by creack/pty.
+// PTYExecutor runs an argv attached to a PTY, so interactive agents behave as
+// if launched directly from a terminal. It is backed by creack/pty.
 type PTYExecutor struct{}
-
-// Run executes argv with the inherited environment.
-func (PTYExecutor) Run(ctx context.Context, argv []string, in io.Reader, out io.Writer, errOut io.Writer) error {
-	return PTYExecutor{}.RunWithEnv(ctx, argv, nil, in, out, errOut)
-}
 
 // RunWithEnv executes argv with an explicit environment (nil inherits the
 // current one) attached to a newly allocated PTY.
