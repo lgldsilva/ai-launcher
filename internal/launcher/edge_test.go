@@ -237,6 +237,45 @@ func TestPTYExecutorReportsOutputError(t *testing.T) {
 	}
 }
 
+// Cancel must return promptly even when a descendant retains the PTY slave —
+// the executor kills the whole process group, not only the direct child.
+func TestPTYExecutorCancelKillsProcessGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		// Background sleep keeps the session alive; parent waits on it.
+		// Without group kill, cancel would hang in io.Copy.
+		done <- (PTYExecutor{}).RunWithEnv(ctx,
+			[]string{"sh", "-c", "sleep 120 & wait"},
+			nil, strings.NewReader(""), io.Discard, nil)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v; want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel did not return within 5s; process group likely not killed")
+	}
+}
+
+// A failing output writer must still reap the child (no orphan after return).
+func TestPTYExecutorReapsChildOnOutputError(t *testing.T) {
+	start := time.Now()
+	err := (PTYExecutor{}).RunWithEnv(context.Background(),
+		[]string{"sh", "-c", "printf hi; sleep 30"},
+		nil, nil, failingWriter{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "read command output") {
+		t.Fatalf("output error = %v", err)
+	}
+	// sleep 30 would take far longer if Wait/kill were skipped.
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("reap took %s; child was likely left running", time.Since(start))
+	}
+}
+
 func TestPrepareHostTTYNoopsForPipes(t *testing.T) {
 	// Non-file readers and non-TTY files must not panic; restore is a no-op.
 	restore := prepareHostTTY(strings.NewReader("x"), nil)

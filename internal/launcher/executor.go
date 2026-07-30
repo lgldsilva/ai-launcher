@@ -25,19 +25,35 @@ type PTYExecutor struct{}
 // is switched to raw mode for the session. Without that, line discipline keeps
 // echo + cooked input: arrow keys show as ^[[A/^[[B and TUIs such as oc's
 // preset menu cannot navigate.
+//
+// Lifecycle: the child runs in its own process group (Unix). Context cancel
+// closes the PTY and SIGKILLs the whole group so a descendant holding the
+// slave cannot pin io.Copy forever. Every post-start return path reaps the
+// child — including PTY copy failures — so no orphan is left behind.
 func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Reader, out io.Writer, errOut io.Writer) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("cannot execute an empty command")
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- argv is built from the user's own launcher configuration; running it is the tool's purpose
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Managed cancel: process-group kill rather than CommandContext alone,
+	// which only signals the direct child and leaves PTY-holding descendants.
+	cmd := exec.Command(argv[0], argv[1:]...) // #nosec G204 -- argv is built from the user's own launcher configuration; running it is the tool's purpose
 	if env != nil {
 		cmd.Env = env
 	}
+	configureProcessGroup(cmd)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return fmt.Errorf("start %q: %w", argv[0], err)
 	}
+	// Close is idempotent enough for our purposes (second close returns an
+	// error we ignore). Cancel watcher and the success path both may close.
 	defer func() { _ = ptmx.Close() }()
+
+	stopCancel := watchContextCancel(ctx, cmd, ptmx)
+	defer stopCancel()
 
 	restore := prepareHostTTY(in, ptmx)
 	defer restore()
@@ -61,19 +77,48 @@ func (PTYExecutor) RunWithEnv(ctx context.Context, argv, env []string, in io.Rea
 	// child's final output (typically the underlying error, e.g. ai-memory's
 	// "409 workstream is already active") to pattern-match a recovery hint.
 	tail := &tailBuffer{cap: 8192}
-	if _, copyErr := io.Copy(io.MultiWriter(out, tail), ptmx); copyErr != nil && ctx.Err() == nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, syscall.EIO) {
+	_, copyErr := io.Copy(io.MultiWriter(out, tail), ptmx)
+
+	// Always reap. Close the master first so writers unblock; kill the group
+	// when cancel fired or the output path failed for a real reason.
+	_ = ptmx.Close()
+	realCopyErr := copyErr != nil &&
+		ctx.Err() == nil &&
+		!errors.Is(copyErr, io.EOF) &&
+		!errors.Is(copyErr, syscall.EIO)
+	if ctx.Err() != nil || realCopyErr {
+		killProcessGroup(cmd)
+	}
+	waitErr := cmd.Wait()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if realCopyErr {
 		return fmt.Errorf("read command output: %w", copyErr)
 	}
-	if waitErr := cmd.Wait(); waitErr != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	if waitErr != nil {
 		if t := strings.TrimSpace(tail.String()); t != "" {
 			return fmt.Errorf("%w\nlast output:\n%s", waitErr, t)
 		}
 		return waitErr
 	}
 	return nil
+}
+
+// watchContextCancel closes the PTY and kills the process group when ctx is
+// done, unblocking io.Copy that would otherwise hang on a retained slave.
+func watchContextCancel(ctx context.Context, cmd *exec.Cmd, ptmx *os.File) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = ptmx.Close()
+			killProcessGroup(cmd)
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
 }
 
 // prepareHostTTY puts a real terminal stdin into raw mode and mirrors window
