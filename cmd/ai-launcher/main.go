@@ -282,7 +282,7 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 	}
 	// Permissions the profile replaced are trusted global input — only the
 	// file-owned map is subject to the CLI-flag opt-in check.
-	if profile == nil || profile.Permissions == nil {
+	if !overrides.permissions {
 		trust.rawPermissions = copyPermissions(raw.Permissions)
 	}
 	return trust
@@ -291,10 +291,17 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 // profileBlocks names the selection blocks a profile replaced. It mirrors the
 // conditions in applyProfile one-for-one: whatever the profile takes over stops
 // being the workspace file's responsibility, so the two must be read together.
+//
+// One field per `if` in applyProfile, deliberately. A block that applyProfile
+// replaces without a field here has no way to be excused from the trust gate,
+// and the launcher refuses the run over a value it already discarded — the
+// defect this type exists to prevent, described at length on localTrustFrom.
+// TestProfileBlocksCoversEveryApplyProfileBlock is the mechanical guard.
 type profileBlocks struct {
-	agent   bool
-	mounts  bool
-	options bool
+	agent       bool
+	permissions bool
+	mounts      bool
+	options     bool
 }
 
 func profileOverrides(profile *config.Profile) profileBlocks {
@@ -302,9 +309,10 @@ func profileOverrides(profile *config.Profile) profileBlocks {
 		return profileBlocks{}
 	}
 	return profileBlocks{
-		agent:   strings.TrimSpace(profile.Agent) != "",
-		mounts:  profile.Mounts != nil,
-		options: profile.Options != nil,
+		agent:       strings.TrimSpace(profile.Agent) != "",
+		permissions: profile.Permissions != nil,
+		mounts:      profile.Mounts != nil,
+		options:     profile.Options != nil,
 	}
 }
 
