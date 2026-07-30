@@ -174,7 +174,7 @@ releases, sent as a Bearer header and never logged).
 
 ### go install
 
-Prerequisite: Go 1.24+ (declared in `go.mod`).
+Prerequisite: Go 1.25+ (the toolchain declared in `go.mod`).
 
 ```bash
 go install github.com/lgldsilva/ai-launcher/cmd/ai-launcher@latest
@@ -590,6 +590,8 @@ Documentation and UI strings in this repository are **English**.
 | [docs/test-strategy.md](docs/test-strategy.md) | Test pyramid, coverage gate, and the Gherkin contract suite |
 | [docs/remediation-plan.md](docs/remediation-plan.md) | Live tracker: audit findings against the ai-jail / ai-memory composition, their status, and the phased plan to close the open ones |
 | [AGENTS.md](AGENTS.md) | Instructions for AI agents working in this repository |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability, supported versions, and the ai-jail / ai-memory boundary |
+| [CHANGELOG.md](CHANGELOG.md) | Breaking changes and their migrations (per-release notes are on the releases page) |
 
 ## Roadmap
 
