@@ -467,6 +467,7 @@ posture on its own — the launcher refuses, naming the explicit opt-in:
 | Enable a `permission` (ssh, gh, docker, gpu…) | Refused. Pass the matching flag (`--ssh`, `--gh`, `--docker`…) to accept it |
 | Set `options.yolo: true` | Refused. Pass `--yolo` to accept it |
 | List `options.extra_args` | Refused. Pass `--args "<args>"` to accept it |
+| Set `options.param_values` (model selection, catalog flags) | Refused. Pass `--param name=value` to accept it |
 | Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: save the selection or select a profile |
 
 What you type on the command line stays fully trusted: the boundary is around
