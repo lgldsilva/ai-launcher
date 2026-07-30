@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
 func TestDecideLaunchAction(t *testing.T) {
@@ -67,7 +70,28 @@ func TestCliLaunchUsesJailExecProgrammaticMode(t *testing.T) {
 
 func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath, mounts := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  jail_flags:\n    lockdown: true\n    status_bar: false\n    browser: soft\n    mask: [/etc/secrets]\n")
+	// Unsaved jail_flags are refused by the trust gate; a launcher-saved
+	// selection is trusted operator input and must still emit the flags.
+	globalPath, localPath, mounts := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	lockdown, statusBar := true, false
+	saved := launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseJail:   true,
+		UseMemory: false,
+		JailFlags: config.JailFlags{
+			Lockdown:  &lockdown,
+			StatusBar: &statusBar,
+			Browser:   "soft",
+			Mask:      []string{"/etc/secrets"},
+		},
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -96,8 +120,24 @@ func TestV115PermissionFlagsMapToAiJail(t *testing.T) {
 func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// Pre-flight stats every mount, so the fixture path has to exist.
+	// t.TempDir lives under /var or /tmp on most hosts; unsaved local mounts of
+	// those trees are refused by the trust gate, so the selection is saved first
+	// (operator provenance) — the same path the TUI --save flow takes.
 	data := t.TempDir()
-	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: "+data+"\n    mode: ro\n")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	saved := launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseJail:   true,
+		UseMemory: false,
+		Mounts:    []config.Mount{{Path: data, Mode: "ro"}},
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)

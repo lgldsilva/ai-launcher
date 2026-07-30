@@ -127,3 +127,152 @@ func TestTamperedSavedConfigIsRefusedAgain(t *testing.T) {
 		t.Fatal("run() = nil; a file edited after the launcher saved it must be refused again")
 	}
 }
+
+// A local config enabling docker permission must not silently grant it; the
+// operator has to pass --docker on the command line or save the selection.
+func TestLocalConfigPermissionsRequireExplicitFlags(t *testing.T) {
+	t.Run("docker:true blocks without flag", func(t *testing.T) {
+		globalPath, localPath, _ := writeTestConfigs(t,
+			"agent: custom-cli\noptions:\n  jail: true\n  memory: false\npermissions:\n  docker: true\n")
+		_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+		if err == nil {
+			t.Fatal("run() = nil; permissions.docker:true must be refused without --docker")
+		}
+		if !strings.Contains(err.Error(), "docker") || !strings.Contains(err.Error(), "--docker") {
+			t.Errorf("error = %v; want it mentions both 'docker' and the --docker flag", err)
+		}
+	})
+	t.Run("gh:true requires --gh", func(t *testing.T) {
+		globalPath, localPath, _ := writeTestConfigs(t,
+			"agent: custom-cli\noptions:\n  jail: true\n  memory: false\npermissions:\n  gh: true\n")
+		if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run"); err == nil {
+			t.Fatal("run() = nil; gh:true needs --gh")
+		}
+	})
+	t.Run("ssh:true requires --ssh", func(t *testing.T) {
+		globalPath, localPath, _ := writeTestConfigs(t,
+			"agent: custom-cli\noptions:\n  jail: true\n  memory: false\npermissions:\n  ssh: true\n")
+		if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run"); err == nil {
+			t.Fatal("run() = nil; ssh:true needs --ssh")
+		}
+	})
+	t.Run("gpu:true requires --gpu", func(t *testing.T) {
+		globalPath, localPath, _ := writeTestConfigs(t,
+			"agent: custom-cli\noptions:\n  jail: true\n  memory: false\npermissions:\n  gpu: true\n")
+		if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run"); err == nil {
+			t.Fatal("run() = nil; gpu:true needs --gpu")
+		}
+	})
+}
+
+// Matching CLI flags make enabled permissions through.
+func TestPermissionFlagsOverrideTrustRefusals(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\npermissions:\n  docker: true\n  ssh: true\n")
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--docker", "--ssh", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v; matching flags must permit file-supplied permissions", err)
+	}
+	if !strings.Contains(stdout, "custom-cli") {
+		t.Fatalf("stdout = %q; wanted a successful dry-run", stdout)
+	}
+}
+
+func TestSavedLocalConfigHonorsPermissions(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	saved := launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseJail:   true,
+		UseMemory: false,
+		Permissions: map[string]bool{"docker": true},
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
+	// Reopen with no flags — the saved file should be trusted by hash.
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err != nil {
+		t.Fatalf("run() refused the launcher's own saved config: %v", err)
+	}
+	if !strings.Contains(stdout, "custom-cli") {
+		t.Fatalf("stdout = %q; saved permissions were lost", stdout)
+	}
+}
+
+// Local config mounting a sensitive path is refused.
+func TestLocalConfigRejectsSensitiveMounts(t *testing.T) {
+	sensitivePaths := []string{"/etc", "/etc/passwd", "/var/run/docker.sock", "/home", "/Users", "/Volumes"}
+	for _, p := range sensitivePaths {
+		t.Run(p, func(t *testing.T) {
+			globalPath, localPath, _ := writeTestConfigs(t,
+				"agent: custom-cli\noptions:\n  jail: true\n  memory: false\nmounts:\n  - path: "+p+"\n")
+			if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run"); err == nil {
+				t.Fatalf("run() = nil; mount %q must be refused as sensitive path", p)
+			}
+		})
+	}
+}
+
+// Local options.jail_flags are refused because they weaken sandbox posture.
+func TestLocalConfigJailFlagsRequireSaveOrProfile(t *testing.T) {
+	tests := []struct {
+		name     string
+		yaml     string
+		wantStr  string
+	}{
+		{"seccomp off", "options:\n  jail: true\n  memory: false\n  jail_flags:\n    seccomp: false\n", "jail_flags"},
+		{"landlock off", "options:\n  jail: true\n  memory: false\n  jail_flags:\n    landlock: false\n", "jail_flags"},
+		{"private_home true", "options:\n  jail: true\n  memory: false\n  jail_flags:\n    private_home: true\n", "jail_flags"},
+		{"browser set", "options:\n  jail: true\n  memory: false\n  jail_flags:\n    browser: hard\n", "jail_flags"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			globalPath, localPath, _ := writeTestConfigs(t, tt.yaml)
+			_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+			if err == nil {
+				t.Fatalf("run() = nil; jail_flags must be refused without save/profile")
+			}
+			if !strings.Contains(err.Error(), tt.wantStr) {
+				t.Errorf("error = %v; want it mentioning %q", err, tt.wantStr)
+			}
+		})
+	}
+}
+
+// yolo from local config is refused unless --yolo.
+func TestLocalConfigYoloRequiresFlag(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  yolo: true\n")
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run"); err == nil {
+		t.Fatal("run() = nil; yolo:true must be refused without --yolo")
+	}
+	// With --yolo, the launch succeeds (yolo flag overrides trust check).
+	stubToolsOnPath(t, "sh-like")
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--yolo", "--agent", "sh-like", "--dry-run"); err != nil {
+		t.Fatalf("run() error = %v; --yolo must accept file yolo setting", err)
+	}
+}
+
+// extra_args from local config is refused unless --args/--extra-args.
+func TestLocalConfigExtraArgsRequiresFlag(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  extra_args:\n    - --foo\n")
+	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err == nil {
+		t.Fatal("run() = nil; extra_args in local config must be refused without --args")
+	}
+
+	// The key point: refusal due to extra_args goes away when --extra-args is passed.
+	_, _, err2 := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--agent", "codex", "--no-jail", "--no-memory", "--extra-args", "--bar", "--dry-run")
+	if err2 != nil && strings.Contains(err2.Error(), "extra_args") {
+		t.Fatalf("extra_args refusal persisted despite flag: %v", err2)
+	}
+}
