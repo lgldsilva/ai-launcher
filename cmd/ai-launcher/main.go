@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +41,14 @@ const (
 	permissionSystemdUser = "systemd-user"
 	// warningLabel prefixes non-fatal diagnostics on stderr.
 	warningLabel = "warning:"
+	// aiMemoryCommand is the upstream memory CLI, resolved on PATH for the
+	// read-only surfaces this binary forwards to it.
+	aiMemoryCommand = "ai-memory"
 )
+
+// workstreamSearchTimeout bounds the ai-memory query so a hung or unreachable
+// server cannot wedge the terminal. It is a search, not a session.
+const workstreamSearchTimeout = 30 * time.Second
 
 type stringList []string
 
@@ -69,6 +78,9 @@ type cliOptions struct {
 	workspace, project             string
 	profile, saveProfile           string
 	deleteProfile                  string
+	workstreamSearch               string
+	searchLimit                    int
+	searchJSON                     bool
 	ssh, gh, docker, gpu           bool
 	display, pictures              bool
 	tailscale, systemdUser         bool
@@ -128,6 +140,9 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.saveProfile, "save-profile", "", "save the fully merged selection as the named profile in the global config and exit without launching")
 	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
+	flags.StringVar(&o.workstreamSearch, "workstream-search", "", "search the ai-memory workstream ledger for this query and exit")
+	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search (ai-memory's own default when unset)")
+	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search results as JSON")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
 	flags.BoolVar(&o.doctor, "doctor", false, "report the installed upstream tool versions against the supported floor and exit")
 }
@@ -659,7 +674,56 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, out,
 	if opts.deleteProfile != "" {
 		return true, deleteProfile(opts.globalPath, global, opts.deleteProfile, out)
 	}
+	if strings.TrimSpace(opts.workstreamSearch) != "" {
+		return true, searchWorkstream(opts, global, home, out, errOut)
+	}
 	return false, nil
+}
+
+// searchWorkstream forwards a query to `ai-memory workstream-search`.
+//
+// The launcher already creates workstreams (`--new`) and resumes them
+// (`--workstream`), so it owned the write side of the ledger and gave no way
+// to read it back. The delta ai-memory injects into the next harness is
+// size-limited by design; the searchable ledger is where an old decision
+// actually lives, and needing a second tool to reach it defeats the point of
+// having one command that knows about workstreams.
+//
+// Deliberately not jail-wrapped, unlike a launch. This is a read-only query
+// against the ai-memory server over HTTP, in the same class as --doctor: no
+// harness runs, nothing touches the checkout, and paying for a sandbox would
+// only mean the operator's terminal cannot see the answer.
+func searchWorkstream(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
+	memoryPath, err := exec.LookPath(aiMemoryCommand)
+	if err != nil {
+		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
+	}
+	args := []string{"workstream-search"}
+	if opts.searchLimit > 0 {
+		args = append(args, "--limit", strconv.Itoa(opts.searchLimit))
+	}
+	if opts.searchJSON {
+		args = append(args, "--json")
+	}
+	args = append(args, opts.workstreamSearch)
+
+	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
+	defer cancel()
+	// #nosec G204 -- memoryPath is the LookPath result for a fixed tool name;
+	// every argument is a launcher-controlled flag or the operator's own query.
+	command := exec.CommandContext(ctx, memoryPath, args...)
+	command.Env = launcher.Environment(launcher.LaunchConfig{
+		UseMemory:       true,
+		HomeDir:         home,
+		MemoryServerURL: global.MemoryServerURL,
+		MemoryAuthToken: global.MemoryAuthToken,
+	})
+	command.Stdout = out
+	command.Stderr = errOut
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("workstream-search: %w", err)
+	}
+	return nil
 }
 
 // loadLocalSelection loads the workspace config and layers the requested

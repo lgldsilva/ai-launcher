@@ -224,6 +224,7 @@ runs in CLI mode and executes for real (it is not a command generator — use
 | `ai-launcher --install [--agent X]` / `--upgrade` | Installs/upgrades the managed tools via GitHub releases |
 | `ai-launcher --add Name --path /path [--command cmd] [--description txt]` | Adds/updates a harness in the global catalog |
 | `ai-launcher --list-profiles` / `--delete-profile N` | Lists or removes profiles saved in the global config |
+| `ai-launcher --workstream-search "query" [--limit N] [--json]` | Searches the ai-memory workstream ledger and exits (read-only; not sandboxed) |
 | `ai-launcher --save-profile N [flags]` | Saves the merged selection as a profile and exits without launching |
 | `ai-launcher --save` (or `--save-only`) | Writes the selection to the local `.ai-launch.yaml` and exits |
 | `ai-launcher --version` | Prints the binary version (release, commit, build date) and exits |
@@ -245,6 +246,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--yolo` / `--no-yolo` | Passes (or not) the agent's dangerous-mode flag |
 | `--new <name>` / `--workstream <name>` | Creates / resumes an ai-memory workstream |
 | `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
+| `--workstream-search <query>` | Queries the ai-memory ledger and exits; `--limit N` and `--json` refine it |
 | `--continue` | Continues the last ai-memory session of this checkout |
 | `--fresh` | Starts a new ai-memory session in the current workstream instead of resuming one (mutually exclusive with `--continue`) |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
@@ -371,6 +373,11 @@ ai-launcher --agent pi --map /host/data --rw-map /workspace --yolo
 
 # Named ai-memory workstream with project scope
 ai-launcher --agent claude --new release-check --project my-app
+
+# Read the ledger back: the delta injected into the next harness is
+# size-limited by design, so an old decision lives here
+ai-launcher --workstream-search "why did we drop redis"
+ai-launcher --workstream-search "migration that failed" --limit 50 --json
 
 # Parameter declared in the catalog (Kimi declares "query" and "model")
 ai-launcher --agent kimi --param query="refactor the auth module" --param model=k2
