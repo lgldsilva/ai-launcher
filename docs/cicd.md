@@ -19,7 +19,7 @@ Triggers: push to `main` and every pull request. All jobs run on
 | `vuln` | `govulncheck` | Known vulnerability reachable in the code |
 | `trivy` | Filesystem scan, severity `CRITICAL`, `ignore-unfixed` | CRITICAL vulnerability with a fix available |
 | `sbom` | Generates a CycloneDX SBOM and publishes it as an artifact | SBOM generation fails |
-| `sonar` | SonarCloud analysis via `npx sonarqube-scanner`, waits for the quality gate | Quality gate red (`qualitygate.wait=true`) |
+| `sonar` | SonarCloud analysis via pinned `npx sonarqube-scanner@5.0.0`; `SONAR_TOKEN` only on the scanner step | Quality gate red (`qualitygate.wait=true`) |
 
 The `test` job's coverage gate replicates `make test-coverage`: it measures
 only `internal/config`, `internal/catalog`, and `internal/launcher`, excludes
@@ -32,12 +32,14 @@ boundary as the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — details in
 
 The `sonar` job is **gated on the `SONAR_TOKEN` secret**: every step skips
 cleanly while the secret does not exist, so forks and early setup stay green.
-The scanner runs with `-Dsonar.host.url=https://sonarcloud.io` and
-`-Dsonar.qualitygate.wait=true`; `sonar-project.properties` at the repo root
-is host-agnostic (sources, test inclusions, coverage exclusions aligned with
-the 90% gate) and never carries host, org, key, or token — those arrive as
-`-D` flags. The npx scanner was chosen deliberately: no third-party action to
-pin/audit.
+`SONAR_TOKEN` is injected only into the scanner step environment — never the
+job env and never the coverage/`go test` step — so same-repository PR code
+cannot read it. The scanner package is pinned
+(`npx -y sonarqube-scanner@5.0.0`). The scanner runs with
+`-Dsonar.host.url=https://sonarcloud.io` and `-Dsonar.qualitygate.wait=true`;
+`sonar-project.properties` at the repo root is host-agnostic (sources, test
+inclusions, coverage exclusions aligned with the 90% gate) and never carries
+host, org, key, or token — those arrive as `-D` flags.
 
 ## Required secrets and variables
 

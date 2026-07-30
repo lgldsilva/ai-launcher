@@ -56,12 +56,13 @@ symlinked project `.ai-jail` (`cmd/ai-launcher/launch_test.go`), and the
 
 ## Quality tools
 
-golangci-lint, gosec, and govulncheck run via `go run ...@latest` using the
-Makefile variables (`GOLANGCI_LINT`, `GOSEC`, `GOVULNCHECK`) — nothing needs
-to be installed system-wide; override the variable with the installed binary
-to speed things up (e.g. `make lint-full GOLANGCI_LINT=golangci-lint`). Lint
-config: `.golangci.yml` (errcheck, gocognit, gosec, govet, revive,
-staticcheck…).
+golangci-lint, gosec, and govulncheck run via pinned `go run ...@vX.Y.Z`
+using the Makefile variables (`GOLANGCI_LINT`, `GOSEC`, `GOVULNCHECK`) —
+nothing needs to be installed system-wide; override the variable with the
+installed binary to speed things up (e.g.
+`make lint-full GOLANGCI_LINT=golangci-lint`). Bump pins deliberately; do not
+use `@latest`. Lint config: `.golangci.yml` (errcheck, gocognit, gosec,
+govet, revive, staticcheck…).
 
 ## Sonar and CI
 
