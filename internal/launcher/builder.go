@@ -894,9 +894,9 @@ func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Iss
 	return issues
 }
 
-// permissionIssues checks the cross-permission dependencies (jail-backed
-// permissions and gpu requiring docker) and warns about enabled permissions
-// that the host platform does not support.
+// permissionIssues checks the cross-permission dependencies (every helper
+// permission needs the jail) and warns about enabled permissions that the host
+// platform does not support.
 func permissionIssues(cfg LaunchConfig, goos string, catalog []config.Permission) []Issue {
 	issues := make([]Issue, 0)
 	if cfg.Permissions["ssh"] || cfg.Permissions["gh"] || cfg.Permissions["docker"] || cfg.Permissions["gpu"] {
@@ -908,9 +908,6 @@ func permissionIssues(cfg LaunchConfig, goos string, catalog []config.Permission
 			}
 			issues = append(issues, issue)
 		}
-	}
-	if cfg.Permissions["gpu"] && !cfg.Permissions["docker"] {
-		issues = append(issues, Issue{Code: "gpu-without-docker", Message: "gpu permission requires docker"})
 	}
 	issues = append(issues, unsupportedPlatformIssues(cfg, goos, catalog)...)
 	return issues

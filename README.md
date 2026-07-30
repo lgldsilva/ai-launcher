@@ -237,7 +237,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | Flag | Effect |
 | --- | --- |
 | `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, …) |
-| `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; gpu needs docker) |
+| `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; all independent of each other) |
 | `--display` / `--pictures` / `--tailscale` / `--systemd-user` / `--mise` / `--worktree` | Optional jail passthroughs, all off by default; each one **forces** its capability on (platform support varies — `display` and `systemd-user` are Linux-only) |
 | `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and exits |
 | `--no-jail` / `--sandbox` | Explicitly disables / enables ai-jail |
@@ -274,7 +274,7 @@ and a permission is on). On Windows they are hidden: there is no ai-jail.
 | **SSH access** / `--ssh` | `ai-jail --ssh` | Linux + macOS | OpenSSH client / agent if you use SSH from agents | Native ai-jail capability (not a free-form mount list) |
 | **GitHub CLI** / `--gh` | `--rw-map $HOME/.config/gh` | Linux + macOS | Only if you want `gh` inside the jail: install + `gh auth login` | **Auxiliary only.** Does not install `gh` and does not fail when `gh` is missing. Mounts host config so tokens travel with the tool |
 | **Docker socket** / `--docker` | `ai-jail --docker` | Linux + macOS | Docker (or compatible) socket if agents need containers | **Opt-in only.** Socket access is effectively host root — enable only for trusted projects |
-| **GPU passthrough** / `--gpu` | `ai-jail --gpu` | Linux + macOS | GPU devices (mainly Linux) if agents need GPU | Requires Docker permission in the catalog dependency graph |
+| **GPU passthrough** / `--gpu` | `ai-jail --gpu` | Linux + macOS | GPU devices (mainly Linux) if agents need GPU | Independent of Docker — ai-jail exposes `/dev/dri` and `/dev/nvidia*` directly |
 | **Display passthrough** / `--display` | `ai-jail --display` | Linux only | X11/Wayland session if agents open GUI windows | Forces X11/Wayland on; ai-jail auto-detects it when left off |
 | **Pictures folder** / `--pictures` | `ai-jail --pictures` | Linux + macOS | — | Off by default |
 | **Tailscale socket** / `--tailscale` | `ai-jail --tailscale` | Linux + macOS | Tailscale daemon if agents use the tailnet | Off by default |

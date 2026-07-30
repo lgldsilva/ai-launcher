@@ -203,7 +203,7 @@ Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
 
 Permissions are **optional auxiliaries**. Pre-flight never requires host tools
 such as `gh`, `ssh`, or Docker to be installed; it only enforces dependency
-edges among permissions (e.g. permission requires jail; gpu requires docker).
+edges among permissions (e.g. every jail-backed permission requires jail).
 
 `internal/launcher.Build` / `appendJailArgs` maps **enabled** permissions to
 ai-jail (all require `UseJail` when on):

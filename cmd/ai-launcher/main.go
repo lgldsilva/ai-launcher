@@ -696,11 +696,11 @@ func cloneLocal(local config.Local) config.Local {
 
 // resolvePermissions merges the configured permissions with the CLI flag
 // overrides and normalizes the result. Normalization resolves permission
-// dependencies (gpu requires docker) and drops ids the catalog does not
-// declare. It has to run *after* every input is merged: normalizing first
-// left a dependency pulled in by a CLI flag unresolved, so --gpu produced an
-// argv without --docker while the TUI, which re-normalizes on each toggle,
-// produced the right one.
+// dependencies (every jail-backed permission requires jail) and drops ids the
+// catalog does not declare. It has to run *after* every input is merged:
+// normalizing first left a dependency pulled in by a CLI flag unresolved, so
+// the argv came out missing it while the TUI, which re-normalizes on each
+// toggle, produced the right one.
 func resolvePermissions(flags *flag.FlagSet, opts *cliOptions, local config.Local, catalogue catalog.Catalog) map[string]bool {
 	permissions := copyPermissions(local.Permissions)
 	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)

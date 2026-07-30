@@ -126,7 +126,6 @@ Feature: Launcher command contract
       """
       memory-not-found
       permission-without-jail
-      gpu-without-docker
       """
 
   Scenario: Rejects GitHub CLI permission without a jail

@@ -622,7 +622,7 @@ func DefaultGlobal() Global {
 			{ID: "ssh", Name: "SSH access", Requires: []string{"jail"}},
 			{ID: "gh", Name: "GitHub CLI", Requires: []string{"jail"}},
 			{ID: "docker", Name: "Docker socket", Requires: []string{"jail"}},
-			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"docker"}},
+			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"jail"}},
 			// The passthroughs below default to off because ai-jail already
 			// auto-enables display, mise and worktree when the resource exists.
 			// Turning one on here forces it on; forcing one off is a jail_flags

@@ -42,7 +42,12 @@ func TestValidatorAcceptsCompleteConfiguration(t *testing.T) {
 	}
 }
 
-func TestValidatorReportsGpuWithoutDocker(t *testing.T) {
+// GPU passthrough does not need the Docker socket. ai-jail exposes /dev/dri and
+// /dev/nvidia* directly and documents --gpu and --docker as independent
+// capabilities; the dependency was this launcher's invention. Post-v1.16.0 it
+// had a real cost: "I want the GPU" forced the operator into the one flag that
+// hands the agent host root.
+func TestValidatorDoesNotTieGpuToDocker(t *testing.T) {
 	v := Validator{
 		LookPath: func(command string) (string, error) {
 			if command == "claude" || command == "ai-jail" {
@@ -53,11 +58,8 @@ func TestValidatorReportsGpuWithoutDocker(t *testing.T) {
 		Stat: func(string) (os.FileInfo, error) { return nil, nil },
 	}
 	issues := v.Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true, Permissions: map[string]bool{"gpu": true}})
-	if len(issues) != 1 {
-		t.Fatalf("got issues %#v; want gpu dependency", issues)
-	}
-	if !strings.Contains(issues[0].Error(), "gpu permission requires docker") {
-		t.Fatalf("unexpected dependency issue: %#v", issues)
+	if len(issues) != 0 {
+		t.Fatalf("got issues %#v; gpu alone is a complete configuration", issues)
 	}
 }
 
