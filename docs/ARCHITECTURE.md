@@ -190,7 +190,7 @@ Global config (`~/.config/ai-launch/config.yaml`):
 | `agents[]` | list | `name`, `command`, `aliases`, `path`, `supports_memory`, `supports_yolo`, `yolo_flag`, `params[]` (`name`/`flag`/`takes_value`), `release` (GitHub recipe), `memory` (MCP/hooks adapter), `source_url` |
 | `tools[]` | list | Auxiliary tool recipes (ai-jail, ai-memory) |
 | `permissions[]` | list | `id`, `name`, `default`, `locked`, `requires`, `platforms` (empty = all platforms) |
-| `default_mounts[]` | list | Mounts suggested when neither the local config/profile nor `--mount`/`--map`/`--rw-map` define any; read-write by default, with the same optional `:ro`/`:rw` suffix as `--mount`. Built-in candidates are OS-specific (Linux: `/storage…`; macOS: `/Volumes/MSD512…`); only paths that exist on the host are applied. Pre-selected in the TUI mount manager (removable) |
+| `default_mounts[]` | list | Mounts suggested when neither the local config/profile nor `--mount`/`--map`/`--rw-map` define any; read-write by default, with the same optional `:ro`/`:rw` suffix as `--mount`. There are no built-in candidates: `DefaultMountCandidates` returns nothing on every platform, because a default mount is a read-write hole in the sandbox and the launcher has no business guessing one. Only paths that exist on the host are applied, so one config can serve several machines. Pre-selected in the TUI mount manager (removable) |
 | `profiles{}` | map | Named selection snapshots (`agent`, `permissions`, `mounts`, `options`) |
 | `recent_agents[]` | list | Most-recently-used agent commands (newest first); the TUI lists installed agents in this order |
 

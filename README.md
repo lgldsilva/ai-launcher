@@ -81,8 +81,8 @@ Mounts
     Space                toggle read-only ↔ read-write
     Backspace            remove highlighted mount
     r                    RUN the selected agent
-  /Volumes/Data              (read-write)   # macOS example
-  /Volumes/Data/Projetos     (read-write)   # Linux: /storage, /storage/Projetos
+  /Volumes/Data              (read-write)   # from your default_mounts
+  /Volumes/Data/Projetos     (read-write)   # or added with `a` in this panel
 
 Options
   [✓] Jail / Sandbox
@@ -113,7 +113,7 @@ ai-launcher --agent pi --dry-run
 # ai-jail --exec --map /usr/local/bin --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
 #   ai-memory run pi --executable /usr/local/bin/pi
 
-# Linux-style mounts (when default_mounts exist on the host)
+# Linux-style mounts (from a default_mounts entry that exists on this host)
 # ai-jail --exec --map /usr/local/bin --rw-map /storage --rw-map /storage/Projetos \
 #   ai-memory run pi --executable /usr/local/bin/pi
 
@@ -336,16 +336,19 @@ Extra mounts (project data, caches, second disks) stay under **Mounts** /
 `--mount` / `--rw-map` and are independent of the table above.
 
 When no mount is given by flags, local config, or profile, the global
-`default_mounts` are suggested (rw by default). Built-in candidates are
-platform-specific and only paths that exist on the host are applied:
+`default_mounts` are suggested (rw by default). **There are no built-in
+candidates** — the launcher does not guess a path on your machine. ai-jail
+already mounts the current project read-write on its own, so most launches
+need no extra mount at all.
 
-| OS | Built-in `default_mounts` |
-| --- | --- |
-| Linux | `/storage`, `/storage/Projetos`, `/storage/cache` |
-| macOS | `/Volumes/MSD512`, `/Volumes/MSD512/Projetos` |
-| other | (none) |
+Declare your own in `~/.config/ai-launch/config.yaml`; only paths that exist
+on the host are applied, so one config can cover several machines:
 
-Override them in `~/.config/ai-launch/config.yaml` if your layout differs.
+```yaml
+default_mounts:
+  - /storage/Projetos       # applied where it exists
+  - /Volumes/Data/Projetos  # applied on the other machine
+```
 With the jail enabled, every home dotfile symlink that resolves outside
 `$HOME` (for example `~/.android -> /Volumes/MSD512/.android` or
 `~/.cache -> /storage/cache`) is also auto-mounted rw, because ai-jail
@@ -592,7 +595,7 @@ Documentation and UI strings in this repository are **English**.
 - [x] Gherkin contract suite against ai-jail/ai-memory drift
 - [x] Automated release pipeline (autotag semver + GoReleaser: archives, `checksums.txt`, SBOM)
 - [x] Self-update (`ai-launcher upgrade`) and POSIX curl installer (`install.sh`)
-- [x] Platform default mounts (Linux `/storage…`, macOS `/Volumes…`) + home-symlink auto-mounts
+- [x] Configurable `default_mounts` (no built-in guesses) + home-symlink auto-mounts
 - [x] `ai-memory run` harness remap for wrappers (e.g. catalog `oc` → harness `opencode`)
 - [ ] Native sandbox on Windows (depends on upstream; unlikely)
 - [ ] GUI (not planned; the TUI is the interface)

@@ -639,23 +639,32 @@ func DefaultGlobal() Global {
 }
 
 // DefaultMountCandidates returns the built-in mount suggestions for goos.
-// Paths mirror the dual-machine layout used by this project:
 //
-//	linux  → /storage, /storage/Projetos, /storage/cache
-//	darwin → /Volumes/MSD512, /Volumes/MSD512/Projetos
+// It returns nothing, on every platform, and the signature is kept so the
+// callers and the goos-shaped tests stay honest about that.
 //
-// Other platforms get no built-in mounts. Callers that apply these as
-// suggested mounts should drop entries whose path does not exist on the
-// host (see ExistingPaths) so a missing volume does not fail pre-flight.
+// It used to return this author's own volumes — /storage and /storage/Projetos
+// on Linux, /Volumes/MSD512 on macOS — compiled into a tool other people
+// install. ExistingPaths kept that harmless (a path that is not there is
+// dropped), which is exactly why it survived: on the machine it was written
+// for it worked, and everywhere else the feature silently did nothing.
+//
+// A default mount is a read-write hole in the sandbox. Guessing one is the
+// wrong shape of guess: too specific to be right for a stranger, and if it
+// ever did match, it would grant an agent write access to a directory nobody
+// asked about. The launcher now mounts what it is told to mount — `--mount` /
+// `--rw-map`, the workspace file, a profile, or `default_mounts` in the global
+// config, which is the supported way to get this behaviour back:
+//
+//	# ~/.config/ai-launch/config.yaml
+//	default_mounts:
+//	  - /storage/Projetos
+//
+// ai-jail already mounts the current project read-write on its own, so the
+// common case needs no mounts at all.
 func DefaultMountCandidates(goos string) []string {
-	switch goos {
-	case "linux":
-		return []string{"/storage", "/storage/Projetos", "/storage/cache"}
-	case "darwin":
-		return []string{"/Volumes/MSD512", "/Volumes/MSD512/Projetos"}
-	default:
-		return nil
-	}
+	_ = goos // no platform has a defensible built-in default; see above
+	return nil
 }
 
 // ExistingPaths returns the subset of paths that currently exist on the host.
