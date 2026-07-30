@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -276,6 +277,7 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 		trust.yolo = raw.Options.Yolo
 		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
 		trust.jailFlags = raw.Options.JailFlags
+		trust.paramValues = raw.Options.ParamValues
 	}
 	if !overrides.mounts {
 		trust.mounts = raw.Mounts
@@ -325,10 +327,11 @@ type localTrust struct {
 	fromFile       bool // false once --agent was given: the operator's own choice.
 	jail           bool
 	mounts         []config.Mount
-	rawPermissions map[string]bool  // permissions from file (profile may overwrite)
-	yolo           bool             // file value when profile does not own options
-	extraArgs      []string         // file value when profile does not own options
-	jailFlags      config.JailFlags // file value when profile does not own options
+	rawPermissions map[string]bool   // permissions from file (profile may overwrite)
+	yolo           bool              // file value when profile does not own options
+	extraArgs      []string          // file value when profile does not own options
+	jailFlags      config.JailFlags  // file value when profile does not own options
+	paramValues    map[string]string // file value when profile does not own options
 }
 
 // enforceLocalConfigTrust refuses a workspace-local config that lowers the
@@ -422,6 +425,26 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 		if !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
 			return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")
 		}
+	}
+
+	// param_values: catalog-declared harness flags, filled in by the file.
+	//
+	// Narrower than extra_args — a value can only land behind a flag the
+	// catalog already declares, so a repository cannot invent an argument. It
+	// can still choose one: `model` picks what the agent runs as, and a param
+	// declared `takes_value: false` is a bare flag the file turns on, which is
+	// why pre-flight already warns `catalog-flag-param` about those. Choosing
+	// the model and the flags of the process about to read the checkout is an
+	// operator decision, so it takes the same opt-in as everything else here.
+	if trust.optionsRaw && len(trust.paramValues) > 0 && !flagsWasSet(flags, "param") {
+		names := make([]string, 0, len(trust.paramValues))
+		for name := range trust.paramValues {
+			names = append(names, name)
+		}
+		sort.Strings(names) // map order is random; the message must not be
+		return fmt.Errorf("local config sets options.param_values (%s) without --param; "+
+			"pass --param name=value to accept explicitly, or save the selection",
+			strings.Join(names, ", "))
 	}
 
 	return nil
