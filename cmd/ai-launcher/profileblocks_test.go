@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -113,8 +114,13 @@ func TestProfilePermissionsDiscardTheFilesGrantWithoutRefusing(t *testing.T) {
 	if !strings.Contains(stdout, "--ssh") {
 		t.Errorf("stdout = %q; the profile's own ssh permission was lost", stdout)
 	}
-	if strings.Contains(stdout, "--docker") {
+	// Token match, not substring: the argv always states the docker decision,
+	// and "--no-docker" would satisfy a naive Contains(stdout, "docker").
+	if slices.Contains(strings.Fields(stdout), "--docker") {
 		t.Errorf("stdout = %q; the file's docker permission must not survive the profile", stdout)
+	}
+	if !slices.Contains(strings.Fields(stdout), "--no-docker") {
+		t.Errorf("stdout = %q; the socket must be refused explicitly, not left to ai-jail's default", stdout)
 	}
 }
 
@@ -145,7 +151,7 @@ func TestFileOwnedPermissionIsAcceptedWhenTheOperatorPassesTheFlag(t *testing.T)
 	if err != nil {
 		t.Fatalf("run() error = %v; --docker is the opt-in the refusal names", err)
 	}
-	if !strings.Contains(stdout, "--docker") {
+	if !slices.Contains(strings.Fields(stdout), "--docker") {
 		t.Errorf("stdout = %q; the accepted permission must reach the argv", stdout)
 	}
 }

@@ -47,16 +47,16 @@ func TestBuildMapsEveryTriStateToggleInBothForms(t *testing.T) {
 	} {
 		var flags config.JailFlags
 		*toggle(&flags) = boolPtr(true)
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", name, "claude"}) {
+		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", name, "claude"}) {
 			t.Errorf("enabled %s: argv = %#v", name, argv)
 		}
 		*toggle(&flags) = boolPtr(false)
 		negative := strings.Replace(name, "--", "--no-", 1)
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", negative, "claude"}) {
+		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", negative, "claude"}) {
 			t.Errorf("disabled %s: argv = %#v; want %s", name, argv, negative)
 		}
 		*toggle(&flags) = nil
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "claude"}) {
+		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "claude"}) {
 			t.Errorf("unset %s must stay in ai-jail auto mode: argv = %#v", name, argv)
 		}
 	}
@@ -72,7 +72,7 @@ func TestBuildMapsJailListFlagsBrowserAndClaudeDir(t *testing.T) {
 		ClaudeDir:     "/home/tester/.claude",
 	})
 	want := []string{
-		"ai-jail",
+		"ai-jail", "--no-docker",
 		"--overlay-map", "/data",
 		"--mask", "/etc/secrets",
 		"--deny-path", "/proc/kcore",
@@ -90,7 +90,7 @@ func TestBuildMapsJailListFlagsBrowserAndClaudeDir(t *testing.T) {
 func TestBuildMapsBrowserProfiles(t *testing.T) {
 	for browser, flag := range map[string]string{"soft": "--browser=soft", "HARD": "--browser=hard", "off": "--no-browser"} {
 		argv := buildWithJailFlags(t, config.JailFlags{Browser: browser})
-		if !reflect.DeepEqual(argv, []string{"ai-jail", flag, "claude"}) {
+		if !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", flag, "claude"}) {
 			t.Errorf("browser %q: argv = %#v; want %s", browser, argv, flag)
 		}
 	}
@@ -104,13 +104,13 @@ func TestBuildJailExecEnablesProgrammaticMode(t *testing.T) {
 		JailExec:    true,
 		Permissions: map[string]bool{},
 	})
-	want := []string{"ai-jail", "--exec", "ai-memory", "run", "claude"}
+	want := []string{"ai-jail", "--exec", "--no-docker", "ai-memory", "run", "claude"}
 	if err != nil || !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", argv, err, want)
 	}
 	// The interactive path (no JailExec) leaves the ai-jail PTY defaults alone.
 	argv, err = Build(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true, Permissions: map[string]bool{}})
-	if err != nil || !reflect.DeepEqual(argv, []string{"ai-jail", "claude"}) {
+	if err != nil || !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "claude"}) {
 		t.Fatalf("interactive Build() = %#v, %v", argv, err)
 	}
 }
@@ -152,7 +152,7 @@ func TestBuildContinueRunsAiMemoryWithoutHarness(t *testing.T) {
 		Workspace:       "acme",
 		Permissions:     map[string]bool{},
 	})
-	want := []string{"ai-jail", "--exec", "ai-memory", "run", "--workspace", "acme"}
+	want := []string{"ai-jail", "--exec", "--no-docker", "ai-memory", "run", "--workspace", "acme"}
 	if err != nil || !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", argv, err, want)
 	}
@@ -381,7 +381,7 @@ func TestBuildMapsJailExceptionListsAndHiddenDotdirs(t *testing.T) {
 		HideDotdirs:        []string{".aws", ".gnupg"},
 	})
 	want := []string{
-		"ai-jail",
+		"ai-jail", "--no-docker",
 		"--mask", "/etc/secrets",
 		"--deny-path", "/proc/kcore",
 		"--mask-except", "/etc/secrets/public",
@@ -398,13 +398,13 @@ func TestBuildMapsJailExceptionListsAndHiddenDotdirs(t *testing.T) {
 func TestBuildMapsStatusBarStyle(t *testing.T) {
 	for _, style := range []string{"dark", "light", "pastel"} {
 		argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: style})
-		if want := []string{"ai-jail", "--status-bar=" + style, "claude"}; !reflect.DeepEqual(argv, want) {
+		if want := []string{"ai-jail", "--no-docker", "--status-bar=" + style, "claude"}; !reflect.DeepEqual(argv, want) {
 			t.Errorf("style %q: argv = %#v; want %#v", style, argv, want)
 		}
 	}
 	// Mixed case and surrounding whitespace normalize to the lowercase style.
 	argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: " Dark "})
-	if want := []string{"ai-jail", "--status-bar=dark", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--status-bar=dark", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("mixed-case style: argv = %#v; want %#v", argv, want)
 	}
 }
@@ -413,16 +413,16 @@ func TestBuildStatusBarStyleSuppressesBooleanForms(t *testing.T) {
 	// A configured style wins over the tri-state toggle: --no-status-bar is
 	// never emitted alongside --status-bar=STYLE.
 	argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "pastel", StatusBar: boolPtr(false)})
-	if want := []string{"ai-jail", "--status-bar=pastel", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--status-bar=pastel", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("style + disabled toggle: argv = %#v; want %#v", argv, want)
 	}
 	argv = buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "light", StatusBar: boolPtr(true)})
-	if want := []string{"ai-jail", "--status-bar=light", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--status-bar=light", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("style + enabled toggle: argv = %#v; want %#v", argv, want)
 	}
 	// An unrecognized style leaves the boolean toggle in charge.
 	argv = buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "neon", StatusBar: boolPtr(false)})
-	if want := []string{"ai-jail", "--no-status-bar", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-status-bar", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("unknown style: argv = %#v; want %#v", argv, want)
 	}
 }

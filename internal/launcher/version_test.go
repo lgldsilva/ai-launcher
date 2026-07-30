@@ -48,7 +48,7 @@ func TestUpstreamReportFlagsInstallsBelowTheSupportedFloor(t *testing.T) {
 	}
 	// --doctor prints the detected version against the floor, so both have to
 	// survive the probe.
-	if report[0].Version != "1.14.2" || report[0].Minimum != "1.15.0" {
+	if report[0].Version != "1.14.2" || report[0].Minimum != "1.16.0" {
 		t.Errorf("ai-jail status = %#v; want the detected version and the supported floor", report[0])
 	}
 	if report[1].Version != "1.18.0" || report[1].Minimum != "1.19.0" {

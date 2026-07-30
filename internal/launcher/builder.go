@@ -308,6 +308,7 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 		// defaults in charge of the terminal instead.
 		command = append(command, "--exec")
 	}
+	command = appendDockerDecision(command, cfg)
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
 	command = appendExecutableMount(command, cfg)
@@ -346,12 +347,47 @@ func appendExecutableMount(command []string, cfg LaunchConfig) []string {
 	return append(command, "--map", dir)
 }
 
+// appendDockerDecision emits exactly one of --docker / --no-docker, always.
+//
+// Every other capability the launcher touches may be left unset, which puts
+// ai-jail in auto mode: enabled when the resource exists on the host. For the
+// Docker socket that default was a sandbox escape. Through ai-jail v1.15.x an
+// existing /var/run/docker.sock was bind-mounted read-write with no flag and
+// no warning, and write access to that socket is root on the host — the agent
+// asks the daemon to mount / into a container and walks past bubblewrap,
+// Landlock, seccomp, the tmpfs $HOME and every --mask in one command
+// (ai-jail issue #88). v1.16.0 flipped the default to opt-in.
+//
+// So the launcher stops leaving it to the default. Being explicit costs one
+// argv token, says the same thing to 1.15.x and 1.16.x, and makes the README's
+// "docker off by default" a property of the command this launcher builds
+// rather than a property of whichever ai-jail happens to be installed.
+//
+// Precedence matches every other capability: an explicit jail_flags.docker is
+// the operator's declarative choice and wins, then the permission toggle, then
+// the safe default.
+func appendDockerDecision(command []string, cfg LaunchConfig) []string {
+	if declared := cfg.JailFlags.Docker; declared != nil {
+		if *declared {
+			return append(command, "--docker")
+		}
+		return append(command, "--no-docker")
+	}
+	if cfg.Permissions["docker"] {
+		return append(command, "--docker")
+	}
+	return append(command, "--no-docker")
+}
+
 // jailPermission maps a catalog permission id to the ai-jail capability it
 // enables. override names the config.JailFlags field that declares the same
 // capability: when that field is set, the declarative value wins and the
 // permission stays silent, so the argv never contradicts itself with
 // "--no-tailscale --tailscale". mountHome replaces the flag with a read-write
 // map of a path under $HOME (ai-jail has no dedicated flag for it).
+//
+// docker is deliberately not in this list: appendDockerDecision owns it,
+// because it is the one capability that must be stated even when it is off.
 type jailPermission struct {
 	id        string
 	flag      string
@@ -365,7 +401,6 @@ func jailPermissions() []jailPermission {
 	return []jailPermission{
 		{id: "ssh", flag: "--ssh"},
 		{id: "gh", mountHome: ".config/gh"},
-		{id: "docker", flag: "--docker"},
 		{id: "gpu", flag: "--gpu", override: func(f config.JailFlags) *bool { return f.GPU }},
 		{id: "display", flag: "--display", override: func(f config.JailFlags) *bool { return f.Display }},
 		{id: "pictures", flag: "--pictures"},
@@ -410,8 +445,11 @@ type jailToggle struct {
 	value *bool
 }
 
-// jailToggles lists the ai-jail v1.15 capability flags in their stable
+// jailToggles lists the ai-jail v1.16 capability flags in their stable
 // emission order so the mapping stays declarative instead of a chain of ifs.
+//
+// docker is absent on purpose: unlike every other capability here it is never
+// left to ai-jail's auto mode, so appendDockerDecision owns its emission.
 func jailToggles(flags config.JailFlags) []jailToggle {
 	return []jailToggle{
 		{name: "lockdown", value: flags.Lockdown},
@@ -441,7 +479,7 @@ func statusBarStyle(flags config.JailFlags) string {
 }
 
 // appendJailFlags maps the declarative jail options to the exact ai-jail
-// v1.15 CLI flags in a deterministic order: status bar style, toggles, list
+// v1.16 CLI flags in a deterministic order: status bar style, toggles, list
 // flags, browser profile, claude dir, and the v1.15 exception lists. A
 // configured status bar style wins over the StatusBar toggle, so --no-status-bar
 // is never emitted together with --status-bar=STYLE.

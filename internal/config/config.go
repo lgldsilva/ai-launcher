@@ -74,8 +74,15 @@ func SupportsMemoryRunHarness(name string) bool {
 // MinAIJailVersion and MinAIMemoryVersion pin the minimum upstream CLI
 // versions this launcher composes against. Older installs still launch;
 // `ai-launcher --doctor` reports them (see launcher.UpstreamReport).
+//
+// ai-jail 1.16.0 is a security floor, not a feature floor: up to 1.15.x the
+// Docker socket was bind-mounted read-write on sight, so "docker off by
+// default" was not true of the resulting sandbox no matter what the launcher
+// emitted. The argv fix (an explicit --no-docker, see appendDockerDecision)
+// covers 1.15.x hosts too; the floor is what tells an operator to stop
+// relying on a build that had no way to say no.
 const (
-	MinAIJailVersion   = "1.15.0"
+	MinAIJailVersion   = "1.16.0"
 	MinAIMemoryVersion = "1.19.0"
 )
 
@@ -205,7 +212,7 @@ type Mount struct {
 	Mode string `yaml:"mode,omitempty"`
 }
 
-// JailFlags holds the ai-jail v1.15 capability toggles. Pointer booleans are
+// JailFlags holds the ai-jail v1.16 capability toggles. Pointer booleans are
 // tri-state and mirror ai-jail's own model: nil leaves the capability in
 // ai-jail's auto mode (no flag emitted, meaning "enabled when the resource
 // exists on the host"), while true and false force it on or off with the
@@ -213,8 +220,16 @@ type Mount struct {
 // state from leaving it unset, and both forms are always emitted. Browser
 // accepts "hard", "soft", or "off".
 type JailFlags struct {
-	Lockdown      *bool    `yaml:"lockdown,omitempty"`
-	PrivateHome   *bool    `yaml:"private_home,omitempty"`
+	Lockdown    *bool `yaml:"lockdown,omitempty"`
+	PrivateHome *bool `yaml:"private_home,omitempty"`
+	// Docker is the one capability where auto mode is not a safe default.
+	// Through ai-jail v1.15.x the Docker socket was bind-mounted read-write
+	// whenever /var/run/docker.sock existed on the host, with no flag and no
+	// warning — and write access to that socket is root on the host, which
+	// walks straight past bubblewrap, Landlock, seccomp and every --mask.
+	// v1.16.0 made it opt-in after ai-jail issue #88. The launcher does not
+	// rely on that: see appendDockerDecision in internal/launcher.
+	Docker        *bool    `yaml:"docker,omitempty"`
 	Tailscale     *bool    `yaml:"tailscale,omitempty"`
 	GPU           *bool    `yaml:"gpu,omitempty"`
 	Display       *bool    `yaml:"display,omitempty"`
@@ -243,7 +258,7 @@ type JailFlags struct {
 
 // IsZero reports whether no jail flag deviates from the ai-jail defaults.
 func (f JailFlags) IsZero() bool {
-	return f.Lockdown == nil && f.PrivateHome == nil && f.Tailscale == nil &&
+	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Tailscale == nil &&
 		f.GPU == nil && f.Display == nil && f.Mise == nil && f.Worktree == nil &&
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&

@@ -290,9 +290,20 @@ A permission only ever **forces a capability on**. ai-jail treats an unset
 capability as *auto* — enabled when the resource exists on the host — so leaving
 a permission off means "let ai-jail decide", not "off". To force one **off**,
 use the tri-state `jail_flags` block below. When both name the same capability
-(`gpu`, `display`, `tailscale`, `mise`, `worktree`), the explicit `jail_flags`
-value wins and the permission stays silent, so the argv never contradicts
-itself.
+(`docker`, `gpu`, `display`, `tailscale`, `mise`, `worktree`), the explicit
+`jail_flags` value wins and the permission stays silent, so the argv never
+contradicts itself.
+
+**Docker is the one exception, and it is deliberate.** The launcher never
+leaves the socket to auto mode: every jailed command carries `--docker` or
+`--no-docker`, explicitly. Up to ai-jail v1.15.x an existing
+`/var/run/docker.sock` was bind-mounted read-write on sight, with no flag and
+no warning — and write access to that socket is root on the host, which walks
+past bubblewrap, Landlock, seccomp and every mask in one `docker run -v /:/host`
+(ai-jail [issue #88](https://github.com/akitaonrails/ai-jail/issues/88),
+fixed in v1.16.0). Stating it costs one argv token and makes "off by default"
+a property of the command this launcher builds rather than of whichever ai-jail
+you happen to have installed.
 
 Model: the sandbox already sees normal system paths for tools (e.g. `/usr`,
 Homebrew layout depending on ai-jail). Sensitive **state** is withheld unless
@@ -474,10 +485,10 @@ identical bytes at a different path never inherits the record.
 
 The full schema (fields, defaults, ai-jail `jail_flags`) is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Docker passthrough is **opt-in**
-via the Docker permission / `--docker` (aligned with recent ai-jail defaults:
-do not pass the host socket unless you trust the workload).
+via the Docker permission / `--docker`, and refused explicitly otherwise — do
+not pass the host socket unless you would hand the same workload `sudo`.
 
-The `jail_flags` block of `.ai-launch.yaml` mirrors the ai-jail v1.15 CLI. Its
+The `jail_flags` block of `.ai-launch.yaml` mirrors the ai-jail v1.16 CLI. Its
 booleans are tri-state and match ai-jail's own model: unset leaves the
 capability in ai-jail's *auto* mode (enabled when the resource exists), while
 `true` and `false` force it on or off. Forcing on is a real state, not a
@@ -486,6 +497,7 @@ synonym for unset, so both forms are always emitted:
 | `jail_flags` key | Type | ai-jail flag emitted |
 | --- | --- | --- |
 | `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
+| `docker` | tri-state bool | `--docker` when `true`, `--no-docker` when `false`. **Unset is not auto**: with no `jail_flags.docker` and the Docker permission off, the launcher still emits `--no-docker` |
 | `status_bar_style` | string (`dark` / `light` / `pastel`) | `--status-bar=STYLE` (suppresses the boolean `status_bar` forms) |
 | `browser` | string (`hard` / `soft` / `off`) | `--browser=hard` / `--browser=soft` / `--no-browser` |
 | `claude_dir` | string | `--claude-dir <PATH>` |
@@ -505,8 +517,10 @@ Layers of defense:
   read-only mounts by default and every permission (ssh, gh, docker, gpu,
   display, pictures, tailscale, systemd-user, mise, worktree) off by default.
   Off means "leave ai-jail's own auto-detection alone", never "force off" —
-  that is a `jail_flags` decision.
-- `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.15.0,
+  that is a `jail_flags` decision. **Docker is the exception**: it is forced
+  off with `--no-docker` unless you opt in, because auto mode for that one
+  capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
+- `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.16.0,
   `ai-memory` ≥ 1.19.0): it probes `--version` and reports
   (`ai-jail-version-too-old` / `ai-memory-version-too-old`) when the installed
   binary is older. It is a separate command on purpose — pre-flight validation
@@ -571,7 +585,7 @@ Documentation and UI strings in this repository are **English**.
 - [x] Interactive TUI with real execution (`r` / Ctrl+Enter runs; Space/Enter select)
 - [x] Named profiles and harness-declared parameters
 - [x] Installer with mandatory SHA-256 checksum
-- [x] Full ai-jail v1.15 capability surface (tri-state auto / force-on / force-off)
+- [x] Full ai-jail v1.16 capability surface (tri-state auto / force-on / force-off)
 - [x] `--dry-run` runs pre-flight validation before printing the command
 - [x] Windows as a first-class citizen without jail
 - [x] Gherkin contract suite against ai-jail/ai-memory drift

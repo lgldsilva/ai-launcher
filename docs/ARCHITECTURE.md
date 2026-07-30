@@ -257,7 +257,7 @@ when set it suppresses both boolean `--status-bar` forms). When unset,
 ## Upstream version compatibility
 
 The launcher composes a specific upstream surface, and that floor is pinned in
-two constants in `internal/config`: `MinAIJailVersion` (`1.15.0`) and
+two constants in `internal/config`: `MinAIJailVersion` (`1.16.0`) and
 `MinAIMemoryVersion` (`1.19.0`). `ai-launcher --doctor` probes the installed
 binaries with `ai-jail --version` / `ai-memory --version` (5-second timeout
 each) and reports `ai-jail-version-too-old` / `ai-memory-version-too-old` when

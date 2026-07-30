@@ -62,7 +62,7 @@ func TestCliLaunchUsesJailExecProgrammaticMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec --no-docker " + execMountArgv(t, "custom-cli") + " " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("CLI dry-run = %q; want %q", out, want)
 	}
@@ -96,7 +96,7 @@ func TestJailFlagsFromLocalConfigMapToAiJail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + execMountArgv(t, "custom-cli") + " " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec --no-docker --lockdown --no-status-bar --mask /etc/secrets --browser=soft " + execMountArgv(t, "custom-cli") + " " + defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
 	}
@@ -110,7 +110,7 @@ func TestV115PermissionFlagsMapToAiJail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec --display --pictures --tailscale --systemd-user --mise --worktree " + execMountArgv(t, "custom-cli") + " " +
+	want := "ai-jail --exec --no-docker --display --pictures --tailscale --systemd-user --mise --worktree " + execMountArgv(t, "custom-cli") + " " +
 		defaultMountArgv(mounts) + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
@@ -142,7 +142,7 @@ func TestLocalMountsReplaceDefaultMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " --map " + data + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec --no-docker " + execMountArgv(t, "custom-cli") + " --map " + data + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q (local mounts replace default_mounts)", out, want)
 	}
@@ -180,7 +180,7 @@ default_mounts:
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " --rw-map " + existing + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec --no-docker " + execMountArgv(t, "custom-cli") + " --rw-map " + existing + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want missing default mounts skipped → %q", out, want)
 	}
@@ -197,7 +197,7 @@ func TestMountFlagsReplaceDefaultMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-jail --exec " + execMountArgv(t, "custom-cli") + " --rw-map " + custom + " " + stubPath(t, "custom-cli")
+	want := "ai-jail --exec --no-docker " + execMountArgv(t, "custom-cli") + " --rw-map " + custom + " " + stubPath(t, "custom-cli")
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q (flag mounts replace default_mounts)", out, want)
 	}

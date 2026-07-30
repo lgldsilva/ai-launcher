@@ -41,7 +41,7 @@ UI/execution packages into the gate.
 
 The Gherkin suite (`test/features/`, in-repo reader in `test/gherkin/`) is the
 drift detector for the third-party CLIs: it locks the exact argv composition
-(wrapper order, ai-jail v1.15 `--no-*` toggles, `ai-memory run` scope). If a
+(wrapper order, ai-jail v1.16 `--no-*` toggles, `ai-memory run` scope). If a
 contract test fails after a change, **the code is wrong, not the test** —
 unless upstream changed, in which case the contract is updated together with
 the code, in the same commit.
