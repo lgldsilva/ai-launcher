@@ -317,9 +317,9 @@ type localTrust struct {
 	fromFile       bool // false once --agent was given: the operator's own choice.
 	jail           bool
 	mounts         []config.Mount
-	rawPermissions map[string]bool // permissions from file (profile may overwrite)
-	yolo           bool            // file value when profile does not own options
-	extraArgs      []string        // file value when profile does not own options
+	rawPermissions map[string]bool  // permissions from file (profile may overwrite)
+	yolo           bool             // file value when profile does not own options
+	extraArgs      []string         // file value when profile does not own options
 	jailFlags      config.JailFlags // file value when profile does not own options
 }
 

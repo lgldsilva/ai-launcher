@@ -187,9 +187,9 @@ func TestSavedLocalConfigHonorsPermissions(t *testing.T) {
 		t.Fatalf("LoadLocal() error = %v", err)
 	}
 	saved := launcher.LaunchConfig{
-		Agent:     config.Agent{Command: "custom-cli"},
-		UseJail:   true,
-		UseMemory: false,
+		Agent:       config.Agent{Command: "custom-cli"},
+		UseJail:     true,
+		UseMemory:   false,
 		Permissions: map[string]bool{"docker": true},
 	}
 	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
@@ -222,9 +222,9 @@ func TestLocalConfigRejectsSensitiveMounts(t *testing.T) {
 // Local options.jail_flags are refused because they weaken sandbox posture.
 func TestLocalConfigJailFlagsRequireSaveOrProfile(t *testing.T) {
 	tests := []struct {
-		name     string
-		yaml     string
-		wantStr  string
+		name    string
+		yaml    string
+		wantStr string
 	}{
 		{"seccomp off", "options:\n  jail: true\n  memory: false\n  jail_flags:\n    seccomp: false\n", "jail_flags"},
 		{"landlock off", "options:\n  jail: true\n  memory: false\n  jail_flags:\n    landlock: false\n", "jail_flags"},
