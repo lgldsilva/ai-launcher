@@ -452,9 +452,25 @@ posture on its own — the launcher refuses, naming the explicit opt-in:
 | Select an `agent` the catalog cannot resolve | Refused. Run it with `--agent <name>`, or register it in the **global** catalog with `--add` |
 | Set `options.jail: false` while the global catalog defaults the sandbox on | Refused. Pass `--no-jail` to accept it |
 | Declare a relative mount, or mount `/` | Refused |
+| Mount a sensitive tree (`/etc`, `/usr`, another user's home, a container socket…) | Refused. Pass `--mount <path>` to accept it |
+| Enable a `permission` (ssh, gh, docker, gpu…) | Refused. Pass the matching flag (`--ssh`, `--gh`, `--docker`…) to accept it |
+| Set `options.yolo: true` | Refused. Pass `--yolo` to accept it |
+| List `options.extra_args` | Refused. Pass `--args "<args>"` to accept it |
+| Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: save the selection or select a profile |
 
 What you type on the command line stays fully trusted: the boundary is around
 the file, not around you.
+
+**The file you saved yourself is yours.** `--save` / `Ctrl+S` records the
+file's canonical path and SHA-256 in the global config, and a file matching
+both is honored like operator input — no refusals, no flags to repeat. Editing
+it changes the hash and the boundary applies again, and a clone carrying
+identical bytes at a different path never inherits the record.
+
+> Upgrading from schema 2.0: trust records used to be bare hashes with no path
+> bound to them. They are still read — your catalog, profiles and token are not
+> touched — but they no longer grant trust. Run `--save` once per workspace you
+> had saved before, and the record is rewritten in the path-bound form.
 
 The full schema (fields, defaults, ai-jail `jail_flags`) is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Docker passthrough is **opt-in**

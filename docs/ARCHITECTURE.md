@@ -52,7 +52,7 @@ consume exactly the same argv.
 | --- | --- |
 | `cmd/ai-launcher` | Entry point: flag parsing, precedence (defaults < local < profile < flags), dispatch (TUI, `upgrade`, install, add, profiles), final execution via `exec`/PTY; `--version` prints ldflags-injected build metadata |
 | `internal/cmd` | Orchestration outside launching: `--install`/`--upgrade`, ai-memory MCP/hooks wiring, `--add`; provisions the managed ai-memory native runner; keeps `install.log` (0600, no tokens) |
-| `internal/config` | Versioned schema (`2.0`) of the global and local configs; safe defaults; profiles; tri-state `JailFlags`; atomic 0600 saves |
+| `internal/config` | Versioned schema (`2.1`, reads `2.0`/`1`/`1.0`) of the global and local configs; safe defaults; profiles; tri-state `JailFlags`; atomic 0600 saves |
 | `internal/catalog` | Resolves agents against the PATH (`path` > command > aliases) and normalizes dependencies between permissions |
 | `internal/launcher` | `Build` (pure argv), `Validator` (preflight with stable codes), `ConstrainToPlatform` (Windows without jail), PTY executor and per-platform `exec`; exports `AI_MEMORY_NATIVE_BIN` when the managed runner exists |
 | `internal/installer` | GitHub Releases client: per-platform asset selection, mandatory SHA-256 verification, tar.gz/zip extraction, `install-state.json` |
@@ -64,8 +64,8 @@ consume exactly the same argv.
 
 | File | Format | Written by |
 | --- | --- | --- |
-| `~/.config/ai-launch/config.yaml` | YAML (schema `2.0`) | `--add`, `--save-profile`, `--delete-profile`, manual edits |
-| `<project>/.ai-launch.yaml` | YAML (schema `2.0`) | `--save`, `Ctrl+S` in the TUI |
+| `~/.config/ai-launch/config.yaml` | YAML (schema `2.1`) | `--add`, `--save-profile`, `--delete-profile`, manual edits |
+| `<project>/.ai-launch.yaml` | YAML (schema `2.1`) | `--save`, `Ctrl+S` in the TUI |
 | `~/.config/ai-launch/install-state.json` | JSON | `internal/installer` (installed release tags) |
 | `~/.config/ai-launch/install.log` | text (0600) | `internal/cmd` (never logs tokens) |
 | `~/.local/share/ai-launcher/bin/ai-memory` | binary | `internal/cmd` (managed ai-memory native runner, exported as `AI_MEMORY_NATIVE_BIN`) |
@@ -85,10 +85,16 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
    it on, or declares a relative mount or a filesystem root. Global config,
    profiles and command-line flags are trusted; the boundary is around the
    workspace file. The exception is provenance: when the launcher saves the
-   file itself (Ctrl+S / `--save`), it records the file's SHA-256 in the
-   trusted global config (`trusted_local_configs`), and a byte-identical file
-   is honored like operator input. Any later edit changes the hash and the
-   boundary applies again — a cloned repository cannot forge the record.
+   file itself (Ctrl+S / `--save`), it records the file's canonical path and
+   SHA-256 in the trusted global config (`trusted_local_configs`), and the same
+   file with the same bytes is honored like operator input. Any later edit
+   changes the hash and the boundary applies again — a cloned repository cannot
+   forge the record. The path is part of the record on purpose: a hash alone
+   proves the bytes, not the file, so a clone carrying an identical
+   `.ai-launch.yaml` would otherwise inherit the trust its author recorded.
+   Schema 2.0 stored bare hashes; those rows are still read (so upgrading does
+   not discard the rest of the global config) but never grant trust, and one
+   `--save` rewrites them in the path-bound form.
    The check reads the workspace file **as loaded, before a profile is layered
    on**, and only for the blocks the file still owns (`localTrustFrom` mirrors
    the conditions in `applyProfile`). Deriving it from the merged selection
@@ -178,7 +184,7 @@ Global config (`~/.config/ai-launch/config.yaml`):
 
 | Key | Type | Purpose |
 | --- | --- | --- |
-| `version` | string | Schema (`2.0`; accepts `1`/`1.0`) |
+| `version` | string | Schema (`2.1`; also reads `2.0`, `1`, `1.0`) |
 | `memory_server_url` | string | ai-memory server; configure this or `AI_MEMORY_SERVER_URL` for the deployment |
 | `memory_auth_token` | string | Bearer token, forwarded via env only |
 | `agents[]` | list | `name`, `command`, `aliases`, `path`, `supports_memory`, `supports_yolo`, `yolo_flag`, `params[]` (`name`/`flag`/`takes_value`), `release` (GitHub recipe), `memory` (MCP/hooks adapter), `source_url` |
@@ -274,7 +280,7 @@ Two different "versions" exist and must not be conflated: the **binary
 version** (`main.version`/`main.commit`/`main.date`, injected via `-ldflags`
 by the Makefile and GoReleaser, printed by `--version` and used by
 `ai-launcher upgrade` to decide whether an update exists) and the **config
-schema version** (`config.CurrentVersion`, currently `"2.0"`), which versions
+schema version** (`config.CurrentVersion`, currently `"2.1"`), which versions
 the YAML files, not the binary.
 
 ## Reading order

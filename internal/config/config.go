@@ -25,7 +25,18 @@ const maxLocalConfigBytes = 256 * 1024
 // It versions the config FILE format only — it is not the binary release
 // version (that is the `version` variable in cmd/ai-launcher, injected via
 // ldflags at build time and printed by --version).
-const CurrentVersion = "2.0"
+//
+// 2.1 changed `trusted_local_configs` from a list of bare SHA-256 strings to a
+// list of {path, hash} records. Reading 2.0 still works (see
+// TrustedLocalEntry.UnmarshalYAML), but the old records no longer grant trust,
+// so a local config saved under 2.0 needs one `--save` to be honored again.
+// Writing is one-way: a 2.1 file is not loadable by a pre-2.1 binary.
+const CurrentVersion = "2.1"
+
+// LoadableVersions are the schema versions this build accepts on read, oldest
+// first. Every entry must survive LoadGlobal/LoadLocal without losing data —
+// add one only together with the code that migrates it.
+var LoadableVersions = []string{"1", "1.0", "2.0", CurrentVersion}
 
 // DefaultMemoryServerURL is intentionally empty. Deployments configure the
 // ai-memory endpoint in the global config or through AI_MEMORY_SERVER_URL.
@@ -365,6 +376,36 @@ type Global struct {
 type TrustedLocalEntry struct {
 	Path string `yaml:"path"`
 	Hash string `yaml:"hash"`
+}
+
+// UnmarshalYAML accepts the current map form and the schema-2.0 form, which was
+// a bare hash string with no path bound to it.
+//
+// The legacy form is read but deliberately not honored: it decodes to an entry
+// with an empty Path, and LocalConfigTrusted compares against a canonical
+// absolute path that is never empty, so it can never match. That is the point
+// of the schema change — a hash alone proves the bytes, not the file, so
+// identical bytes in a cloned checkout must not inherit the operator's trust.
+//
+// Reading it anyway is what keeps the rest of the global config alive. Rejecting
+// the scalar here would fail the whole document, and LoadGlobal falls back to
+// DefaultGlobal on a parse error: an operator upgrading from 2.0 would silently
+// lose their --add agents, their profiles, their MRU list and their memory
+// token, on top of the trust records they were always going to have to re-save.
+// The stale rows are dropped from disk by the next RecordTrustedLocalConfig.
+func (t *TrustedLocalEntry) UnmarshalYAML(data []byte) error {
+	type trustedLocalEntryWithoutMethods TrustedLocalEntry
+	var mapForm trustedLocalEntryWithoutMethods
+	if err := yaml.Unmarshal(data, &mapForm); err == nil {
+		*t = TrustedLocalEntry(mapForm)
+		return nil
+	}
+	var legacyHash string
+	if err := yaml.Unmarshal(data, &legacyHash); err != nil {
+		return fmt.Errorf("parse trusted local config entry: %w", err)
+	}
+	*t = TrustedLocalEntry{Hash: strings.TrimSpace(legacyHash)}
+	return nil
 }
 
 // recentAgentsMax is the cap on the MRU list stored in the global config.
@@ -784,6 +825,13 @@ func LocalConfigTrusted(global Global, path string) bool {
 		return false
 	}
 	for _, trusted := range global.TrustedLocalConfigs {
+		// An empty Path is a schema-2.0 record (bare hash, no file bound). It
+		// never grants trust: the comparison below would already reject it,
+		// but saying so explicitly keeps the rule from depending on the
+		// coincidence that a canonical path is never empty.
+		if trusted.Path == "" {
+			continue
+		}
 		if trusted.Hash == hash && trusted.Path == canonical {
 			return true
 		}
@@ -1045,13 +1093,19 @@ func SaveLocal(path string, cfg Local) error {
 }
 
 // ValidateVersion reports whether a config schema version is compatible with
-// this build (empty, "1", "1.0", or CurrentVersion).
+// this build: empty (pre-versioning) or any entry in LoadableVersions.
 func ValidateVersion(version string) error {
 	version = strings.TrimSpace(version)
-	if version == "" || version == "1" || version == "1.0" || version == CurrentVersion {
+	if version == "" {
 		return nil
 	}
-	return fmt.Errorf("unsupported config version %q (supported: 1, 1.0, %s)", version, CurrentVersion)
+	for _, loadable := range LoadableVersions {
+		if version == loadable {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported config version %q (supported: %s)",
+		version, strings.Join(LoadableVersions, ", "))
 }
 
 func mergeGlobalDefaults(defaults, cfg Global) Global {
