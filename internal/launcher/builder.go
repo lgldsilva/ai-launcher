@@ -26,34 +26,56 @@ const aiMemoryCommand = "ai-memory"
 var userHomeDir = os.UserHomeDir
 var isWindows = func() bool { return runtime.GOOS == "windows" }
 
+// ownedMemoryEnvKeys are the AI_MEMORY_* variables the launcher owns. They are
+// always stripped from the inherited environment first; only an enabled memory
+// wrapper re-adds the exact values it needs. Leaving them in when memory is
+// off would hand the bare harness a bearer token and server URL.
+var ownedMemoryEnvKeys = []string{
+	"AI_MEMORY_SERVER_URL",
+	"AI_MEMORY_AUTH_TOKEN",
+	"AI_MEMORY_NATIVE_BIN",
+}
+
 // Environment returns the inherited environment with the configured ai-memory
 // server URL and auth token applied to child processes. ai-memory reads these
 // variables for its runtime wrapper and generated integrations. When the
 // launcher-managed native binary exists, AI_MEMORY_NATIVE_BIN is exported too
 // so the wrapper skips its own download. The token is a bearer secret: it is
 // passed through the environment only and must never be written to logs.
+//
+// Owned AI_MEMORY_* keys are always removed first. When UseMemory is false the
+// child sees none of them (even if the parent shell exported a stale token).
+// When UseMemory is true, only the values this launch configures are re-added.
 func Environment(cfg LaunchConfig) []string {
 	env := append([]string(nil), os.Environ()...)
-	if cfg.UseMemory {
-		// An empty config value means the operator chose environment-based
-		// configuration. A non-empty config value remains authoritative.
-		if serverURL := strings.TrimSpace(cfg.MemoryServerURL); serverURL != "" {
-			env = upsertEnv(env, "AI_MEMORY_SERVER_URL", serverURL)
-		}
-		env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
-		// The ai-memory wrapper skips its own download/refresh logic (fragile
-		// inside ai-jail) when AI_MEMORY_NATIVE_BIN points at an executable
-		// native binary managed by the launcher's installer. The executable
-		// bit is required: a regular file without it would make the wrapper
-		// exec a non-runnable path. Windows has no exec bit, so the regular
-		// file check is enough there. The check is best-effort — the managed
-		// directory is user-writable, so the file can change before the child
-		// execs it (accepted TOCTOU; the wrapper fails visibly, not silently).
-		if native := managedNativeRunnerPath(cfg.HomeDir); native != "" {
-			if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() &&
-				(isWindows() || info.Mode().Perm()&0o111 != 0) {
-				env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
-			}
+	for _, key := range ownedMemoryEnvKeys {
+		env = upsertEnv(env, key, "")
+	}
+	if !cfg.UseMemory {
+		return env
+	}
+	// An empty config value means the operator chose environment-based
+	// configuration for the server URL only — restore the stripped inherited
+	// value by reading it from the original process environment after a
+	// non-empty config override is absent.
+	if serverURL := strings.TrimSpace(cfg.MemoryServerURL); serverURL != "" {
+		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", serverURL)
+	} else if inherited := strings.TrimSpace(os.Getenv("AI_MEMORY_SERVER_URL")); inherited != "" {
+		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", inherited)
+	}
+	env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
+	// The ai-memory wrapper skips its own download/refresh logic (fragile
+	// inside ai-jail) when AI_MEMORY_NATIVE_BIN points at an executable
+	// native binary managed by the launcher's installer. The executable
+	// bit is required: a regular file without it would make the wrapper
+	// exec a non-runnable path. Windows has no exec bit, so the regular
+	// file check is enough there. The check is best-effort — the managed
+	// directory is user-writable, so the file can change before the child
+	// execs it (accepted TOCTOU; the wrapper fails visibly, not silently).
+	if native := managedNativeRunnerPath(cfg.HomeDir); native != "" {
+		if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() &&
+			(isWindows() || info.Mode().Perm()&0o111 != 0) {
+			env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
 		}
 	}
 	return env
