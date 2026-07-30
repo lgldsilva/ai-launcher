@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/goccy/go-yaml"
 )
+
+// maxLocalConfigBytes caps workspace-local YAML before it is fully read or
+// decoded. Repository-controlled config must not exhaust memory/CPU before the
+// trust gate runs. 256 KiB is far above any legitimate launcher config.
+const maxLocalConfigBytes = 256 * 1024
 
 // CurrentVersion is the configuration schema version written by this build.
 // It versions the config FILE format only — it is not the binary release
@@ -948,17 +954,30 @@ func UpsertAgent(global *Global, agent Agent) error {
 
 // LoadLocal reads the workspace-local config, falling back to DefaultLocal
 // for a missing file and retaining safe defaults for omitted option keys.
+// Files larger than maxLocalConfigBytes are rejected before full allocation.
 func LoadLocal(path string) (Local, error) {
 	cfg := DefaultLocal()
 	if path == "" {
 		return cfg, nil
 	}
-	b, err := os.ReadFile(path) // #nosec G304 -- path is the user-supplied local config location by design
+	// #nosec G304 -- path is the user-supplied local config location by design
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil
 	}
 	if err != nil {
 		return cfg, fmt.Errorf("read local config: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	// Read at most limit+1 so oversize is detected without slurping a multi-GB
+	// hostile file into memory.
+	limited := io.LimitReader(f, int64(maxLocalConfigBytes)+1)
+	b, err := io.ReadAll(limited)
+	if err != nil {
+		return cfg, fmt.Errorf("read local config: %w", err)
+	}
+	if len(b) > maxLocalConfigBytes {
+		return cfg, fmt.Errorf("local config %s exceeds %d byte limit", path, maxLocalConfigBytes)
 	}
 	var loaded Local
 	if err := yaml.Unmarshal(b, &loaded); err != nil {

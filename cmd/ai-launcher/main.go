@@ -1267,7 +1267,9 @@ func flagsWasSet(flags *flag.FlagSet, name string) bool {
 func shellJoin(argv []string) string {
 	parts := make([]string, len(argv))
 	for i, value := range argv {
-		parts[i] = shellQuote(value)
+		// Sanitize after quoting so ESC/CSI from repo config cannot reprogram
+		// the terminal when dry-run or the launch banner print the argv.
+		parts[i] = launcher.SanitizeDisplay(shellQuote(value))
 	}
 	return strings.Join(parts, " ")
 }
