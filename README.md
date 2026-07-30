@@ -91,7 +91,7 @@ Options
   [ ] --yolo
   [ ] --fresh
 
-Preview: ai-jail --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+Preview: ai-jail --no-docker --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
   ai-memory run pi --executable /usr/local/bin/pi
 ```
 
@@ -110,24 +110,24 @@ placeholder paths; your output will list your real mounts and executables.
 # Full chain: jail + ai-memory + harness. The directory holding the resolved
 # binary is mapped read-only so --executable is reachable inside the jail.
 ai-launcher --agent pi --dry-run
-# ai-jail --exec --map /usr/local/bin --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
+# ai-jail --exec --no-docker --map /usr/local/bin --rw-map /Volumes/Data --rw-map /Volumes/Data/Projetos \
 #   ai-memory run pi --executable /usr/local/bin/pi
 
 # Linux-style mounts (from a default_mounts entry that exists on this host)
-# ai-jail --exec --map /usr/local/bin --rw-map /storage --rw-map /storage/Projetos \
+# ai-jail --exec --no-docker --map /usr/local/bin --rw-map /storage --rw-map /storage/Projetos \
 #   ai-memory run pi --executable /usr/local/bin/pi
 
 # OpenCode Presets (catalog command "oc") maps to ai-memory harness "opencode"
 ai-launcher --agent oc --dry-run
-# ai-jail --exec --map ~/.local/bin --rw-map … ai-memory run opencode --executable ~/.local/bin/oc
+# ai-jail --exec --no-docker --map ~/.local/bin --rw-map … ai-memory run opencode --executable ~/.local/bin/oc
 
 # Continue last managed session (no harness name)
 ai-launcher --continue --dry-run
-# ai-jail --exec --rw-map … ai-memory run
+# ai-jail --exec --no-docker --rw-map … ai-memory run
 
 # Jail only (no memory layer)
 ai-launcher --agent pi --no-memory --dry-run
-# ai-jail --exec --map /usr/local/bin --rw-map … /usr/local/bin/pi
+# ai-jail --exec --no-docker --map /usr/local/bin --rw-map … /usr/local/bin/pi
 
 # Memory only (no jail)
 ai-launcher --agent claude --no-jail --dry-run
@@ -135,7 +135,7 @@ ai-launcher --agent claude --no-jail --dry-run
 
 # Permissions are opt-in (Docker off by default — prefer enabling only when needed)
 ai-launcher --agent claude --ssh --gh --dry-run
-# ai-jail --exec --ssh --rw-map …/.config/gh --map ~/.local/bin ai-memory run claude --executable ~/.local/bin/claude
+# ai-jail --exec --no-docker --ssh --rw-map …/.config/gh --map ~/.local/bin ai-memory run claude --executable ~/.local/bin/claude
 ```
 ## Installation
 
@@ -320,7 +320,7 @@ gh auth status
 # Dry-run: with --gh, argv includes --rw-map …/.config/gh
 ai-launcher --agent claude --gh --dry-run
 # example:
-#   ai-jail --exec --rw-map /home/user/.config/gh ai-memory run claude …
+#   ai-jail --exec --no-docker --rw-map /home/user/.config/gh ai-memory run claude …
 ```
 
 If `gh` fails inside the agent after you opted in:
