@@ -92,9 +92,9 @@ func TestRecordTrustedLocalConfigCapsTheHistoryKeepingTheNewest(t *testing.T) {
 	}
 }
 
-// The recorded list is read back from a hand-editable YAML document, so entries
-// that are not strings have to be skipped rather than crashing the launch.
-func TestTrustedHashesIgnoreNonStringEntries(t *testing.T) {
+// The recorded list is read back from a hand-editable YAML document, so
+// legacy bare hashes and non-map rows are skipped rather than crashing.
+func TestTrustedEntriesIgnoreLegacyAndMalformedRows(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "global.yaml")
 	localPath := filepath.Join(dir, "local.yaml")
@@ -111,20 +111,20 @@ func TestTrustedHashesIgnoreNonStringEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
-	for _, hash := range loaded.TrustedLocalConfigs {
-		if hash == "12345" {
-			t.Fatal("a non-string entry was carried over as a hash")
+	for _, entry := range loaded.TrustedLocalConfigs {
+		if entry.Hash == "12345" || entry.Hash == "deadbeef" {
+			t.Fatal("a legacy bare-hash entry was carried over as trusted")
 		}
 	}
 	if !LocalConfigTrusted(loaded, localPath) {
-		t.Fatal("the newly recorded hash was lost")
+		t.Fatal("the newly recorded path+hash was lost")
 	}
 }
 
 // A missing or unreadable local config is simply untrusted. Anything else would
 // mean a file the launcher cannot read could still pass the boundary.
 func TestLocalConfigTrustedIsFalseWhenTheFileCannotBeRead(t *testing.T) {
-	global := Global{TrustedLocalConfigs: []string{"whatever"}}
+	global := Global{TrustedLocalConfigs: []TrustedLocalEntry{{Path: "/x", Hash: "whatever"}}}
 	if LocalConfigTrusted(global, filepath.Join(t.TempDir(), "absent.yaml")) {
 		t.Error("a missing local config must not be trusted")
 	}

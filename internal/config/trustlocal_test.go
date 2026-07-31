@@ -58,12 +58,47 @@ func TestRecordTrustedLocalConfigDedupesAndPreservesKeys(t *testing.T) {
 		t.Fatalf("LoadGlobal() error = %v", err)
 	}
 	if len(loaded.TrustedLocalConfigs) != 1 {
-		t.Fatalf("TrustedLocalConfigs = %#v; the same hash recorded twice must dedupe", loaded.TrustedLocalConfigs)
+		t.Fatalf("TrustedLocalConfigs = %#v; the same path+hash recorded twice must dedupe", loaded.TrustedLocalConfigs)
 	}
 	if loaded.MemoryServerURL != "https://example.test" {
 		t.Fatalf("MemoryServerURL = %q; existing keys must survive the partial write", loaded.MemoryServerURL)
 	}
 	if err := RecordTrustedLocalConfig(globalPath, filepath.Join(dir, "missing.yaml")); err == nil {
 		t.Error("hashing a nonexistent local config must fail")
+	}
+}
+
+// Trust is bound to the canonical path: identical bytes at another location
+// must not inherit the operator's prior save decision.
+func TestTrustedLocalConfigDoesNotReplayAcrossPaths(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+	body := []byte("options:\n  jail: false\n  memory: false\n")
+	pathA := filepath.Join(dir, "project-a", ".ai-launch.yaml")
+	pathB := filepath.Join(dir, "project-b", ".ai-launch.yaml")
+	if err := os.MkdirAll(filepath.Dir(pathA), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pathB), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathA, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathB, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordTrustedLocalConfig(globalPath, pathA); err != nil {
+		t.Fatalf("RecordTrustedLocalConfig() error = %v", err)
+	}
+	loaded, err := LoadGlobal(globalPath)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	if !LocalConfigTrusted(loaded, pathA) {
+		t.Fatal("path A must remain trusted after save")
+	}
+	if LocalConfigTrusted(loaded, pathB) {
+		t.Fatal("identical bytes at path B must not inherit trust from path A")
 	}
 }

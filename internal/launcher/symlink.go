@@ -89,18 +89,12 @@ type RefusedMount struct {
 	Reason string
 }
 
-// deniedTrees are the trees a single hidden symlink must never expose
-// read-write to a sandboxed agent, grouped by why they are refused — the
-// grouping is what the operator sees in the warning, and "the system directory
-// /Users" would misdescribe the most serious case.
-//
-// The whole point of the jail is that these stay outside it, and the auto-mount
-// path is not an operator decision: it triggers on whatever the home directory
-// happens to contain. Entries are compared against the *resolved* target, so
-// the platform-specific spellings are listed alongside the logical ones — on
-// macOS /etc and /var are symlinks into /private, and /home is a firmlink into
-// /System/Volumes/Data.
-var deniedTrees = []struct {
+// autoMountHighRiskTrees are refused at the root and for every descendant.
+// These hold host authority (credentials, system binaries, device nodes). The
+// auto-mount path is not an operator decision, so a single hidden symlink must
+// never expose them. Broader trees like /var and /opt stay exact-only so
+// benign cache targets (and macOS /private/var/folders temps) still work.
+var autoMountHighRiskTrees = []struct {
 	reason string
 	paths  []string
 }{
@@ -108,15 +102,25 @@ var deniedTrees = []struct {
 		reason: "a system directory",
 		paths: []string{
 			"/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev",
-			"/proc", "/sys", "/var", "/tmp", "/opt", "/root", "/System",
-			"/Library", "/Applications", "/private", "/private/etc",
-			"/private/var", "/private/tmp", "/nix", "/snap",
+			"/proc", "/sys", "/root", "/System", "/Library", "/Applications",
+			"/private/etc", "/nix", "/snap",
+		},
+	},
+}
+
+// autoMountExactOnlyTrees are refused only as the root itself. Descendants are
+// legitimate data mounts (project volumes, single-user homes, package caches).
+var autoMountExactOnlyTrees = []struct {
+	reason string
+	paths  []string
+}{
+	{
+		reason: "a system directory",
+		paths: []string{
+			"/var", "/tmp", "/opt", "/private", "/private/var", "/private/tmp",
 		},
 	},
 	{
-		// One hidden symlink here would hand the agent read-write access to
-		// every account on the machine — strictly worse than the system trees
-		// above, and these were the entries the list was missing.
 		reason: "the home directory of every user on this machine",
 		paths: []string{
 			"/home", "/Users",
@@ -125,27 +129,41 @@ var deniedTrees = []struct {
 		},
 	},
 	{
-		// The roots aggregate every attached volume. Paths beneath them stay
-		// allowed, which is what keeps the operator's own project volume (for
-		// example /Volumes/MSD512) auto-mountable.
 		reason: "a mount-point root covering every attached volume",
 		paths:  []string{"/Volumes", "/media", "/mnt", "/run", "/srv"},
 	},
 }
 
-// deniedAutoMount reports whether target is the filesystem root or one of the
-// denied trees, along with the reason to show the operator. A path *beneath* a
-// denied tree is allowed: the concern is handing over the tree itself.
+// deniedAutoMount reports whether an inferred home-symlink target must not be
+// auto-mounted. Container-control sockets and high-risk system descendants are
+// refused; exact-only roots keep benign data paths (e.g. /Volumes/MSD512,
+// /var/folders/…, /opt/homebrew) available.
 func deniedAutoMount(target string) (string, bool) {
-	clean := filepath.Clean(target)
+	clean := filepath.Clean(strings.TrimSpace(target))
+	if clean == "" || clean == "." {
+		return "", false
+	}
 	if clean == string(filepath.Separator) {
 		return "the filesystem root", true
 	}
-	for _, group := range deniedTrees {
+	base := filepath.Base(clean)
+	if base == "docker.sock" || base == "podman.sock" {
+		return "a container-control socket (" + base + ")", true
+	}
+	for _, group := range autoMountHighRiskTrees {
 		for _, denied := range group.paths {
-			// The match is an exact one, so the caller's warning already names
-			// this path; repeating it in the reason would only stutter.
-			if clean == denied {
+			d := filepath.Clean(denied)
+			if clean == d {
+				return group.reason, true
+			}
+			if strings.HasPrefix(clean, d+string(filepath.Separator)) {
+				return "under " + group.reason, true
+			}
+		}
+	}
+	for _, group := range autoMountExactOnlyTrees {
+		for _, denied := range group.paths {
+			if clean == filepath.Clean(denied) {
 				return group.reason, true
 			}
 		}

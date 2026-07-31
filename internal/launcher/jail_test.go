@@ -192,6 +192,22 @@ func TestEnvironmentOmitsAuthTokenWhenUnsetOrMemoryOff(t *testing.T) {
 	}
 }
 
+// Inherited AI_MEMORY_* must not reach the harness when memory is disabled —
+// the parent shell (direnv, wrapper) often exports a bearer token that must
+// stay out of the direct-agent path.
+func TestEnvironmentStripsInheritedMemoryKeysWhenMemoryOff(t *testing.T) {
+	t.Setenv("AI_MEMORY_AUTH_TOKEN", "inherited-secret")
+	t.Setenv("AI_MEMORY_SERVER_URL", "https://inherited.example")
+	t.Setenv("AI_MEMORY_NATIVE_BIN", "/tmp/fake-native")
+	for _, entry := range Environment(LaunchConfig{UseMemory: false}) {
+		for _, key := range ownedMemoryEnvKeys {
+			if strings.HasPrefix(entry, key+"=") {
+				t.Fatalf("owned key %s leaked with memory off: %q", key, entry)
+			}
+		}
+	}
+}
+
 func TestEnvironmentSetsNativeBinWhenManagedRunnerExists(t *testing.T) {
 	home := t.TempDir()
 	native := filepath.Join(home, ".local", "share", "ai-launcher", "bin", "ai-memory")

@@ -421,7 +421,11 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	preview, err := launcher.Build(m.launch)
 	if err == nil {
-		b.WriteString(mutedStyle.Render("Preview: " + strings.Join(preview, " ")))
+		safe := make([]string, len(preview))
+		for i, part := range preview {
+			safe[i] = launcher.SanitizeDisplay(part)
+		}
+		b.WriteString(mutedStyle.Render("Preview: " + strings.Join(safe, " ")))
 		b.WriteString("\n")
 	}
 	if m.status != "" {
@@ -650,12 +654,15 @@ func (m Model) mountEntriesView(b *strings.Builder) {
 }
 
 // mountEntryRow renders one browser row (cursor pointer + label).
+// Filenames come from the checkout filesystem and are sanitized so a hostile
+// name cannot inject terminal control sequences into the Bubble Tea frame.
 func mountEntryRow(index, cursor int, entry string) string {
 	pointer := "    "
 	if index == cursor {
 		pointer = "  ❯ "
 	}
-	label := entry + "/"
+	safe := launcher.SanitizeDisplay(entry)
+	label := safe + "/"
 	if entry == ".." {
 		label = "..  (parent folder)"
 	}

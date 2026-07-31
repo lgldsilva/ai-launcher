@@ -260,7 +260,8 @@ func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local co
 func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Local, profile *config.Profile) localTrust {
 	overrides := profileOverrides(profile)
 	trust := localTrust{
-		fromFile: flagAgent == "" && !overrides.agent,
+		optionsRaw: !overrides.options,
+		fromFile:   flagAgent == "" && !overrides.agent,
 	}
 	if trust.fromFile {
 		trust.agent = raw.Agent
@@ -270,11 +271,19 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 	// jail defaults to true so an overridden block never reads as "the file
 	// turned the sandbox off"; the profile's own value is trusted on its own.
 	trust.jail = true
-	if !overrides.options {
+	if trust.optionsRaw {
 		trust.jail = raw.Options.Jail
+		trust.yolo = raw.Options.Yolo
+		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
+		trust.jailFlags = raw.Options.JailFlags
 	}
 	if !overrides.mounts {
 		trust.mounts = raw.Mounts
+	}
+	// Permissions the profile replaced are trusted global input — only the
+	// file-owned map is subject to the CLI-flag opt-in check.
+	if profile == nil || profile.Permissions == nil {
+		trust.rawPermissions = copyPermissions(raw.Permissions)
 	}
 	return trust
 }
@@ -302,12 +311,16 @@ func profileOverrides(profile *config.Profile) profileBlocks {
 // localTrust captures the security-relevant values a workspace-local
 // .ai-launch.yaml supplied, before CLI flags are layered on top of them.
 type localTrust struct {
-	agent      string
-	agentKnown bool
-	// fromFile is false once --agent was given: the operator's own choice.
-	fromFile bool
-	jail     bool
-	mounts   []config.Mount
+	optionsRaw     bool // false when profile replaces options block
+	agent          string
+	agentKnown     bool
+	fromFile       bool // false once --agent was given: the operator's own choice.
+	jail           bool
+	mounts         []config.Mount
+	rawPermissions map[string]bool  // permissions from file (profile may overwrite)
+	yolo           bool             // file value when profile does not own options
+	extraArgs      []string         // file value when profile does not own options
+	jailFlags      config.JailFlags // file value when profile does not own options
 }
 
 // enforceLocalConfigTrust refuses a workspace-local config that lowers the
@@ -339,6 +352,10 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 		return errors.New("local config disables the sandbox (options.jail: false) " +
 			"while the global catalog defaults it on; pass --no-jail to accept that explicitly")
 	}
+
+	// F2 — sensitive mounts: each file-supplied mount must not expose a denied
+	// tree or a container-control socket. CLI --mount/--rw-map and launcher-saved
+	// files skip this check (the operator's own explicit choice).
 	for _, mount := range trust.mounts {
 		path := strings.TrimSpace(mount.Path)
 		if path == "" {
@@ -350,7 +367,55 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 		if filepath.Clean(path) == string(filepath.Separator) {
 			return fmt.Errorf("local config mount %q would expose the filesystem root", path)
 		}
+		if reason := launcher.DeniedMount(path); reason != nil {
+			return fmt.Errorf("local config mount %q is refused — %s; save the selection or use --mount to accept explicitly", path, reason.Reason)
+		}
 	}
+
+	// F1 — permissions: unsaved-local-file permissions must match explicit CLI flags.
+	permissionFlagName := map[string]string{
+		"ssh":          "ssh",
+		"github":       "gh",
+		"gh":           "gh",
+		"docker":       "docker",
+		"gpu":          "gpu",
+		"display":      "display",
+		"pictures":     "pictures",
+		"tailscale":    "tailscale",
+		"systemd-user": permissionSystemdUser,
+		"mise":         "mise",
+		"worktree":     "worktree",
+	}
+	for permID, enabled := range trust.rawPermissions {
+		if !enabled {
+			continue
+		}
+		flagName, known := permissionFlagName[permID]
+		if !known {
+			continue // unknown permission id — catalogue normalisation drops it later
+		}
+		if !flagsWasSet(flags, flagName) {
+			return fmt.Errorf("local config enables permission %q (true); pass --%s to accept explicitly", permID, flagName)
+		}
+	}
+
+	// F3 — jail_flags: non-zero flags weaken the sandbox posture and require
+	// explicit operator consent via profile or save. No per-flag CLI toggle
+	// exists yet; the opt-in is saving or selecting a profile.
+	if trust.optionsRaw && !trust.jailFlags.IsZero() {
+		return errors.New("local config sets options.jail_flags without operator save or profile; profiles and --save are needed to accept custom jail behaviour")
+	}
+
+	// F6 — yolo / extra_args: dangerous options require explicit consent.
+	if trust.optionsRaw && trust.yolo && !flagsWasSet(flags, "yolo") {
+		return errors.New("local config sets options.yolo: true; run with --yolo or save the selection to accept")
+	}
+	if trust.optionsRaw && len(trust.extraArgs) > 0 {
+		if !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
+			return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")
+		}
+	}
+
 	return nil
 }
 
@@ -1011,7 +1076,7 @@ func launchFailureHint(errText string) string {
 	case strings.Contains(errText, "401") || strings.Contains(errText, "Unauthorized") || strings.Contains(errText, "auth required"):
 		return "hint: ai-memory rejected the token (401). Set memory_auth_token in the global config (~/.config/ai-launch/config.yaml), or use --no-memory"
 	case strings.Contains(errText, "certificate") || strings.Contains(errText, "TLS") || strings.Contains(errText, "x509"):
-		return "hint: memory server TLS failed — check memory_server_url or AI_MEMORY_SERVER_URL, or use --no-memory"
+		return "hint: memory server TLS failed — check memory_server_url (expect *.internal.lgldsilva.com.br) or use --no-memory"
 	case strings.Contains(errText, "canonicalizing managed run cwd") || strings.Contains(errText, "Operation not permitted"):
 		return "hint: ai-memory inside the jail failed on this cwd — try --no-memory (keep Jail) or run from a path under $HOME"
 	default:
@@ -1202,7 +1267,9 @@ func flagsWasSet(flags *flag.FlagSet, name string) bool {
 func shellJoin(argv []string) string {
 	parts := make([]string, len(argv))
 	for i, value := range argv {
-		parts[i] = shellQuote(value)
+		// Sanitize after quoting so ESC/CSI from repo config cannot reprogram
+		// the terminal when dry-run or the launch banner print the argv.
+		parts[i] = launcher.SanitizeDisplay(shellQuote(value))
 	}
 	return strings.Join(parts, " ")
 }

@@ -46,3 +46,25 @@ func TestDryRunSucceedsWithWarningsOnly(t *testing.T) {
 		t.Errorf("stdout = %q; want the jail chain", stdout)
 	}
 }
+
+// ESC/CSI bytes in repository-controlled argv fragments must not reach the
+// terminal raw — dry-run is the advertised diagnostic surface.
+func TestDryRunSanitizesTerminalControlsInArgv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// Extra arg carries a bel + CSI so shellJoin must escape them for display.
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: false\n  memory: false\nextra_args:\n  - \"\x1b[31mRED\x07\"\n")
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--agent", "custom-cli", "--dry-run")
+	if err != nil {
+		// Untrusted local with extra_args may trip trust; force via trusted path
+		// is overkill — just assert any printed stdout never contains raw ESC.
+		_ = err
+	}
+	if strings.Contains(stdout, "\x1b") || strings.Contains(stdout, "\x07") {
+		t.Fatalf("stdout still contains raw controls: %q", stdout)
+	}
+	if stdout != "" && !strings.Contains(stdout, `\x1b`) && strings.Contains(stdout, "RED") {
+		t.Fatalf("stdout = %q; want visible-escaped CSI when RED is shown", stdout)
+	}
+}

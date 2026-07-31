@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/goccy/go-yaml"
 )
+
+// maxLocalConfigBytes caps workspace-local YAML before it is fully read or
+// decoded. Repository-controlled config must not exhaust memory/CPU before the
+// trust gate runs. 256 KiB is far above any legitimate launcher config.
+const maxLocalConfigBytes = 256 * 1024
 
 // CurrentVersion is the configuration schema version written by this build.
 // It versions the config FILE format only — it is not the binary release
@@ -347,11 +353,18 @@ type Global struct {
 	// to the top. Updated on every successful launch.
 	RecentAgents []string           `yaml:"recent_agents,omitempty"`
 	Profiles     map[string]Profile `yaml:"profiles,omitempty"`
-	// TrustedLocalConfigs holds SHA-256 hashes of local configs the launcher
-	// itself saved. A hash match proves "the operator saved this file", which
-	// a repository-shipped .ai-launch.yaml cannot forge (see ARCHITECTURE
+	// TrustedLocalConfigs records launcher-saved local configs bound to both
+	// content hash and canonical path. A bare hash (legacy) is never enough:
+	// identical bytes in another checkout must not inherit trust (ARCHITECTURE
 	// invariant 2b).
-	TrustedLocalConfigs []string `yaml:"trusted_local_configs,omitempty"`
+	TrustedLocalConfigs []TrustedLocalEntry `yaml:"trusted_local_configs,omitempty"`
+}
+
+// TrustedLocalEntry is one provenance record: the canonical absolute path of a
+// local config the launcher saved, plus the SHA-256 of its bytes at save time.
+type TrustedLocalEntry struct {
+	Path string `yaml:"path"`
+	Hash string `yaml:"hash"`
 }
 
 // recentAgentsMax is the cap on the MRU list stored in the global config.
@@ -742,28 +755,45 @@ func localConfigHash(path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// LocalConfigTrusted reports whether the local config at path is byte-identical
-// to one the launcher itself saved, proven by a hash recorded in the trusted
-// global config. A repository-shipped .ai-launch.yaml has no recorded hash;
-// editing a saved file changes its hash and revokes the trust.
+// canonicalLocalPath returns a stable absolute path for trust binding.
+// EvalSymlinks collapses aliases so two spellings of the same file share one
+// record; on failure the cleaned absolute form is used.
+func canonicalLocalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return filepath.Clean(abs), nil
+	}
+	return filepath.Clean(resolved), nil
+}
+
+// LocalConfigTrusted reports whether the local config at path is the same file
+// (canonical path) and the same bytes the launcher saved. A repository-shipped
+// .ai-launch.yaml has no record; editing after save changes the hash; copying
+// identical bytes to another path does not inherit trust.
 func LocalConfigTrusted(global Global, path string) bool {
 	hash, err := localConfigHash(path)
 	if err != nil {
 		return false
 	}
+	canonical, err := canonicalLocalPath(path)
+	if err != nil {
+		return false
+	}
 	for _, trusted := range global.TrustedLocalConfigs {
-		if trusted == hash {
+		if trusted.Hash == hash && trusted.Path == canonical {
 			return true
 		}
 	}
 	return false
 }
 
-// RecordTrustedLocalConfig notes the content hash of a launcher-saved local
-// config in the global config, leaving every other key in the file untouched
-// (the same discipline as SaveRecentAgents: never write the merged catalog
-// back). This is what lets the next launch honor what the operator saved
-// instead of refusing it as repo-supplied input.
+// RecordTrustedLocalConfig notes path+hash of a launcher-saved local config in
+// the global config, leaving every other key untouched (same discipline as
+// SaveRecentAgents). The next launch honors that exact path and content.
 func RecordTrustedLocalConfig(globalPath, localPath string) error {
 	if globalPath == "" {
 		return errors.New("global config path is empty")
@@ -772,16 +802,27 @@ func RecordTrustedLocalConfig(globalPath, localPath string) error {
 	if err != nil {
 		return fmt.Errorf("hash local config: %w", err)
 	}
+	canonical, err := canonicalLocalPath(localPath)
+	if err != nil {
+		return fmt.Errorf("canonical local path: %w", err)
+	}
 	document, err := readGlobalDocument(globalPath)
 	if err != nil {
 		return err
 	}
-	hashes := append(trustedHashesExcluding(document, hash), hash)
-	if len(hashes) > trustedLocalConfigsMax {
-		hashes = hashes[len(hashes)-trustedLocalConfigsMax:]
+	entry := TrustedLocalEntry{Path: canonical, Hash: hash}
+	entries := append(trustedEntriesExcluding(document, entry), entry)
+	if len(entries) > trustedLocalConfigsMax {
+		entries = entries[len(entries)-trustedLocalConfigsMax:]
+	}
+	// Encode as plain maps so the on-disk shape stays readable and does not
+	// depend on struct tags when the rest of the document is map[string]any.
+	serialized := make([]map[string]string, 0, len(entries))
+	for _, e := range entries {
+		serialized = append(serialized, map[string]string{"path": e.Path, "hash": e.Hash})
 	}
 	document["version"] = CurrentVersion
-	document["trusted_local_configs"] = hashes
+	document["trusted_local_configs"] = serialized
 	encoded, err := yaml.Marshal(document)
 	if err != nil {
 		return fmt.Errorf("encode global config: %w", err)
@@ -809,21 +850,52 @@ func readGlobalDocument(globalPath string) (map[string]any, error) {
 	return document, nil
 }
 
-// trustedHashesExcluding returns the document's recorded trusted-config
-// hashes in order, dropping non-string entries and any entry equal to hash
-// (the caller re-appends hash at the tail as the newest entry).
-func trustedHashesExcluding(document map[string]any, hash string) []string {
+// trustedEntriesExcluding returns the document's recorded trusted-config
+// entries in order, dropping malformed rows and any entry equal to the one
+// being re-recorded (caller re-appends it at the tail). Legacy bare-hash
+// strings are dropped: they cannot bind a path and must not grant trust.
+func trustedEntriesExcluding(document map[string]any, skip TrustedLocalEntry) []TrustedLocalEntry {
 	existing, ok := document["trusted_local_configs"].([]any)
 	if !ok {
 		return nil
 	}
-	hashes := make([]string, 0, len(existing))
-	for _, entry := range existing {
-		if value, ok := entry.(string); ok && value != hash {
-			hashes = append(hashes, value)
+	out := make([]TrustedLocalEntry, 0, len(existing))
+	for _, raw := range existing {
+		parsed, ok := parseTrustedLocalEntry(raw)
+		if !ok {
+			continue // legacy bare hash or malformed row
 		}
+		if parsed.Path == skip.Path && parsed.Hash == skip.Hash {
+			continue
+		}
+		out = append(out, parsed)
 	}
-	return hashes
+	return out
+}
+
+// parseTrustedLocalEntry accepts the map form written by RecordTrustedLocalConfig.
+// Bare strings (pre-path-binding hashes) are rejected so they never grant trust.
+func parseTrustedLocalEntry(raw any) (TrustedLocalEntry, bool) {
+	switch value := raw.(type) {
+	case map[string]any:
+		path, _ := value["path"].(string)
+		hash, _ := value["hash"].(string)
+		path = strings.TrimSpace(path)
+		hash = strings.TrimSpace(hash)
+		if path == "" || hash == "" {
+			return TrustedLocalEntry{}, false
+		}
+		return TrustedLocalEntry{Path: path, Hash: hash}, true
+	case map[string]string:
+		path := strings.TrimSpace(value["path"])
+		hash := strings.TrimSpace(value["hash"])
+		if path == "" || hash == "" {
+			return TrustedLocalEntry{}, false
+		}
+		return TrustedLocalEntry{Path: path, Hash: hash}, true
+	default:
+		return TrustedLocalEntry{}, false
+	}
 }
 
 // writeGlobalAtomically writes the global config through a temporary file with
@@ -882,17 +954,30 @@ func UpsertAgent(global *Global, agent Agent) error {
 
 // LoadLocal reads the workspace-local config, falling back to DefaultLocal
 // for a missing file and retaining safe defaults for omitted option keys.
+// Files larger than maxLocalConfigBytes are rejected before full allocation.
 func LoadLocal(path string) (Local, error) {
 	cfg := DefaultLocal()
 	if path == "" {
 		return cfg, nil
 	}
-	b, err := os.ReadFile(path) // #nosec G304 -- path is the user-supplied local config location by design
+	// #nosec G304 -- path is the user-supplied local config location by design
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, nil
 	}
 	if err != nil {
 		return cfg, fmt.Errorf("read local config: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	// Read at most limit+1 so oversize is detected without slurping a multi-GB
+	// hostile file into memory.
+	limited := io.LimitReader(f, int64(maxLocalConfigBytes)+1)
+	b, err := io.ReadAll(limited)
+	if err != nil {
+		return cfg, fmt.Errorf("read local config: %w", err)
+	}
+	if len(b) > maxLocalConfigBytes {
+		return cfg, fmt.Errorf("local config %s exceeds %d byte limit", path, maxLocalConfigBytes)
 	}
 	var loaded Local
 	if err := yaml.Unmarshal(b, &loaded); err != nil {

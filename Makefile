@@ -10,10 +10,13 @@ DIST_DIR ?= dist
 LDFLAGS ?= -ldflags "-X main.version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev) -X main.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo none) -X main.date=$$(date -u +%Y-%m-%d)"
 # Quality tools run through `go run` so no system-wide install is required;
 # override with the installed binary to speed up local runs (for example
-# `make lint-full GOLANGCI_LINT=golangci-lint`).
-GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@latest
-GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
+# `make lint-full GOLANGCI_LINT=golangci-lint`). Versions are pinned (not
+# @latest) so a newly published upstream tag cannot execute on the next
+# full-gate run without a deliberate repository change. Keep golangci-lint
+# aligned with .github/workflows/ci.yml (version: v2.12).
+GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0
 SHFMT ?= $(GO) run mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
 GORELEASER ?= $(GO) run github.com/goreleaser/goreleaser/v2@v2.13.0
 

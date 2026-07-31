@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -51,6 +52,20 @@ func TestLoadLocalRejectsUnreadableDirectoryAndMalformedYaml(t *testing.T) {
 	}
 	if got, err := LoadLocal(path); err == nil || !strings.Contains(err.Error(), "parse local config") {
 		t.Fatalf("LoadLocal(malformed) = %#v, %v", got, err)
+	}
+}
+
+// Repository-controlled local config must not exhaust memory before trust
+// checks run. Oversized files are rejected after a bounded read.
+func TestLoadLocalRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge.yaml")
+	// Prefix a valid header then pad past the limit without needing multi-GB disk.
+	body := append([]byte("options:\n  jail: false\n#"), bytes.Repeat([]byte("x"), maxLocalConfigBytes)...)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLocal(path); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("LoadLocal(oversized) error = %v; want size-limit rejection", err)
 	}
 }
 

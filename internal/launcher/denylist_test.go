@@ -70,17 +70,31 @@ func TestDeniedAutoMountCoversTreesHoldingOtherUsersData(t *testing.T) {
 	}
 }
 
-// The denylist covers the trees themselves, not what lives beneath them: the
-// user's own project volume and home are legitimate auto-mount targets, and
-// refusing those would break the feature this exists to protect.
-func TestDeniedAutoMountAllowsPathsBeneathDeniedTrees(t *testing.T) {
+// Exact-only roots still allow paths beneath them (project volumes, caches).
+// High-risk system descendants and control sockets are refused.
+func TestDeniedAutoMountAllowsBenignDataPaths(t *testing.T) {
 	for _, target := range []string{
 		"/Volumes/MSD512", "/home/lgldsilva", "/Users/luizg/Projects",
-		"/storage/cache", "/mnt/data", "/opt/homebrew",
+		"/storage/cache", "/mnt/data", "/opt/homebrew", "/var/folders/xx/T/cache",
+		"/private/var/folders/xx/T/cache",
 	} {
 		t.Run(target, func(t *testing.T) {
 			if _, refused := deniedAutoMount(target); refused {
-				t.Fatalf("deniedAutoMount(%q) = refused; only the tree itself is denied", target)
+				t.Fatalf("deniedAutoMount(%q) = refused; benign data paths stay allowed", target)
+			}
+		})
+	}
+}
+
+func TestDeniedAutoMountRefusesHighRiskDescendantsAndSockets(t *testing.T) {
+	for _, target := range []string{
+		"/etc/ssh", "/usr/bin/sudo", "/Library/Keychains",
+		"/var/run/docker.sock", "/run/podman.sock",
+		"/private/etc/ssh",
+	} {
+		t.Run(target, func(t *testing.T) {
+			if _, refused := deniedAutoMount(target); !refused {
+				t.Fatalf("deniedAutoMount(%q) = allowed; high-risk descendants and control sockets must be refused", target)
 			}
 		})
 	}
