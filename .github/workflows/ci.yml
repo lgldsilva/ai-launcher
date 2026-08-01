@@ -127,26 +127,27 @@ jobs:
     env:
       SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION || 'lgldsilva' }}
       SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || 'lgldsilva_ai-launcher' }}
+      # `secrets` is not available in step `if:` conditions, so the token is
+      # bound at the job level and the steps gate on `env.SONAR_TOKEN` instead.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         with:
           fetch-depth: 0 # full history for accurate new-code detection
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         with:
           go-version-file: go.mod
           cache: true
       - name: Coverage
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         run: |
           go test -covermode=atomic \
             -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher \
             -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher
       - name: SonarCloud analysis (waits for the quality gate)
-        if: ${{ secrets.SONAR_TOKEN != '' }}
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         run: |
           npx -y sonarqube-scanner@5.0.0 \
             -Dsonar.host.url=https://sonarcloud.io \
@@ -155,5 +156,5 @@ jobs:
             -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
             -Dsonar.qualitygate.wait=true
       - name: SonarCloud skipped
-        if: ${{ secrets.SONAR_TOKEN == '' }}
+        if: ${{ env.SONAR_TOKEN == '' }}
         run: echo "SONAR_TOKEN not set — skipping SonarCloud analysis."
