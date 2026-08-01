@@ -399,30 +399,8 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 	}
 
 	// F1 — permissions: unsaved-local-file permissions must match explicit CLI flags.
-	permissionFlagName := map[string]string{
-		"ssh":          "ssh",
-		"github":       "gh",
-		"gh":           "gh",
-		"docker":       "docker",
-		"gpu":          "gpu",
-		"display":      "display",
-		"pictures":     "pictures",
-		"tailscale":    "tailscale",
-		"systemd-user": permissionSystemdUser,
-		"mise":         "mise",
-		"worktree":     "worktree",
-	}
-	for permID, enabled := range trust.rawPermissions {
-		if !enabled {
-			continue
-		}
-		flagName, known := permissionFlagName[permID]
-		if !known {
-			continue // unknown permission id — catalogue normalisation drops it later
-		}
-		if !flagsWasSet(flags, flagName) {
-			return fmt.Errorf("local config enables permission %q (true); pass --%s to accept explicitly", permID, flagName)
-		}
+	if err := enforcePermissionConsent(flags, trust); err != nil {
+		return err
 	}
 
 	// F3 — jail_flags: non-zero flags weaken the sandbox posture and require
@@ -462,6 +440,39 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 			strings.Join(names, ", "))
 	}
 
+	return nil
+}
+
+// enforcePermissionConsent requires an explicit CLI flag for every permission
+// the unsaved local file turns on. CLI --<permission> flags and saved
+// selections skip this (the operator's own explicit choice). Extracted from
+// enforceLocalConfigTrust (F1) to keep that function under the gocognit cap.
+func enforcePermissionConsent(flags *flag.FlagSet, trust localTrust) error {
+	permissionFlagName := map[string]string{
+		"ssh":          "ssh",
+		"github":       "gh",
+		"gh":           "gh",
+		"docker":       "docker",
+		"gpu":          "gpu",
+		"display":      "display",
+		"pictures":     "pictures",
+		"tailscale":    "tailscale",
+		"systemd-user": permissionSystemdUser,
+		"mise":         "mise",
+		"worktree":     "worktree",
+	}
+	for permID, enabled := range trust.rawPermissions {
+		if !enabled {
+			continue
+		}
+		flagName, known := permissionFlagName[permID]
+		if !known {
+			continue // unknown permission id — catalogue normalisation drops it later
+		}
+		if !flagsWasSet(flags, flagName) {
+			return fmt.Errorf("local config enables permission %q (true); pass --%s to accept explicitly", permID, flagName)
+		}
+	}
 	return nil
 }
 
@@ -709,7 +720,7 @@ func searchWorkstream(opts *cliOptions, global config.Global, home string, out, 
 
 	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
 	defer cancel()
-	// #nosec G204 -- memoryPath is the LookPath result for a fixed tool name;
+	// #nosec G204 G702 -- memoryPath is the LookPath result for a fixed tool name;
 	// every argument is a launcher-controlled flag or the operator's own query.
 	command := exec.CommandContext(ctx, memoryPath, args...)
 	command.Env = launcher.Environment(launcher.LaunchConfig{
