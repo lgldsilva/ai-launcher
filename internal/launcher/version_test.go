@@ -58,7 +58,7 @@ func TestUpstreamReportFlagsInstallsBelowTheSupportedFloor(t *testing.T) {
 
 func TestUpstreamReportAcceptsCurrentOrNewerInstalls(t *testing.T) {
 	for _, outputs := range []map[string]string{
-		{"/bin/ai-jail": "ai-jail 1.15.0 (abc123)", "/bin/ai-memory": "ai-memory 1.19.0"},
+		{"/bin/ai-jail": "ai-jail 1.16.0 (abc123)", "/bin/ai-memory": "ai-memory 1.19.0"},
 		{"/bin/ai-jail": "v2.0.0", "/bin/ai-memory": "ai-memory 1.20.1"},
 	} {
 		stubVersionCommand(t, outputs, nil)

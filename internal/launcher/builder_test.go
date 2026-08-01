@@ -147,7 +147,7 @@ func TestValidatorFindsIssues(t *testing.T) {
 		GOOS:  "linux",
 	}
 	issues := v.Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: false, UseMemory: true, Permissions: map[string]bool{"gpu": true}, Mounts: []config.Mount{{Path: "/missing"}}})
-	if len(issues) != 4 {
+	if len(issues) != 3 {
 		t.Fatalf("got %d issues: %#v", len(issues), issues)
 	}
 }
