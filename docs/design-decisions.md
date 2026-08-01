@@ -12,7 +12,7 @@ invokes the third-party binaries (`akitaonrails/ai-jail`,
 **Why.** Both tools have a fast release cadence and an active author;
 reimplementing bubblewrap/sandbox-exec or the ai-memory MCP protocol would be
 a fork forever behind. The price of coupling is CLI drift — and it is real:
-the modeling of the ai-jail v1.15 flags (`--lockdown`, `--private-home`,
+the modeling of the ai-jail v1.15/v1.16 flags (`--lockdown`, `--private-home`,
 `--no-*` toggles for default-on capabilities) only exists because the CLI
 changed under us.
 
@@ -23,7 +23,7 @@ workstream/workspace/project scope. The contract asserts what ai-launcher
 **emits**, never what upstream **accepts**: a new upstream release that
 renames a flag installs cleanly and CI stays green. That gap is closed by
 version pinning, not by the contract alone — `config.MinAIJailVersion`
-(`1.15.0`) and `config.MinAIMemoryVersion` (`1.19.0`) declare the supported
+(`1.16.0`) and `config.MinAIMemoryVersion` (`1.19.0`) declare the supported
 floor in exactly one place, and `ai-launcher --doctor` probes
 `ai-jail --version` / `ai-memory --version` (5s timeout), reporting
 `ai-jail-version-too-old` / `ai-memory-version-too-old` when the installed

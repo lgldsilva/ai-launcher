@@ -14,18 +14,30 @@ import (
 func TestNormalizePermissionsAddsDependencies(t *testing.T) {
 	catalog := New(config.DefaultGlobal())
 	got := catalog.NormalizePermissions(map[string]bool{"gpu": true})
-	for _, id := range []string{"jail", "docker", "gpu"} {
+	for _, id := range []string{"jail", "gpu"} {
 		if !got[id] {
 			t.Fatalf("permission %q should be enabled: %#v", id, got)
 		}
 	}
+	// Every jail-backed permission requires jail and nothing else. Asking for
+	// the GPU must not hand the agent the Docker socket on the way.
+	if got["docker"] {
+		t.Fatalf("gpu must not pull in docker: %#v", got)
+	}
 }
 
+// disableOrphanDependents needs a dependency that can actually be off, which
+// the shipped catalog no longer has: jail is locked on, and it is now the only
+// thing anything requires. The graph therefore lives in the fixture.
 func TestNormalizePermissionsDoesNotEnableDependents(t *testing.T) {
-	catalog := New(config.DefaultGlobal())
-	got := catalog.NormalizePermissions(map[string]bool{"docker": false})
-	if got["docker"] || got["gpu"] {
-		t.Fatalf("docker and gpu should be disabled: %#v", got)
+	catalog := New(config.Global{Permissions: []config.Permission{
+		{ID: "jail", Name: "Jail", Default: true, Locked: true},
+		{ID: "base", Name: "Base", Requires: []string{"jail"}},
+		{ID: "dependent", Name: "Dependent", Requires: []string{"base"}},
+	}})
+	got := catalog.NormalizePermissions(map[string]bool{"base": false})
+	if got["base"] || got["dependent"] {
+		t.Fatalf("a disabled dependency must take its dependents with it: %#v", got)
 	}
 	if !got["jail"] {
 		t.Fatal("locked jail should remain enabled")

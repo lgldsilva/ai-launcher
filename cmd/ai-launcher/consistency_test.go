@@ -2,6 +2,9 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,17 +14,49 @@ import (
 
 // Permissions are normalized (dependencies resolved, unknown ids dropped)
 // before the CLI flags are merged in, so a dependency pulled in by a flag was
-// never resolved. --gpu requires docker, and the argv came out without it —
-// while the TUI, which re-normalizes on every toggle, produced the right thing.
+// never resolved: the argv came out missing it, while the TUI — which
+// re-normalizes on every toggle — produced the right thing.
+//
+// The dependency lives in this fixture rather than in the built-in catalog.
+// The test is about the mechanism (a flag goes through NormalizePermissions),
+// not about which permissions the product happens to chain together; borrowing
+// a real edge made it fail when that edge was correctly removed.
 func TestCliPermissionFlagsAreNormalized(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	stubToolsOnPath(t, "custom-cli", "ai-jail", "ai-memory")
+	dir := t.TempDir()
+	globalYAML := `agents:
+  - name: Custom
+    command: custom-cli
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+  - id: docker
+    name: Docker socket
+    requires: [jail]
+  # Fixture-only edge: gpu is declared to depend on docker so the assertion
+  # below has something to resolve. The shipped catalog does not chain these.
+  - id: gpu
+    name: GPU passthrough
+    requires: [docker]
+`
+	globalPath := filepath.Join(dir, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localPath := filepath.Join(dir, "local.yaml")
+	if err := os.WriteFile(localPath,
+		[]byte("agent: custom-cli\noptions:\n  jail: true\n  memory: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--gpu", "--dry-run")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	if !strings.Contains(stdout, "--docker") {
-		t.Fatalf("dry-run = %q; --gpu requires docker, which normalization must pull in", stdout)
+	if !slices.Contains(strings.Fields(stdout), "--docker") {
+		t.Fatalf("dry-run = %q; the flag's declared dependency must be resolved by normalization", stdout)
 	}
 }
 

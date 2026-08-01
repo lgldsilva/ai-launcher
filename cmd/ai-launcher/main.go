@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +41,14 @@ const (
 	permissionSystemdUser = "systemd-user"
 	// warningLabel prefixes non-fatal diagnostics on stderr.
 	warningLabel = "warning:"
+	// aiMemoryCommand is the upstream memory CLI, resolved on PATH for the
+	// read-only surfaces this binary forwards to it.
+	aiMemoryCommand = "ai-memory"
 )
+
+// workstreamSearchTimeout bounds the ai-memory query so a hung or unreachable
+// server cannot wedge the terminal. It is a search, not a session.
+const workstreamSearchTimeout = 30 * time.Second
 
 type stringList []string
 
@@ -68,6 +78,9 @@ type cliOptions struct {
 	workspace, project             string
 	profile, saveProfile           string
 	deleteProfile                  string
+	workstreamSearch               string
+	searchLimit                    int
+	searchJSON                     bool
 	ssh, gh, docker, gpu           bool
 	display, pictures              bool
 	tailscale, systemdUser         bool
@@ -127,6 +140,9 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.saveProfile, "save-profile", "", "save the fully merged selection as the named profile in the global config and exit without launching")
 	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
+	flags.StringVar(&o.workstreamSearch, "workstream-search", "", "search the ai-memory workstream ledger for this query and exit")
+	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search (ai-memory's own default when unset)")
+	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search results as JSON")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
 	flags.BoolVar(&o.doctor, "doctor", false, "report the installed upstream tool versions against the supported floor and exit")
 }
@@ -276,13 +292,14 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 		trust.yolo = raw.Options.Yolo
 		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
 		trust.jailFlags = raw.Options.JailFlags
+		trust.paramValues = raw.Options.ParamValues
 	}
 	if !overrides.mounts {
 		trust.mounts = raw.Mounts
 	}
 	// Permissions the profile replaced are trusted global input — only the
 	// file-owned map is subject to the CLI-flag opt-in check.
-	if profile == nil || profile.Permissions == nil {
+	if !overrides.permissions {
 		trust.rawPermissions = copyPermissions(raw.Permissions)
 	}
 	return trust
@@ -291,10 +308,17 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 // profileBlocks names the selection blocks a profile replaced. It mirrors the
 // conditions in applyProfile one-for-one: whatever the profile takes over stops
 // being the workspace file's responsibility, so the two must be read together.
+//
+// One field per `if` in applyProfile, deliberately. A block that applyProfile
+// replaces without a field here has no way to be excused from the trust gate,
+// and the launcher refuses the run over a value it already discarded — the
+// defect this type exists to prevent, described at length on localTrustFrom.
+// TestProfileBlocksCoversEveryApplyProfileBlock is the mechanical guard.
 type profileBlocks struct {
-	agent   bool
-	mounts  bool
-	options bool
+	agent       bool
+	permissions bool
+	mounts      bool
+	options     bool
 }
 
 func profileOverrides(profile *config.Profile) profileBlocks {
@@ -302,9 +326,10 @@ func profileOverrides(profile *config.Profile) profileBlocks {
 		return profileBlocks{}
 	}
 	return profileBlocks{
-		agent:   strings.TrimSpace(profile.Agent) != "",
-		mounts:  profile.Mounts != nil,
-		options: profile.Options != nil,
+		agent:       strings.TrimSpace(profile.Agent) != "",
+		permissions: profile.Permissions != nil,
+		mounts:      profile.Mounts != nil,
+		options:     profile.Options != nil,
 	}
 }
 
@@ -317,10 +342,11 @@ type localTrust struct {
 	fromFile       bool // false once --agent was given: the operator's own choice.
 	jail           bool
 	mounts         []config.Mount
-	rawPermissions map[string]bool  // permissions from file (profile may overwrite)
-	yolo           bool             // file value when profile does not own options
-	extraArgs      []string         // file value when profile does not own options
-	jailFlags      config.JailFlags // file value when profile does not own options
+	rawPermissions map[string]bool   // permissions from file (profile may overwrite)
+	yolo           bool              // file value when profile does not own options
+	extraArgs      []string          // file value when profile does not own options
+	jailFlags      config.JailFlags  // file value when profile does not own options
+	paramValues    map[string]string // file value when profile does not own options
 }
 
 // enforceLocalConfigTrust refuses a workspace-local config that lowers the
@@ -373,6 +399,55 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 	}
 
 	// F1 — permissions: unsaved-local-file permissions must match explicit CLI flags.
+	if err := enforcePermissionConsent(flags, trust); err != nil {
+		return err
+	}
+
+	// F3 — jail_flags: non-zero flags weaken the sandbox posture and require
+	// explicit operator consent via profile or save. No per-flag CLI toggle
+	// exists yet; the opt-in is saving or selecting a profile.
+	if trust.optionsRaw && !trust.jailFlags.IsZero() {
+		return errors.New("local config sets options.jail_flags without operator save or profile; profiles and --save are needed to accept custom jail behaviour")
+	}
+
+	// F6 — yolo / extra_args: dangerous options require explicit consent.
+	if trust.optionsRaw && trust.yolo && !flagsWasSet(flags, "yolo") {
+		return errors.New("local config sets options.yolo: true; run with --yolo or save the selection to accept")
+	}
+	if trust.optionsRaw && len(trust.extraArgs) > 0 {
+		if !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
+			return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")
+		}
+	}
+
+	// param_values: catalog-declared harness flags, filled in by the file.
+	//
+	// Narrower than extra_args — a value can only land behind a flag the
+	// catalog already declares, so a repository cannot invent an argument. It
+	// can still choose one: `model` picks what the agent runs as, and a param
+	// declared `takes_value: false` is a bare flag the file turns on, which is
+	// why pre-flight already warns `catalog-flag-param` about those. Choosing
+	// the model and the flags of the process about to read the checkout is an
+	// operator decision, so it takes the same opt-in as everything else here.
+	if trust.optionsRaw && len(trust.paramValues) > 0 && !flagsWasSet(flags, "param") {
+		names := make([]string, 0, len(trust.paramValues))
+		for name := range trust.paramValues {
+			names = append(names, name)
+		}
+		sort.Strings(names) // map order is random; the message must not be
+		return fmt.Errorf("local config sets options.param_values (%s) without --param; "+
+			"pass --param name=value to accept explicitly, or save the selection",
+			strings.Join(names, ", "))
+	}
+
+	return nil
+}
+
+// enforcePermissionConsent requires an explicit CLI flag for every permission
+// the unsaved local file turns on. CLI --<permission> flags and saved
+// selections skip this (the operator's own explicit choice). Extracted from
+// enforceLocalConfigTrust (F1) to keep that function under the gocognit cap.
+func enforcePermissionConsent(flags *flag.FlagSet, trust localTrust) error {
 	permissionFlagName := map[string]string{
 		"ssh":          "ssh",
 		"github":       "gh",
@@ -398,24 +473,6 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 			return fmt.Errorf("local config enables permission %q (true); pass --%s to accept explicitly", permID, flagName)
 		}
 	}
-
-	// F3 — jail_flags: non-zero flags weaken the sandbox posture and require
-	// explicit operator consent via profile or save. No per-flag CLI toggle
-	// exists yet; the opt-in is saving or selecting a profile.
-	if trust.optionsRaw && !trust.jailFlags.IsZero() {
-		return errors.New("local config sets options.jail_flags without operator save or profile; profiles and --save are needed to accept custom jail behaviour")
-	}
-
-	// F6 — yolo / extra_args: dangerous options require explicit consent.
-	if trust.optionsRaw && trust.yolo && !flagsWasSet(flags, "yolo") {
-		return errors.New("local config sets options.yolo: true; run with --yolo or save the selection to accept")
-	}
-	if trust.optionsRaw && len(trust.extraArgs) > 0 {
-		if !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
-			return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")
-		}
-	}
-
 	return nil
 }
 
@@ -628,7 +685,56 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, out,
 	if opts.deleteProfile != "" {
 		return true, deleteProfile(opts.globalPath, global, opts.deleteProfile, out)
 	}
+	if strings.TrimSpace(opts.workstreamSearch) != "" {
+		return true, searchWorkstream(opts, global, home, out, errOut)
+	}
 	return false, nil
+}
+
+// searchWorkstream forwards a query to `ai-memory workstream-search`.
+//
+// The launcher already creates workstreams (`--new`) and resumes them
+// (`--workstream`), so it owned the write side of the ledger and gave no way
+// to read it back. The delta ai-memory injects into the next harness is
+// size-limited by design; the searchable ledger is where an old decision
+// actually lives, and needing a second tool to reach it defeats the point of
+// having one command that knows about workstreams.
+//
+// Deliberately not jail-wrapped, unlike a launch. This is a read-only query
+// against the ai-memory server over HTTP, in the same class as --doctor: no
+// harness runs, nothing touches the checkout, and paying for a sandbox would
+// only mean the operator's terminal cannot see the answer.
+func searchWorkstream(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
+	memoryPath, err := exec.LookPath(aiMemoryCommand)
+	if err != nil {
+		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
+	}
+	args := []string{"workstream-search"}
+	if opts.searchLimit > 0 {
+		args = append(args, "--limit", strconv.Itoa(opts.searchLimit))
+	}
+	if opts.searchJSON {
+		args = append(args, "--json")
+	}
+	args = append(args, opts.workstreamSearch)
+
+	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
+	defer cancel()
+	// #nosec G204 G702 -- memoryPath is the LookPath result for a fixed tool name;
+	// every argument is a launcher-controlled flag or the operator's own query.
+	command := exec.CommandContext(ctx, memoryPath, args...)
+	command.Env = launcher.Environment(launcher.LaunchConfig{
+		UseMemory:       true,
+		HomeDir:         home,
+		MemoryServerURL: global.MemoryServerURL,
+		MemoryAuthToken: global.MemoryAuthToken,
+	})
+	command.Stdout = out
+	command.Stderr = errOut
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("workstream-search: %w", err)
+	}
+	return nil
 }
 
 // loadLocalSelection loads the workspace config and layers the requested
@@ -665,11 +771,11 @@ func cloneLocal(local config.Local) config.Local {
 
 // resolvePermissions merges the configured permissions with the CLI flag
 // overrides and normalizes the result. Normalization resolves permission
-// dependencies (gpu requires docker) and drops ids the catalog does not
-// declare. It has to run *after* every input is merged: normalizing first
-// left a dependency pulled in by a CLI flag unresolved, so --gpu produced an
-// argv without --docker while the TUI, which re-normalizes on each toggle,
-// produced the right one.
+// dependencies (every jail-backed permission requires jail) and drops ids the
+// catalog does not declare. It has to run *after* every input is merged:
+// normalizing first left a dependency pulled in by a CLI flag unresolved, so
+// the argv came out missing it while the TUI, which re-normalizes on each
+// toggle, produced the right one.
 func resolvePermissions(flags *flag.FlagSet, opts *cliOptions, local config.Local, catalogue catalog.Catalog) map[string]bool {
 	permissions := copyPermissions(local.Permissions)
 	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)

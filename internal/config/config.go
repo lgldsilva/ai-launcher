@@ -25,7 +25,18 @@ const maxLocalConfigBytes = 256 * 1024
 // It versions the config FILE format only — it is not the binary release
 // version (that is the `version` variable in cmd/ai-launcher, injected via
 // ldflags at build time and printed by --version).
-const CurrentVersion = "2.0"
+//
+// 2.1 changed `trusted_local_configs` from a list of bare SHA-256 strings to a
+// list of {path, hash} records. Reading 2.0 still works (see
+// TrustedLocalEntry.UnmarshalYAML), but the old records no longer grant trust,
+// so a local config saved under 2.0 needs one `--save` to be honored again.
+// Writing is one-way: a 2.1 file is not loadable by a pre-2.1 binary.
+const CurrentVersion = "2.1"
+
+// LoadableVersions are the schema versions this build accepts on read, oldest
+// first. Every entry must survive LoadGlobal/LoadLocal without losing data —
+// add one only together with the code that migrates it.
+var LoadableVersions = []string{"1", "1.0", "2.0", CurrentVersion}
 
 // DefaultMemoryServerURL is intentionally empty. Deployments configure the
 // ai-memory endpoint in the global config or through AI_MEMORY_SERVER_URL.
@@ -63,8 +74,15 @@ func SupportsMemoryRunHarness(name string) bool {
 // MinAIJailVersion and MinAIMemoryVersion pin the minimum upstream CLI
 // versions this launcher composes against. Older installs still launch;
 // `ai-launcher --doctor` reports them (see launcher.UpstreamReport).
+//
+// ai-jail 1.16.0 is a security floor, not a feature floor: up to 1.15.x the
+// Docker socket was bind-mounted read-write on sight, so "docker off by
+// default" was not true of the resulting sandbox no matter what the launcher
+// emitted. The argv fix (an explicit --no-docker, see appendDockerDecision)
+// covers 1.15.x hosts too; the floor is what tells an operator to stop
+// relying on a build that had no way to say no.
 const (
-	MinAIJailVersion   = "1.15.0"
+	MinAIJailVersion   = "1.16.0"
 	MinAIMemoryVersion = "1.19.0"
 )
 
@@ -194,7 +212,7 @@ type Mount struct {
 	Mode string `yaml:"mode,omitempty"`
 }
 
-// JailFlags holds the ai-jail v1.15 capability toggles. Pointer booleans are
+// JailFlags holds the ai-jail v1.16 capability toggles. Pointer booleans are
 // tri-state and mirror ai-jail's own model: nil leaves the capability in
 // ai-jail's auto mode (no flag emitted, meaning "enabled when the resource
 // exists on the host"), while true and false force it on or off with the
@@ -202,8 +220,16 @@ type Mount struct {
 // state from leaving it unset, and both forms are always emitted. Browser
 // accepts "hard", "soft", or "off".
 type JailFlags struct {
-	Lockdown      *bool    `yaml:"lockdown,omitempty"`
-	PrivateHome   *bool    `yaml:"private_home,omitempty"`
+	Lockdown    *bool `yaml:"lockdown,omitempty"`
+	PrivateHome *bool `yaml:"private_home,omitempty"`
+	// Docker is the one capability where auto mode is not a safe default.
+	// Through ai-jail v1.15.x the Docker socket was bind-mounted read-write
+	// whenever /var/run/docker.sock existed on the host, with no flag and no
+	// warning — and write access to that socket is root on the host, which
+	// walks straight past bubblewrap, Landlock, seccomp and every --mask.
+	// v1.16.0 made it opt-in after ai-jail issue #88. The launcher does not
+	// rely on that: see appendDockerDecision in internal/launcher.
+	Docker        *bool    `yaml:"docker,omitempty"`
 	Tailscale     *bool    `yaml:"tailscale,omitempty"`
 	GPU           *bool    `yaml:"gpu,omitempty"`
 	Display       *bool    `yaml:"display,omitempty"`
@@ -232,7 +258,7 @@ type JailFlags struct {
 
 // IsZero reports whether no jail flag deviates from the ai-jail defaults.
 func (f JailFlags) IsZero() bool {
-	return f.Lockdown == nil && f.PrivateHome == nil && f.Tailscale == nil &&
+	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Tailscale == nil &&
 		f.GPU == nil && f.Display == nil && f.Mise == nil && f.Worktree == nil &&
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
@@ -365,6 +391,36 @@ type Global struct {
 type TrustedLocalEntry struct {
 	Path string `yaml:"path"`
 	Hash string `yaml:"hash"`
+}
+
+// UnmarshalYAML accepts the current map form and the schema-2.0 form, which was
+// a bare hash string with no path bound to it.
+//
+// The legacy form is read but deliberately not honored: it decodes to an entry
+// with an empty Path, and LocalConfigTrusted compares against a canonical
+// absolute path that is never empty, so it can never match. That is the point
+// of the schema change — a hash alone proves the bytes, not the file, so
+// identical bytes in a cloned checkout must not inherit the operator's trust.
+//
+// Reading it anyway is what keeps the rest of the global config alive. Rejecting
+// the scalar here would fail the whole document, and LoadGlobal falls back to
+// DefaultGlobal on a parse error: an operator upgrading from 2.0 would silently
+// lose their --add agents, their profiles, their MRU list and their memory
+// token, on top of the trust records they were always going to have to re-save.
+// The stale rows are dropped from disk by the next RecordTrustedLocalConfig.
+func (t *TrustedLocalEntry) UnmarshalYAML(data []byte) error {
+	type trustedLocalEntryWithoutMethods TrustedLocalEntry
+	var mapForm trustedLocalEntryWithoutMethods
+	if err := yaml.Unmarshal(data, &mapForm); err == nil {
+		*t = TrustedLocalEntry(mapForm)
+		return nil
+	}
+	var legacyHash string
+	if err := yaml.Unmarshal(data, &legacyHash); err != nil {
+		return fmt.Errorf("parse trusted local config entry: %w", err)
+	}
+	*t = TrustedLocalEntry{Hash: strings.TrimSpace(legacyHash)}
+	return nil
 }
 
 // recentAgentsMax is the cap on the MRU list stored in the global config.
@@ -566,7 +622,7 @@ func DefaultGlobal() Global {
 			{ID: "ssh", Name: "SSH access", Requires: []string{"jail"}},
 			{ID: "gh", Name: "GitHub CLI", Requires: []string{"jail"}},
 			{ID: "docker", Name: "Docker socket", Requires: []string{"jail"}},
-			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"docker"}},
+			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"jail"}},
 			// The passthroughs below default to off because ai-jail already
 			// auto-enables display, mise and worktree when the resource exists.
 			// Turning one on here forces it on; forcing one off is a jail_flags
@@ -583,23 +639,32 @@ func DefaultGlobal() Global {
 }
 
 // DefaultMountCandidates returns the built-in mount suggestions for goos.
-// Paths mirror the dual-machine layout used by this project:
 //
-//	linux  → /storage, /storage/Projetos, /storage/cache
-//	darwin → /Volumes/MSD512, /Volumes/MSD512/Projetos
+// It returns nothing, on every platform, and the signature is kept so the
+// callers and the goos-shaped tests stay honest about that.
 //
-// Other platforms get no built-in mounts. Callers that apply these as
-// suggested mounts should drop entries whose path does not exist on the
-// host (see ExistingPaths) so a missing volume does not fail pre-flight.
+// It used to return this author's own volumes — /storage and /storage/Projetos
+// on Linux, /Volumes/MSD512 on macOS — compiled into a tool other people
+// install. ExistingPaths kept that harmless (a path that is not there is
+// dropped), which is exactly why it survived: on the machine it was written
+// for it worked, and everywhere else the feature silently did nothing.
+//
+// A default mount is a read-write hole in the sandbox. Guessing one is the
+// wrong shape of guess: too specific to be right for a stranger, and if it
+// ever did match, it would grant an agent write access to a directory nobody
+// asked about. The launcher now mounts what it is told to mount — `--mount` /
+// `--rw-map`, the workspace file, a profile, or `default_mounts` in the global
+// config, which is the supported way to get this behaviour back:
+//
+//	# ~/.config/ai-launch/config.yaml
+//	default_mounts:
+//	  - /storage/Projetos
+//
+// ai-jail already mounts the current project read-write on its own, so the
+// common case needs no mounts at all.
 func DefaultMountCandidates(goos string) []string {
-	switch goos {
-	case "linux":
-		return []string{"/storage", "/storage/Projetos", "/storage/cache"}
-	case "darwin":
-		return []string{"/Volumes/MSD512", "/Volumes/MSD512/Projetos"}
-	default:
-		return nil
-	}
+	_ = goos // no platform has a defensible built-in default; see above
+	return nil
 }
 
 // ExistingPaths returns the subset of paths that currently exist on the host.
@@ -784,6 +849,13 @@ func LocalConfigTrusted(global Global, path string) bool {
 		return false
 	}
 	for _, trusted := range global.TrustedLocalConfigs {
+		// An empty Path is a schema-2.0 record (bare hash, no file bound). It
+		// never grants trust: the comparison below would already reject it,
+		// but saying so explicitly keeps the rule from depending on the
+		// coincidence that a canonical path is never empty.
+		if trusted.Path == "" {
+			continue
+		}
 		if trusted.Hash == hash && trusted.Path == canonical {
 			return true
 		}
@@ -1045,13 +1117,19 @@ func SaveLocal(path string, cfg Local) error {
 }
 
 // ValidateVersion reports whether a config schema version is compatible with
-// this build (empty, "1", "1.0", or CurrentVersion).
+// this build: empty (pre-versioning) or any entry in LoadableVersions.
 func ValidateVersion(version string) error {
 	version = strings.TrimSpace(version)
-	if version == "" || version == "1" || version == "1.0" || version == CurrentVersion {
+	if version == "" {
 		return nil
 	}
-	return fmt.Errorf("unsupported config version %q (supported: 1, 1.0, %s)", version, CurrentVersion)
+	for _, loadable := range LoadableVersions {
+		if version == loadable {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported config version %q (supported: %s)",
+		version, strings.Join(LoadableVersions, ", "))
 }
 
 func mergeGlobalDefaults(defaults, cfg Global) Global {

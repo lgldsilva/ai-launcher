@@ -126,6 +126,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 	mutators := map[string]func(*JailFlags){
 		"lockdown":             func(f *JailFlags) { f.Lockdown = boolPointer(true) },
 		"private_home":         func(f *JailFlags) { f.PrivateHome = boolPointer(false) },
+		"docker":               func(f *JailFlags) { f.Docker = boolPointer(false) },
 		"tailscale":            func(f *JailFlags) { f.Tailscale = boolPointer(true) },
 		"gpu":                  func(f *JailFlags) { f.GPU = boolPointer(true) },
 		"display":              func(f *JailFlags) { f.Display = boolPointer(false) },
@@ -153,6 +154,13 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		if flags.IsZero() {
 			t.Errorf("IsZero() = true with only %s set", name)
 		}
+	}
+	// The map above is hand-written, so it can only prove what somebody
+	// remembered to add. Counting the struct is what makes "every single
+	// field" true: a new JailFlags field with no mutator fails here rather
+	// than passing silently while IsZero cannot see it.
+	if got, want := len(mutators), reflect.TypeOf(JailFlags{}).NumField(); got != want {
+		t.Errorf("%d mutators for %d JailFlags fields; add the missing one so IsZero stays honest", got, want)
 	}
 }
 

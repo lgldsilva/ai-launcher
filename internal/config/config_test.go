@@ -652,16 +652,19 @@ func TestTouchRecentAgentOrdersAndDedupes(t *testing.T) {
 	}
 }
 
-func TestDefaultMountCandidatesByGOOS(t *testing.T) {
-	cases := map[string][]string{
-		"linux":   {"/storage", "/storage/Projetos", "/storage/cache"},
-		"darwin":  {"/Volumes/MSD512", "/Volumes/MSD512/Projetos"},
-		"windows": nil,
-		"freebsd": nil,
-	}
-	for goos, want := range cases {
-		if got := DefaultMountCandidates(goos); !reflect.DeepEqual(got, want) {
-			t.Errorf("DefaultMountCandidates(%q) = %#v; want %#v", goos, got, want)
+// No platform ships a built-in mount. The candidates used to be this author's
+// own volumes (/storage on Linux, /Volumes/MSD512 on macOS) compiled into a
+// tool other people install; ExistingPaths hid the problem by dropping paths
+// that are not there, so on every other machine the feature quietly did
+// nothing while looking configured.
+//
+// A default mount is a read-write hole in the sandbox, and there is no path a
+// stranger's machine has that the launcher should open without being asked.
+// default_mounts in the global config is the supported way to declare one.
+func TestNoPlatformShipsABuiltInDefaultMount(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "windows", "freebsd", ""} {
+		if got := DefaultMountCandidates(goos); got != nil {
+			t.Errorf("DefaultMountCandidates(%q) = %#v; want no built-in mount on any platform", goos, got)
 		}
 	}
 }

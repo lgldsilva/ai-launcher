@@ -61,7 +61,7 @@ func TestJailFlagsCanForceOffAutoCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	want := []string{"ai-jail", "--no-display", "--no-mise", "--no-worktree", "claude"}
+	want := []string{"ai-jail", "--no-docker", "--no-display", "--no-mise", "--no-worktree", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want %#v", got, want)
 	}
@@ -132,7 +132,7 @@ func TestDisabledPassthroughPermissionsEmitNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	want := []string{"ai-jail", "claude"}
+	want := []string{"ai-jail", "--no-docker", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want %#v", got, want)
 	}

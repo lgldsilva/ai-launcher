@@ -42,10 +42,10 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --docker
       --ssh
       --rw-map
       /home/tester/.config/gh
-      --docker
       --gpu
       --map
       /reference
@@ -75,6 +75,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       codex
       """
 
@@ -95,6 +96,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --rw-map
       /home/tester/.config
       codex
@@ -124,7 +126,6 @@ Feature: Launcher command contract
       """
       memory-not-found
       permission-without-jail
-      gpu-without-docker
       """
 
   Scenario: Rejects GitHub CLI permission without a jail
@@ -263,6 +264,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --exec
+      --no-docker
       --lockdown
       --mask
       /etc/secrets
@@ -295,6 +297,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --no-gpu
       --no-landlock
       --no-seccomp
@@ -319,6 +322,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --gpu
       --display
       --mise
@@ -341,6 +345,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --no-display
       --no-mise
       --no-worktree
@@ -366,9 +371,51 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --no-tailscale
       --no-gpu
       --no-display
+      claude
+      """
+
+  # ai-jail <= 1.15.x bind-mounted an existing /var/run/docker.sock read-write
+  # with no flag and no warning, and that socket is root on the host. Leaving
+  # the capability unset is therefore not a safe default for this one flag, so
+  # the launcher always states it. Every other jail scenario above asserts the
+  # --no-docker default; these two lock the ways an operator turns it on.
+  Scenario: The docker permission is the opt-in for the socket
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      permissions:
+        docker: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --docker
+      claude
+      """
+
+  Scenario: An explicit docker jail flag wins over the permission
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      permissions:
+        docker: true
+      jail_flags:
+        docker: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
       claude
       """
 
@@ -385,6 +432,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --no-hide-config
       claude
       """
@@ -456,6 +504,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --exec
+      --no-docker
       ai-memory
       run
       """
@@ -523,7 +572,7 @@ Feature: Launcher command contract
       windows-amd64
       """
 
-  Scenario: Maps the ai-jail v1.15 passthrough permissions to argv
+  Scenario: Maps the ai-jail v1.16 passthrough permissions to argv
     Given a launch configuration
       """
       agent: claude
@@ -541,6 +590,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --display
       --pictures
       --tailscale
@@ -582,6 +632,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --status-bar=dark
       --mask-except
       /etc/secrets/public
@@ -610,6 +661,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --status-bar=pastel
       claude
       """
@@ -688,6 +740,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --map
       /opt/tools/bin
       ai-memory
@@ -715,6 +768,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --lockdown
       --private-home
       --overlay-map
@@ -741,6 +795,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --browser=soft
       claude
       """
@@ -758,6 +813,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       ai-jail
+      --no-docker
       --no-browser
       claude
       """
