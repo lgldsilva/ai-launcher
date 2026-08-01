@@ -8,8 +8,13 @@ coverage.html
 # Local tool session/agent state (machine-specific, never ship)
 .crush/
 .slim/
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees
 .agents/
 .codex/
+.claude/
 .idea/
 .ai-jail
 internal/**/testdata/rapid/
