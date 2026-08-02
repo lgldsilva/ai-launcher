@@ -246,13 +246,14 @@ ai-jail's own model — absent = auto (enabled when the resource exists on the
 host), `true` = force on (`--flag`), `false` = force off (`--no-flag`). Forcing
 on is a distinct state from leaving unset, so neither form is ever suppressed:
 `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`,
-`landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `browser`
-(`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `mask_exceptions`,
+`landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `save_config`,
+`browser` (`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `mask_exceptions`,
 `deny_paths`, `deny_path_exceptions`, `hide_dotdirs`, `allow_tcp_ports`, and
 `status_bar_style` (`dark`/`light`/`pastel`, emitted as `--status-bar=STYLE`;
 when set it suppresses both boolean `--status-bar` forms). When unset,
 `hide_config` is auto-disabled for projects whose `.ai-jail` is a symlink
-(bwrap cannot mask a symlink).
+(bwrap cannot mask a symlink). `save_config` has no such launcher-side
+handling — it only forwards ai-jail's write toggle.
 
 ## Upstream version compatibility
 

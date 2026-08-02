@@ -229,17 +229,20 @@ type JailFlags struct {
 	// walks straight past bubblewrap, Landlock, seccomp and every --mask.
 	// v1.16.0 made it opt-in after ai-jail issue #88. The launcher does not
 	// rely on that: see appendDockerDecision in internal/launcher.
-	Docker        *bool    `yaml:"docker,omitempty"`
-	Tailscale     *bool    `yaml:"tailscale,omitempty"`
-	GPU           *bool    `yaml:"gpu,omitempty"`
-	Display       *bool    `yaml:"display,omitempty"`
-	Mise          *bool    `yaml:"mise,omitempty"`
-	Worktree      *bool    `yaml:"worktree,omitempty"`
-	Landlock      *bool    `yaml:"landlock,omitempty"`
-	Seccomp       *bool    `yaml:"seccomp,omitempty"`
-	Rlimits       *bool    `yaml:"rlimits,omitempty"`
-	StatusBar     *bool    `yaml:"status_bar,omitempty"`
-	HideConfig    *bool    `yaml:"hide_config,omitempty"`
+	Docker     *bool `yaml:"docker,omitempty"`
+	Tailscale  *bool `yaml:"tailscale,omitempty"`
+	GPU        *bool `yaml:"gpu,omitempty"`
+	Display    *bool `yaml:"display,omitempty"`
+	Mise       *bool `yaml:"mise,omitempty"`
+	Worktree   *bool `yaml:"worktree,omitempty"`
+	Landlock   *bool `yaml:"landlock,omitempty"`
+	Seccomp    *bool `yaml:"seccomp,omitempty"`
+	Rlimits    *bool `yaml:"rlimits,omitempty"`
+	StatusBar  *bool `yaml:"status_bar,omitempty"`
+	HideConfig *bool `yaml:"hide_config,omitempty"`
+	// SaveConfig toggles ai-jail's automatic .ai-jail writes. nil leaves the
+	// ai-jail default in charge; true/false force --save-config/--no-save-config.
+	SaveConfig    *bool    `yaml:"save_config,omitempty"`
 	Browser       string   `yaml:"browser,omitempty"`
 	ClaudeDir     string   `yaml:"claude_dir,omitempty"`
 	OverlayMaps   []string `yaml:"overlay_maps,omitempty"`
@@ -261,7 +264,7 @@ func (f JailFlags) IsZero() bool {
 	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Tailscale == nil &&
 		f.GPU == nil && f.Display == nil && f.Mise == nil && f.Worktree == nil &&
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
-		f.StatusBar == nil && f.HideConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
+		f.StatusBar == nil && f.HideConfig == nil && f.SaveConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
 		len(f.AllowTCPPorts) == 0 && len(f.MaskExceptions) == 0 &&
 		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && f.StatusBarStyle == ""

@@ -137,6 +137,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		"rlimits":              func(f *JailFlags) { f.Rlimits = boolPointer(true) },
 		"status_bar":           func(f *JailFlags) { f.StatusBar = boolPointer(true) },
 		"hide_config":          func(f *JailFlags) { f.HideConfig = boolPointer(false) },
+		"save_config":          func(f *JailFlags) { f.SaveConfig = boolPointer(true) },
 		"browser":              func(f *JailFlags) { f.Browser = "soft" },
 		"claude_dir":           func(f *JailFlags) { f.ClaudeDir = "/home/tester/.claude" },
 		"overlay_maps":         func(f *JailFlags) { f.OverlayMaps = []string{"/data"} },

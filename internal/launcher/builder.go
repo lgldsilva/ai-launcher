@@ -464,6 +464,7 @@ func jailToggles(flags config.JailFlags) []jailToggle {
 		{name: "rlimits", value: flags.Rlimits},
 		{name: "status-bar", value: flags.StatusBar},
 		{name: "hide-config", value: flags.HideConfig},
+		{name: "save-config", value: flags.SaveConfig},
 	}
 }
 
