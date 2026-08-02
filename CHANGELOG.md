@@ -67,6 +67,17 @@ already handled. Catalog params choose the model the harness runs as, and a
 **What you need to do:** if a repository you trust ships `param_values`, pass
 `--param name=value` once, or `--save` the selection.
 
+### Added — `jail_flags.save_config` controls ai-jail's automatic config writes
+
+`jail_flags.save_config` is a new tri-state toggle mapping ai-jail v1.16's
+`--save-config` / `--no-save-config`: it turns ai-jail's automatic `.ai-jail`
+writes on or off. Unset leaves the ai-jail default in charge, `true` forces
+`--save-config`, `false` forces `--no-save-config`. It is emitted right after
+`hide_config`, its sibling for the same file.
+
+**What you need to do:** nothing. This is additive; existing configurations are
+unaffected and keep ai-jail's default behavior.
+
 ## Released
 
 See the [releases page](https://github.com/lgldsilva/ai-launcher/releases) for

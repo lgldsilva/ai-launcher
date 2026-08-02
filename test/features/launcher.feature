@@ -437,6 +437,44 @@ Feature: Launcher command contract
       claude
       """
 
+  Scenario: Emits --no-save-config when automatic config writes are disabled
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        save_config: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-save-config
+      claude
+      """
+
+  Scenario: Orders the save-config toggle after hide-config
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_flags:
+        hide_config: true
+        save_config: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --hide-config
+      --save-config
+      claude
+      """
+
   Scenario: Emits --fresh as an ai-memory run wrapper flag
     Given a launch configuration
       """

@@ -507,7 +507,7 @@ synonym for unset, so both forms are always emitted:
 
 | `jail_flags` key | Type | ai-jail flag emitted |
 | --- | --- | --- |
-| `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
+| `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `save_config` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
 | `docker` | tri-state bool | `--docker` when `true`, `--no-docker` when `false`. **Unset is not auto**: with no `jail_flags.docker` and the Docker permission off, the launcher still emits `--no-docker` |
 | `status_bar_style` | string (`dark` / `light` / `pastel`) | `--status-bar=STYLE` (suppresses the boolean `status_bar` forms) |
 | `browser` | string (`hard` / `soft` / `off`) | `--browser=hard` / `--browser=soft` / `--no-browser` |

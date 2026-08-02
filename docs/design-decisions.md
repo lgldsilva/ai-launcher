@@ -41,6 +41,17 @@ changelog, update the constants and the Gherkin contract in the same commit.
 asset formats (e.g. ai-jail publishes only linux-x86_64 and macos-aarch64).
 In exchange, we never carry sandbox code of our own.
 
+**Scope boundary.** `jail_flags` exposes only ai-jail *launch capabilities* —
+the toggles and mounts that shape the sandbox a launched agent runs in. The
+setup and diagnostic verbs stay out on purpose: `--init` / `--bootstrap`
+(create config and exit), `--clean` (discard the project `.ai-jail` for one
+run), `--dry-run`, `--verbose`, `--help`, `--version`. They are not ways to
+configure a launch; wiring them through the selection model would either
+contradict it (`--clean` fighting `hide_config`) or add noise no launch needs.
+Operators who want them can run ai-jail directly. Absorbing a new ai-jail
+release therefore starts by sorting its new flags into "launch capability"
+(add a `jail_flags` row) versus "setup/diagnostic verb" (leave out).
+
 ## Data-driven per-harness parameters
 
 **Decision.** Harness-specific flags are declared in the catalog

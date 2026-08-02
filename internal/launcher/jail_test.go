@@ -44,6 +44,7 @@ func TestBuildMapsEveryTriStateToggleInBothForms(t *testing.T) {
 		"--rlimits":      func(f *config.JailFlags) **bool { return &f.Rlimits },
 		"--status-bar":   func(f *config.JailFlags) **bool { return &f.StatusBar },
 		"--hide-config":  func(f *config.JailFlags) **bool { return &f.HideConfig },
+		"--save-config":  func(f *config.JailFlags) **bool { return &f.SaveConfig },
 	} {
 		var flags config.JailFlags
 		*toggle(&flags) = boolPtr(true)
