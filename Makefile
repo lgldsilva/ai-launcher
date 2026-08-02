@@ -20,7 +20,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0
 SHFMT ?= $(GO) run mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
 GORELEASER ?= $(GO) run github.com/goreleaser/goreleaser/v2@v2.13.0
 
-.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
+.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec sec-static sec-vuln test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
 
 build:
 	$(GO) build -buildvcs=false $(LDFLAGS) -o bin/ai-launcher ./cmd/ai-launcher
@@ -73,8 +73,19 @@ lint-dist:
 	$(SHFMT) -i 2 -ci -d install.sh
 	$(GORELEASER) check
 
-sec:
+# The two halves are separate targets because CI runs them as separate jobs:
+# a gosec finding and a vulnerable dependency are different failures with
+# different owners, and splitting them keeps the pinned versions here instead
+# of duplicated in the workflow.
+sec: sec-static sec-vuln
+
+# SAST. This is also what validates the #nosec annotations in the tree: an
+# annotation that no longer sits on a finding is dead weight, and one that hides
+# a real finding is only visible when the scanner actually runs.
+sec-static:
 	$(GOSEC) ./...
+
+sec-vuln:
 	$(GOVULNCHECK) ./...
 
 test-unit:

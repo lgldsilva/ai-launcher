@@ -72,6 +72,22 @@ jobs:
           command -v shellcheck >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y shellcheck; }
           make lint-dist
 
+  # SAST on our own code, next to govulncheck's scan of our dependencies. The
+  # tree carries #nosec annotations that assert a finding was reviewed; without
+  # the scanner in CI nothing ever checks that those assertions still hold.
+  # The Makefile owns the pinned gosec version, same reason as the coverage job.
+  gosec:
+    name: gosec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosec
+        run: make sec-static
+
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest
