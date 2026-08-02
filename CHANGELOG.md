@@ -13,6 +13,23 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — `--workstream-search` sends the workstream id upstream requires
+
+`ai-memory workstream-search` declares `--workstream-id` as a required
+argument. The launcher never sent it, so every search was refused by upstream's
+argument parser before it ran — the feature only ever worked by accident, and
+never from a plain shell.
+
+The id now comes from the new `--workstream-id` flag, or from
+`AI_MEMORY_WORKSTREAM_ID` when the search runs inside an agent this launcher
+started. With neither, the launcher says so itself instead of surfacing a usage
+block for a flag it did not document.
+
+**What you need to do:** nothing inside a managed agent. From a bare shell,
+pass `--workstream-id`. Note it is an *id*, not the workstream *name*
+`--workstream` takes: upstream provides no mapping between the two, so the
+launcher does not guess one.
+
 ### Changed — config schema 2.0 → 2.1
 
 `trusted_local_configs` in `~/.config/ai-launch/config.yaml` changed from a list
