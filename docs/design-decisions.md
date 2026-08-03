@@ -226,6 +226,23 @@ operator-added declarations.
   publish nor consume a central registry.
 - **Package managers.** The installer talks only to GitHub Releases;
   `npm`/`apt`/`brew` are out by decision.
+- **`ai-memory install-instructions` in the install flow.** `--install`
+  provisions binaries globally; `install-instructions` writes a routing block
+  into `CLAUDE.md` / `AGENTS.md` **in the current checkout**. Folding a
+  file-mutating step into a binary installer would be a surprise, so it stays
+  out until it gets its own flag and its own answer to "which file may it
+  touch". Nothing is blocked meanwhile — running the upstream command by hand
+  does the same thing.
+- **Two upstream questions we cannot answer from here.** Both need a live
+  upstream and are tracked as issues rather than pretended closed:
+  [#17](https://github.com/lgldsilva/ai-launcher/issues/17) — whether ai-jail
+  permits writes through a checkout-controlled `.ai-jail` symlink when the
+  launcher emits `--no-hide-config`; and
+  [#18](https://github.com/lgldsilva/ai-launcher/issues/18) — whether one
+  authenticated ai-memory token can resume or mutate a workstream under another
+  workspace/project when the launcher forwards repository-selected scope
+  fields. Neither is a launcher bug we can fix by composing a different argv;
+  both change what the launcher is allowed to forward if the answer is bad.
 
 ## Mistakes to avoid
 

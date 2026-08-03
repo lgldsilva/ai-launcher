@@ -592,6 +592,9 @@ Documentation and UI strings in this repository are **English**.
 | [docs/cicd.md](docs/cicd.md) | GitHub Actions pipeline, SonarCloud, and the release process |
 | [docs/test-strategy.md](docs/test-strategy.md) | Test pyramid, coverage gate, and the Gherkin contract suite |
 | [docs/remediation-plan.md](docs/remediation-plan.md) | Live tracker: audit findings against the ai-jail / ai-memory composition, their status, and the phased plan to close the open ones |
+| [docs/review-2026-07-30.md](docs/review-2026-07-30.md) | Historical: the external review that drove #19–#23, with each finding's outcome |
+| [docs/remediation-plan-2026-07-30.md](docs/remediation-plan-2026-07-30.md) | Historical: the PR-by-PR plan built from that review, and what each PR actually became |
+| [docs/handoff-2026-07-30.md](docs/handoff-2026-07-30.md) | Historical: what that work left unverified, and how each item was resolved |
 | [AGENTS.md](AGENTS.md) | Instructions for AI agents working in this repository |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, supported versions, and the ai-jail / ai-memory boundary |
 | [CHANGELOG.md](CHANGELOG.md) | Breaking changes and their migrations (per-release notes are on the releases page) |
