@@ -36,6 +36,16 @@ UI/execution packages into the gate.
   `refactor:`…), enforced by hook.
 - **Never commit or push directly to `main`.** Branch from an up-to-date
   `main`.
+- **A breaking change must say so in the squash commit** — `!` after the type
+  or a `BREAKING CHANGE:` footer. `autotag.yml` computes the next version from
+  those commits with `svu`, and GoReleaser generates the release notes from the
+  same log. v0.3.0 carried a config-schema break and an argv change under a
+  plain `feat(memory):` subject: it was tagged as a minor and its release notes
+  never mentioned either. The `CHANGELOG.md` entry has to land in the *same*
+  merge, not the one after — the tag is cut on push to `main`.
+- **One concern per PR.** v0.3.0 was six planned PRs squashed into one, which
+  is how the highest-value change of that week (the ai-jail 1.16 floor and the
+  Docker argv) ended up invisible in both the log and the release notes.
 - **Never** set `AI_STANDARDS_SKIP` or a variant without explicit human
   authorization — the hooks enforce coverage and quality automatically.
 
