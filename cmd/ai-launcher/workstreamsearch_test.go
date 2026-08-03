@@ -49,7 +49,7 @@ func TestWorkstreamSearchForwardsTheQueryToAiMemory(t *testing.T) {
 	record := stubMemoryRecordingArgv(t)
 	globalPath := writeSearchGlobal(t)
 
-	stdout, _, err := runCapture(t, "--config", globalPath,
+	stdout, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-1",
 		"--workstream-search", "why did we drop redis")
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -78,7 +78,8 @@ func TestWorkstreamSearchCarriesTheConfiguredEndpoint(t *testing.T) {
 	record := stubMemoryRecordingArgv(t)
 	globalPath := writeSearchGlobal(t)
 
-	if _, _, err := runCapture(t, "--config", globalPath, "--workstream-search", "redis"); err != nil {
+	if _, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-1",
+		"--workstream-search", "redis"); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 	got := readRecord(t, record)
@@ -96,7 +97,8 @@ func TestWorkstreamSearchForwardsLimitAndJSONOnlyWhenAsked(t *testing.T) {
 	t.Run("unset sends neither", func(t *testing.T) {
 		record := stubMemoryRecordingArgv(t)
 		globalPath := writeSearchGlobal(t)
-		if _, _, err := runCapture(t, "--config", globalPath, "--workstream-search", "redis"); err != nil {
+		if _, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-1",
+			"--workstream-search", "redis"); err != nil {
 			t.Fatalf("run() error = %v", err)
 		}
 		got := readRecord(t, record)
@@ -108,7 +110,7 @@ func TestWorkstreamSearchForwardsLimitAndJSONOnlyWhenAsked(t *testing.T) {
 	t.Run("set sends both", func(t *testing.T) {
 		record := stubMemoryRecordingArgv(t)
 		globalPath := writeSearchGlobal(t)
-		if _, _, err := runCapture(t, "--config", globalPath,
+		if _, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-1",
 			"--workstream-search", "redis", "--limit", "50", "--json"); err != nil {
 			t.Fatalf("run() error = %v", err)
 		}
@@ -128,7 +130,8 @@ func TestWorkstreamSearchIsNotJailWrapped(t *testing.T) {
 	record := stubMemoryRecordingArgv(t)
 	globalPath := writeSearchGlobal(t)
 
-	if _, _, err := runCapture(t, "--config", globalPath, "--workstream-search", "redis"); err != nil {
+	if _, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-1",
+		"--workstream-search", "redis"); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 	if got := readRecord(t, record); strings.Contains(got, "ai-jail") {
@@ -141,12 +144,105 @@ func TestWorkstreamSearchReportsAMissingAiMemory(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	globalPath := writeSearchGlobal(t)
 
-	_, _, err := runCapture(t, "--config", globalPath, "--workstream-search", "redis")
+	_, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-1",
+		"--workstream-search", "redis")
 	if err == nil {
 		t.Fatal("run() = nil; a missing ai-memory must be reported")
 	}
 	if !strings.Contains(err.Error(), "ai-memory") || !strings.Contains(err.Error(), "--install") {
 		t.Errorf("error = %v; want the tool name and the way to get it", err)
+	}
+}
+
+// The contract with upstream, not just with our own stub: ai-memory's
+// workstream-search declares --workstream-id as a required argument, so a
+// command built without it is refused by the argument parser before the query
+// is ever run. The launcher shipped exactly that command, and every test here
+// passed because the stub accepts any argv — they asserted what the launcher
+// emits, never that upstream would take it.
+func TestWorkstreamSearchAlwaysCarriesTheWorkstreamID(t *testing.T) {
+	record := stubMemoryRecordingArgv(t)
+	globalPath := writeSearchGlobal(t)
+
+	if _, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-42",
+		"--workstream-search", "redis"); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	got := readRecord(t, record)
+	for _, want := range []string{"ARG --workstream-id", "ARG ws-42"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv = %q; missing %q — upstream requires it", got, want)
+		}
+	}
+}
+
+// ai-memory exports AI_MEMORY_WORKSTREAM_ID into the agents it manages, and the
+// launcher does not strip it, so an agent started from here can search its own
+// ledger with no extra argument. The flag stays the way in from a bare shell.
+func TestWorkstreamSearchResolvesTheIDFromTheEnvironment(t *testing.T) {
+	t.Run("inherited when the flag is absent", func(t *testing.T) {
+		record := stubMemoryRecordingArgv(t)
+		globalPath := writeSearchGlobal(t)
+		t.Setenv("AI_MEMORY_WORKSTREAM_ID", "ws-from-env")
+
+		if _, _, err := runCapture(t, "--config", globalPath, "--workstream-search", "redis"); err != nil {
+			t.Fatalf("run() error = %v", err)
+		}
+		if got := readRecord(t, record); !strings.Contains(got, "ARG ws-from-env") {
+			t.Errorf("argv = %q; the inherited workstream must be used", got)
+		}
+	})
+
+	t.Run("the flag wins over the environment", func(t *testing.T) {
+		record := stubMemoryRecordingArgv(t)
+		globalPath := writeSearchGlobal(t)
+		t.Setenv("AI_MEMORY_WORKSTREAM_ID", "ws-from-env")
+
+		if _, _, err := runCapture(t, "--config", globalPath, "--workstream-id", "ws-explicit",
+			"--workstream-search", "redis"); err != nil {
+			t.Fatalf("run() error = %v", err)
+		}
+		got := readRecord(t, record)
+		if !strings.Contains(got, "ARG ws-explicit") || strings.Contains(got, "ARG ws-from-env") {
+			t.Errorf("argv = %q; the explicit id must win", got)
+		}
+	})
+}
+
+// With neither source the launcher answers for itself instead of letting
+// upstream's argument parser print a usage block about a flag ai-launcher never
+// documented.
+func TestWorkstreamSearchWithoutAnIDIsALauncherError(t *testing.T) {
+	stubMemoryRecordingArgv(t)
+	globalPath := writeSearchGlobal(t)
+	t.Setenv("AI_MEMORY_WORKSTREAM_ID", "")
+
+	_, _, err := runCapture(t, "--config", globalPath, "--workstream-search", "redis")
+	if err == nil {
+		t.Fatal("run() = nil; a search with no workstream must be refused")
+	}
+	for _, want := range []string{"--workstream-id", "AI_MEMORY_WORKSTREAM_ID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v; want it to name %q", err, want)
+		}
+	}
+}
+
+// --workstream carries the name `ai-memory run --workstream` selects by;
+// workstream-search wants an id, and upstream maps neither to the other.
+// Treating the name as an id would silently search the wrong ledger.
+func TestWorkstreamSearchDoesNotReuseTheWorkstreamName(t *testing.T) {
+	stubMemoryRecordingArgv(t)
+	globalPath := writeSearchGlobal(t)
+	t.Setenv("AI_MEMORY_WORKSTREAM_ID", "")
+
+	_, _, err := runCapture(t, "--config", globalPath, "--workstream", "refactor-auth",
+		"--workstream-search", "redis")
+	if err == nil {
+		t.Fatal("run() = nil; a workstream name is not a workstream id")
+	}
+	if !strings.Contains(err.Error(), "--workstream-id") {
+		t.Errorf("error = %v; want the id flag named", err)
 	}
 }
 

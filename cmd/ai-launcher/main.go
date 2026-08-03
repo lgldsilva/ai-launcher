@@ -44,6 +44,11 @@ const (
 	// aiMemoryCommand is the upstream memory CLI, resolved on PATH for the
 	// read-only surfaces this binary forwards to it.
 	aiMemoryCommand = "ai-memory"
+	// memoryWorkstreamIDEnv is the variable ai-memory exports into a managed
+	// child so it can address its own workstream. The launcher does not own it
+	// (it is absent from ownedMemoryEnvKeys), so it survives into an agent
+	// launched from here and is the default for --workstream-search.
+	memoryWorkstreamIDEnv = "AI_MEMORY_WORKSTREAM_ID"
 )
 
 // workstreamSearchTimeout bounds the ai-memory query so a hung or unreachable
@@ -79,6 +84,7 @@ type cliOptions struct {
 	profile, saveProfile           string
 	deleteProfile                  string
 	workstreamSearch               string
+	workstreamID                   string
 	searchLimit                    int
 	searchJSON                     bool
 	ssh, gh, docker, gpu           bool
@@ -141,6 +147,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.listProfiles, "list-profiles", false, "list the profiles saved in the global config and exit")
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
 	flags.StringVar(&o.workstreamSearch, "workstream-search", "", "search the ai-memory workstream ledger for this query and exit")
+	flags.StringVar(&o.workstreamID, "workstream-id", "", "workstream to search with --workstream-search (defaults to $AI_MEMORY_WORKSTREAM_ID)")
 	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search (ai-memory's own default when unset)")
 	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search results as JSON")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
@@ -704,12 +711,22 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, out,
 // against the ai-memory server over HTTP, in the same class as --doctor: no
 // harness runs, nothing touches the checkout, and paying for a sandbox would
 // only mean the operator's terminal cannot see the answer.
+//
+// The workstream is addressed by id, not by the name --workstream takes:
+// upstream's `run --workstream` selects by name while `workstream-search`
+// requires --workstream-id, and no subcommand maps one to the other. The id is
+// resolved by resolveWorkstreamID and always emitted, so the argv says which
+// ledger was read instead of depending on what the child inherits.
 func searchWorkstream(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
 	memoryPath, err := exec.LookPath(aiMemoryCommand)
 	if err != nil {
 		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
 	}
-	args := []string{"workstream-search"}
+	workstreamID, err := resolveWorkstreamID(opts)
+	if err != nil {
+		return err
+	}
+	args := []string{"workstream-search", "--workstream-id", workstreamID}
 	if opts.searchLimit > 0 {
 		args = append(args, "--limit", strconv.Itoa(opts.searchLimit))
 	}
@@ -735,6 +752,29 @@ func searchWorkstream(opts *cliOptions, global config.Global, home string, out, 
 		return fmt.Errorf("workstream-search: %w", err)
 	}
 	return nil
+}
+
+// resolveWorkstreamID answers which workstream a search reads, preferring the
+// explicit flag over the inherited environment.
+//
+// Without it the launcher forwarded a query with no --workstream-id at all and
+// upstream's own argument parser refused the command, so the feature failed
+// outside a managed session — which is the session it exists to serve. Falling
+// back to the environment keeps the zero-argument form working for an agent
+// this launcher started; the flag is what makes it usable from a bare shell.
+//
+// --workstream is deliberately not consulted: it carries the workstream *name*
+// that `ai-memory run --workstream` selects by, and upstream offers no way to
+// turn a name into the id this subcommand wants. Guessing they are the same
+// would send a search to a workstream the operator did not ask for.
+func resolveWorkstreamID(opts *cliOptions) (string, error) {
+	if id := strings.TrimSpace(opts.workstreamID); id != "" {
+		return id, nil
+	}
+	if id := strings.TrimSpace(os.Getenv(memoryWorkstreamIDEnv)); id != "" {
+		return id, nil
+	}
+	return "", fmt.Errorf("--workstream-search needs a workstream id: pass --workstream-id, or run it from an agent this launcher started, where %s is set", memoryWorkstreamIDEnv)
 }
 
 // loadLocalSelection loads the workspace config and layers the requested
