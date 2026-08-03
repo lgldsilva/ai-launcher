@@ -83,7 +83,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          # gosec v2.28.0 requires go >= 1.25.8; go.mod pins 1.25.0 and
+          # setup-go sets GOTOOLCHAIN=local, so `go run` cannot fetch a newer
+          # toolchain by itself. Same shape as the dist job's goreleaser pin.
+          go-version: "1.25.8"
           cache: true
       - name: gosec
         run: make sec-static
