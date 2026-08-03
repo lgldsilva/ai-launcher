@@ -30,6 +30,25 @@ pass `--workstream-id`. Note it is an *id*, not the workstream *name*
 `--workstream` takes: upstream provides no mapping between the two, so the
 launcher does not guess one.
 
+## [0.4.0] — 2026-08-02
+
+### Added — `jail_flags.save_config` controls ai-jail's automatic config writes
+
+`jail_flags.save_config` is a new tri-state toggle mapping ai-jail v1.16's
+`--save-config` / `--no-save-config`: it turns ai-jail's automatic `.ai-jail`
+writes on or off. Unset leaves the ai-jail default in charge, `true` forces
+`--save-config`, `false` forces `--no-save-config`. It is emitted right after
+`hide_config`, its sibling for the same file.
+
+**What you need to do:** nothing. This is additive; existing configurations are
+unaffected and keep ai-jail's default behavior.
+
+## [0.3.0] — 2026-08-01
+
+Three of the four entries below are breaking. They shipped in the v0.3.0 tag,
+but this file only reached `main` afterwards, so the generated release notes for
+v0.3.0 do not mention any of them — that is what this section exists to correct.
+
 ### Changed — config schema 2.0 → 2.1
 
 `trusted_local_configs` in `~/.config/ai-launch/config.yaml` changed from a list
@@ -84,19 +103,9 @@ already handled. Catalog params choose the model the harness runs as, and a
 **What you need to do:** if a repository you trust ships `param_values`, pass
 `--param name=value` once, or `--save` the selection.
 
-### Added — `jail_flags.save_config` controls ai-jail's automatic config writes
-
-`jail_flags.save_config` is a new tri-state toggle mapping ai-jail v1.16's
-`--save-config` / `--no-save-config`: it turns ai-jail's automatic `.ai-jail`
-writes on or off. Unset leaves the ai-jail default in charge, `true` forces
-`--save-config`, `false` forces `--no-save-config`. It is emitted right after
-`hide_config`, its sibling for the same file.
-
-**What you need to do:** nothing. This is additive; existing configurations are
-unaffected and keep ai-jail's default behavior.
-
-## Released
+## Earlier releases
 
 See the [releases page](https://github.com/lgldsilva/ai-launcher/releases) for
-every tagged version from `v0.1.0` onward, with generated notes grouped into
-Features / Fixes / Others.
+every tagged version from `v0.1.0` to `v0.2.10`, with generated notes grouped
+into Features / Fixes / Others. Nothing before v0.3.0 asked anything of the
+reader on upgrade, which is why none of it is repeated here.
