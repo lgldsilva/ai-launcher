@@ -1,5 +1,10 @@
 # Implementation plan — 2026-07-30 review
 
+> **Historical document. Kept as written; the plan is not edited.**
+>
+> Committed on 2026-08-02 together with `review-2026-07-30.md` and
+> `handoff-2026-07-30.md`. Outcome of every PR below is recorded at the bottom.
+
 > **Status, 2026-07-30: implemented, unverified.** Every PR below except PR6
 > exists as a commit on the branch stack described in
 > `docs/handoff-2026-07-30.md`. None of it was compiled or tested — the
@@ -474,3 +479,26 @@ ai-launcher --doctor                          # must flag ai-jail < 1.16.0
 ai-launcher --agent claude --dry-run          # must NOT carry --docker (and must carry --no-docker under option (a))
 ai-launcher --agent claude --docker --dry-run # must carry --docker
 ```
+
+---
+
+## Outcome — 2026-08-02
+
+What actually shipped, verified against `main` at `4c3688b`:
+
+| PR | Landed as | Note |
+| --- | --- | --- |
+| 1 | #19 (v0.2.9) | with issues #12–#16 as tracking |
+| 2, 3, 4, 5, 7, 9 | #22 (v0.3.0) | **all six squashed into one PR** titled `feat(memory): …`, against this plan's "small sequential PRs, each green on CI on its own" |
+| 6 | — | resolved without a code change: ai-memory 1.21.0 accepts all eight harnesses |
+| 8 + 10 | #20 | merged three minutes *after* the v0.3.0 tag, so v0.3.0's release notes carry the schema break with no changelog |
+
+Two things this plan asked for and did not get:
+
+- **Step 0's `make test-all` before merging.** The suite is green today, but the
+  argv rewrites in PR 3 and the new surface in PR 7 were merged without the
+  manual smoke this plan lists. PR 7 shipped broken as a result: upstream also
+  requires `--workstream-id`, which the stub-based tests could not reveal.
+- **One PR per concern.** #22 buried the highest-value security change (the
+  1.16 floor and the docker argv) inside a commit titled `feat(memory)`, where
+  neither the log nor the generated release notes show it.
