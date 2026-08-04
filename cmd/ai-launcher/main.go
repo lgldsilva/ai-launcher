@@ -1281,6 +1281,8 @@ func launchFailureHint(errText string) string {
 		return "hint: memory server TLS failed — check memory_server_url (expect *.internal.lgldsilva.com.br) or use --no-memory"
 	case strings.Contains(errText, "canonicalizing managed run cwd") || strings.Contains(errText, "Operation not permitted"):
 		return "hint: ai-memory inside the jail failed on this cwd — try --no-memory (keep Jail) or run from a path under $HOME"
+	case strings.Contains(errText, "keychain"):
+		return "hint: the agent could not access the macOS keychain inside the jail — try launching from a path under $HOME, or run with --no-jail"
 	default:
 		return "hint: try --no-memory if the memory server fails, or --no-jail if the project is on an external volume"
 	}
@@ -1359,7 +1361,11 @@ func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Wr
 	for _, mount := range auto {
 		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), a home symlink target outside $HOME\n", mount.Path, mount.Mode)
 	}
-	cfg.Mounts = launcher.MergeAutoMounts(cfg.Mounts, auto)
+	required := launcher.AgentRequiredMounts(cfg.Agent, home, runtime.GOOS)
+	for _, mount := range required {
+		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), required by %s\n", mount.Path, mount.Mode, cfg.Agent.Command)
+	}
+	cfg.Mounts = launcher.MergeAutoMounts(cfg.Mounts, append(auto, required...))
 	if cfg.JailFlags.HideConfig != nil {
 		return cfg
 	}
