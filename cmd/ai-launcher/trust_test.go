@@ -304,10 +304,10 @@ func TestLocalConfigSymlinkedProjectJailRequiresExplicitConsent(t *testing.T) {
 	}
 
 	// --no-local-config is the explicit opt-out that bypasses the checkout file.
-	stdout, stderr, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+	_, _, err = runCapture(t, "--config", globalPath, "--local-config", localPath,
 		"--no-local-config", "--no-jail", "--dry-run")
 	if err != nil {
-		t.Fatalf("run() error = %v; stderr = %q; stdout = %q; --no-local-config must bypass symlink refusal", err, stderr, stdout)
+		t.Fatalf("run() error = %v; --no-local-config must bypass symlink refusal", err)
 	}
 }
 
