@@ -48,7 +48,7 @@ const DefaultMemoryServerURL = ""
 // where the user never sees it. This list is the single source of truth: a
 // catalog agent either resolves to one of these (directly or through
 // Memory.RunHarness) or declares SupportsMemory false.
-var memoryRunHarnesses = []string{"claude", "codex", "opencode", "pi", "crush", "omp", "kimi", "grok"}
+var memoryRunHarnesses = []string{"claude", "codex", "opencode", "pi", "crush", "omp", "kimi", "grok", "antigravity"}
 
 // createTempFile is an indirection over os.CreateTemp so tests can force the
 // temporary-file creation step to fail deterministically — a chmod-based
@@ -578,9 +578,9 @@ func DefaultGlobal() Global {
 		MemoryServerURL: DefaultMemoryServerURL,
 		Agents: []Agent{
 			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: memoryFor("claude-code")},
-			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: memoryFor("codex")},
+			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: true, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: memoryFor("codex")},
 			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: memoryFor("opencode")},
-			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: memoryFor(kimiCodeID)},
+			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: true, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: memoryFor(kimiCodeID)},
 			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
 				Assets: map[string]string{
@@ -591,26 +591,26 @@ func DefaultGlobal() Global {
 				},
 				Binary: "kilo",
 			}},
-			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
-			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: false, SupportsYolo: false, Description: "Antigravity CLI", Memory: memoryFor(antigravID)},
+			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI", YoloFlag: "--dangerously-skip-permissions"},
+			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: true, SupportsYolo: true, Description: "Antigravity CLI", YoloFlag: "--dangerously-skip-permissions", Memory: memoryForHarness("antigravity")},
 			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
-			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
+			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: true, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: memoryFor("omp")},
-			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: memoryFor("cursor")},
-			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: false, Description: "Grok CLI", Memory: memoryFor("grok")},
+			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: true, Description: "Cursor Agent CLI", YoloFlag: "--yolo", Memory: memoryFor("cursor")},
+			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: true, Description: "Grok CLI", YoloFlag: "--always-approve", Memory: memoryFor("grok")},
 			{Name: "Zero", Command: "zero", SupportsMemory: false, SupportsYolo: false, Description: "Zero agent CLI", Memory: memoryFor("zero")},
-			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: false, Description: "Devin CLI", Memory: memoryFor("devin")},
+			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: true, Description: "Devin CLI", YoloFlag: "--permission-mode dangerous", Memory: memoryFor("devin")},
 			// oc is a local preset TUI that ends up launching opencode; ai-memory
 			// only knows the harness name "opencode", so RunHarness remaps it.
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: memoryForHarness("opencode")},
-			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: memoryFor(geminiCLIID)},
-			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
-			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI"},
+			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: true, Description: "Google Gemini CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: memoryFor(geminiCLIID)},
+			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Alibaba Qwen Code CLI", YoloFlag: "--yolo"},
+			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI", YoloFlag: "--yes-always"},
 			{Name: "Goose", Command: "goose", SupportsMemory: false, SupportsYolo: false, Description: "Block Goose CLI"},
 			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: false, SupportsYolo: false, Description: "Kiro CLI"},
-			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: false, SupportsYolo: true, Description: "OpenClaw CLI", Memory: mcpOnlyMemoryIntegration("openclaw")},
-			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: false, SupportsYolo: false, Description: "Hermes Agent CLI"},
-			{Name: "Cline", Command: "cline", SupportsMemory: false, SupportsYolo: false, Description: "Cline CLI"},
+			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: false, SupportsYolo: false, Description: "OpenClaw CLI", Memory: mcpOnlyMemoryIntegration("openclaw")},
+			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: false, SupportsYolo: true, Description: "Hermes Agent CLI", YoloFlag: "--yolo"},
+			{Name: "Cline", Command: "cline", SupportsMemory: false, SupportsYolo: true, Description: "Cline CLI", YoloFlag: "--yolo"},
 		},
 		Tools: []Tool{
 			{
