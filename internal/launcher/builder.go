@@ -19,12 +19,12 @@ import (
 // the composed argv (`ai-memory run <harness>`) and probed on PATH by the
 // validator. The literal is locked byte-for-byte by the Gherkin contract
 // suite, so every emission shares this single constant.
-const aiMemoryCommand = "ai-memory"
+const aiMemoryCommand = config.AIMemoryCommand
 
 // userHomeDir and isWindows abstract the platform lookups so tests can
 // exercise the managed ai-memory native runner path for any target platform.
 var userHomeDir = os.UserHomeDir
-var isWindows = func() bool { return runtime.GOOS == "windows" }
+var isWindows = func() bool { return runtime.GOOS == config.PlatformWindows }
 
 // runtimeGOOS mirrors runtime.GOOS so tests can simulate macOS behavior.
 var runtimeGOOS = func() string { return runtime.GOOS }
@@ -123,7 +123,7 @@ func AgentRequiredMounts(agent config.Agent, home string, goos string) []config.
 	case "cursor-agent":
 		dir := filepath.Join(home, ".cursor")
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return []config.Mount{{Path: dir, Mode: "rw"}}
+			return []config.Mount{{Path: dir, Mode: config.MountReadWrite}}
 		}
 	}
 	return nil
@@ -142,7 +142,7 @@ func managedNativeRunnerPath(home string) string {
 		}
 		home = resolved
 	}
-	path := filepath.Join(home, ".local", "share", "ai-launcher", "bin", aiMemoryCommand)
+	path := filepath.Join(home, ".local", "share", config.LauncherName, "bin", aiMemoryCommand)
 	if isWindows() {
 		path += ".exe"
 	}
@@ -350,7 +350,7 @@ func appendYoloFlag(command []string, cfg LaunchConfig) []string {
 // flag, the declarative jail capability flags, and the flags derived from the
 // enabled permissions and configured mounts.
 func appendJailArgs(command []string, cfg LaunchConfig) []string {
-	command = append(command, "ai-jail")
+	command = append(command, config.AIJailCommand)
 	if cfg.JailExec {
 		// --exec is ai-jail's programmatic mode: direct exec without the PTY
 		// proxy or status bar. Interactive TUI launches leave the ai-jail
@@ -366,7 +366,7 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 		if path == "" {
 			continue
 		}
-		if strings.EqualFold(mount.Mode, "ro") || strings.EqualFold(mount.Mode, "read-only") {
+		if strings.EqualFold(mount.Mode, config.MountReadOnly) || strings.EqualFold(mount.Mode, config.MountReadOnlyLabel) {
 			command = append(command, "--map", path)
 		} else {
 			command = append(command, "--rw-map", path)
@@ -422,7 +422,7 @@ func appendDockerDecision(command []string, cfg LaunchConfig) []string {
 		}
 		return append(command, "--no-docker")
 	}
-	if cfg.Permissions["docker"] {
+	if cfg.Permissions[config.PermissionDocker] {
 		return append(command, "--docker")
 	}
 	return append(command, "--no-docker")
@@ -448,15 +448,15 @@ type jailPermission struct {
 // emission order.
 func jailPermissions() []jailPermission {
 	return []jailPermission{
-		{id: "ssh", flag: "--ssh"},
-		{id: "gh", mountHome: ".config/gh"},
-		{id: "gpu", flag: "--gpu", override: func(f config.JailFlags) *bool { return f.GPU }},
-		{id: "display", flag: "--display", override: func(f config.JailFlags) *bool { return f.Display }},
-		{id: "pictures", flag: "--pictures"},
-		{id: "tailscale", flag: "--tailscale", override: func(f config.JailFlags) *bool { return f.Tailscale }},
-		{id: "systemd-user", flag: "--systemd-user"},
-		{id: "mise", flag: "--mise", override: func(f config.JailFlags) *bool { return f.Mise }},
-		{id: "worktree", flag: "--worktree", override: func(f config.JailFlags) *bool { return f.Worktree }},
+		{id: config.PermissionSSH, flag: "--ssh"},
+		{id: config.PermissionGitHub, mountHome: ".config/gh"},
+		{id: config.PermissionGPU, flag: "--gpu", override: func(f config.JailFlags) *bool { return f.GPU }},
+		{id: config.PermissionDisplay, flag: "--display", override: func(f config.JailFlags) *bool { return f.Display }},
+		{id: config.PermissionPictures, flag: "--pictures"},
+		{id: config.PermissionTailscale, flag: "--tailscale", override: func(f config.JailFlags) *bool { return f.Tailscale }},
+		{id: config.PermissionSystemd, flag: "--systemd-user"},
+		{id: config.PermissionMise, flag: "--mise", override: func(f config.JailFlags) *bool { return f.Mise }},
+		{id: config.PermissionWorktree, flag: "--worktree", override: func(f config.JailFlags) *bool { return f.Worktree }},
 	}
 }
 
@@ -503,11 +503,11 @@ func jailToggles(flags config.JailFlags) []jailToggle {
 	return []jailToggle{
 		{name: "lockdown", value: flags.Lockdown},
 		{name: "private-home", value: flags.PrivateHome},
-		{name: "tailscale", value: flags.Tailscale},
-		{name: "gpu", value: flags.GPU},
-		{name: "display", value: flags.Display},
-		{name: "mise", value: flags.Mise},
-		{name: "worktree", value: flags.Worktree},
+		{name: config.PermissionTailscale, value: flags.Tailscale},
+		{name: config.PermissionGPU, value: flags.GPU},
+		{name: config.PermissionDisplay, value: flags.Display},
+		{name: config.PermissionMise, value: flags.Mise},
+		{name: config.PermissionWorktree, value: flags.Worktree},
 		{name: "landlock", value: flags.Landlock},
 		{name: "seccomp", value: flags.Seccomp},
 		{name: "rlimits", value: flags.Rlimits},
@@ -630,7 +630,7 @@ func (i Issue) Error() string { return fmt.Sprintf("%s: %s", i.Code, i.Message) 
 // the only constrained platform is Windows, where ai-jail does not exist:
 // the jail and every permission that requires it are disabled.
 func ConstrainToPlatform(cfg LaunchConfig, goos string, permissions []config.Permission) (LaunchConfig, []Issue) {
-	if goos != "windows" {
+	if goos != config.PlatformWindows {
 		return cfg, nil
 	}
 	hadJail := cfg.UseJail
@@ -710,7 +710,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	onWindows := goos == "windows"
+	onWindows := goos == config.PlatformWindows
 	issues = append(issues, agentIssues(cfg, lookPath)...)
 	issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
 	issues = append(issues, allowTCPPortIssues(cfg)...)
@@ -788,7 +788,7 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 		if onWindows {
 			return []Issue{{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true}}
 		}
-		if _, err := lookPath("ai-jail"); err != nil {
+		if _, err := lookPath(config.AIJailCommand); err != nil {
 			return []Issue{{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"}}
 		}
 		return nil
@@ -949,10 +949,10 @@ func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Iss
 // platform does not support.
 func permissionIssues(cfg LaunchConfig, goos string, catalog []config.Permission) []Issue {
 	issues := make([]Issue, 0)
-	if cfg.Permissions["ssh"] || cfg.Permissions["gh"] || cfg.Permissions["docker"] || cfg.Permissions["gpu"] {
+	if cfg.Permissions[config.PermissionSSH] || cfg.Permissions[config.PermissionGitHub] || cfg.Permissions[config.PermissionDocker] || cfg.Permissions[config.PermissionGPU] {
 		if !cfg.UseJail {
 			issue := Issue{Code: "permission-without-jail", Message: "ssh, gh, docker, and gpu permissions require ai-jail"}
-			if goos == "windows" {
+			if goos == config.PlatformWindows {
 				issue.Message = "ssh, gh, docker, and gpu permissions require ai-jail, which is unavailable on Windows; they will be ignored"
 				issue.Warning = true
 			}

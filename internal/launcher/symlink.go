@@ -36,6 +36,11 @@ func HomeSymlinkMounts(home string) ([]config.Mount, []RefusedMount) {
 	if err != nil {
 		return nil, nil
 	}
+	targets, refused := symlinkTargetsOutsideHome(home, canonicalHome, entries)
+	return nestedFreeMounts(targets), refused
+}
+
+func symlinkTargetsOutsideHome(home, canonicalHome string, entries []os.DirEntry) ([]string, []RefusedMount) {
 	targets := make([]string, 0, len(entries))
 	refused := make([]RefusedMount, 0)
 	for _, entry := range entries {
@@ -52,7 +57,7 @@ func HomeSymlinkMounts(home string) ([]config.Mount, []RefusedMount) {
 		}
 	}
 	sort.Slice(refused, func(i, j int) bool { return refused[i].Link < refused[j].Link })
-	return nestedFreeMounts(targets), refused
+	return targets, refused
 }
 
 // symlinkMountTarget classifies one hidden home entry: it returns the
@@ -181,7 +186,7 @@ func nestedFreeMounts(targets []string) []config.Mount {
 		if coveredByMounts(target, mounts) {
 			continue
 		}
-		mounts = append(mounts, config.Mount{Path: target, Mode: "rw"})
+		mounts = append(mounts, config.Mount{Path: target, Mode: config.MountReadWrite})
 	}
 	return mounts
 }
@@ -221,7 +226,7 @@ func coveredByWritableMounts(path string, mounts []config.Mount) bool {
 // is not an explicit read-only mode is read-write, matching argv emission.
 func mountWritable(mount config.Mount) bool {
 	mode := strings.ToLower(strings.TrimSpace(mount.Mode))
-	return mode != "ro" && mode != "read-only"
+	return mode != config.MountReadOnly && mode != config.MountReadOnlyLabel
 }
 
 func coveredByMountsWhere(path string, mounts []config.Mount, accept func(config.Mount) bool) bool {

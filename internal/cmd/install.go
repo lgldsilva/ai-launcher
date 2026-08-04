@@ -22,7 +22,7 @@ import (
 
 // isWindows reports whether the host is Windows; it is a variable so tests
 // can stub platform detection while running on Linux.
-var isWindows = func() bool { return runtime.GOOS == "windows" }
+var isWindows = func() bool { return runtime.GOOS == config.PlatformWindows }
 
 // nativeRunnerManagedPath is the launcher's managed install location for the
 // ai-memory native binary. The launcher exports it as AI_MEMORY_NATIVE_BIN so
@@ -33,7 +33,13 @@ const nativeRunnerManagedPath = "~/.local/share/ai-launcher/bin/ai-memory"
 // aiMemoryCommand is the catalog command of the ai-memory tool, which the
 // installer treats specially: it also gets the managed native runner and is
 // implicitly selected when a selected agent declares a memory integration.
-const aiMemoryCommand = "ai-memory"
+const aiMemoryCommand = config.AIMemoryCommand
+
+const warningLabel = "warning:"
+
+func warnf(errOut io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(errOut, warningLabel+" "+format+"\n", args...)
+}
 
 // configFileFlag is the ai-memory CLI flag that points install-mcp /
 // install-hooks at the config file to write.
@@ -146,7 +152,7 @@ func (l *installLog) Close() error {
 func InstallConfigured(global config.Global, selected string, home string, force bool, out, errOut io.Writer) error {
 	trace, logErr := newInstallLog(home)
 	if logErr != nil {
-		_, _ = fmt.Fprintln(errOut, "warning:", logErr)
+		warnf(errOut, "%v", logErr)
 		trace = &installLog{logger: log.New(io.Discard, "", log.LstdFlags)}
 	}
 	defer func() { _ = trace.Close() }()
@@ -325,7 +331,7 @@ func installWithoutRecipe(client *installer.Installer, target installTarget, sel
 	}
 	err := fmt.Errorf("%s: not installed and no GitHub release recipe is configured", target.Name)
 	if selected == "" {
-		_, _ = fmt.Fprintln(errOut, "warning:", err)
+		warnf(errOut, "%v", err)
 		return "", nil
 	}
 	trace.Printf("target missing without recipe name=%q", target.Name)
@@ -384,7 +390,7 @@ func toolInstallTarget(tool config.Tool) installTarget {
 // appendSelectedTarget appends target to result when it matches the selected
 // filter; ai-jail is skipped on Windows because the sandbox is Unix-only.
 func appendSelectedTarget(result *[]installTarget, target installTarget, selected string) {
-	if isWindows() && target.Command == "ai-jail" {
+	if isWindows() && target.Command == config.AIJailCommand {
 		return
 	}
 	if selected == "" || target.Command == selected || target.Name == selected || containsString(target.Aliases, selected) {

@@ -24,7 +24,13 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
-const maxDownloadSize int64 = 512 << 20
+const (
+	maxDownloadSize        int64 = 512 << 20
+	pathSeparator                = "/"
+	namedErrorFormat             = "%s: %w"
+	checksumMismatchFormat       = "sha256 mismatch: expected %s, got %s"
+	executableSuffix             = ".exe"
+)
 
 // requestTimeout bounds a single release query or asset download. It matches
 // the self-update flow's own deadline: both fetch the same kind of artifact
@@ -99,7 +105,7 @@ func New(homeDir string) *Installer {
 // the current platform. When force is false and the recorded install already
 // matches the latest release it is a no-op returning Status "current".
 func (i *Installer) Install(ctx context.Context, name, command, configuredPath string, release *config.GitHubRelease, force bool) (Result, error) {
-	assetPattern, failure, err := validateInstallInputs(name, command, release, i.platform())
+	assetPattern, failure, err := validateReleaseRecipe(name, command, release, i.platform())
 	if err != nil {
 		return failure, err
 	}
@@ -136,10 +142,10 @@ func (i *Installer) Install(ctx context.Context, name, command, configuredPath s
 	return Result{Name: name, Version: latest.TagName, Path: target, Status: "installed"}, nil
 }
 
-// validateInstallInputs checks the release recipe and command, returning the
+// validateReleaseRecipe checks the release recipe and command, returning the
 // asset pattern for platform. On failure it also returns the exact Result the
 // caller must report, since each validation failure maps to a distinct one.
-func validateInstallInputs(name, command string, release *config.GitHubRelease, platform string) (string, Result, error) {
+func validateReleaseRecipe(name, command string, release *config.GitHubRelease, platform string) (string, Result, error) {
 	if release == nil {
 		return "", Result{Name: name, Status: "unconfigured"}, fmt.Errorf("%s has no GitHub release recipe", name)
 	}
@@ -165,11 +171,11 @@ func (i *Installer) resolveInstall(ctx context.Context, name, command, configure
 	}
 	asset, err := selectAsset(latest.Assets, assetPattern)
 	if err != nil {
-		return releaseResponse{}, Asset{}, "", fmt.Errorf("%s: %w", name, err)
+		return releaseResponse{}, Asset{}, "", fmt.Errorf(namedErrorFormat, name, err)
 	}
 	target, err := i.targetPath(configuredPath, command)
 	if err != nil {
-		return releaseResponse{}, Asset{}, "", fmt.Errorf("%s: %w", name, err)
+		return releaseResponse{}, Asset{}, "", fmt.Errorf(namedErrorFormat, name, err)
 	}
 	return latest, asset, target, nil
 }
@@ -213,7 +219,7 @@ func (i *Installer) InstallSource(ctx context.Context, name, command, configured
 	}
 	target, err := i.targetPath(configuredPath, command)
 	if err != nil {
-		return Result{Name: name}, fmt.Errorf("%s: %w", name, err)
+		return Result{Name: name}, fmt.Errorf(namedErrorFormat, name, err)
 	}
 	data, err := i.download(ctx, Asset{Name: sourceURL, BrowserDownloadURL: sourceURL})
 	if err != nil {
@@ -260,17 +266,17 @@ func (i *Installer) goarch() string {
 }
 
 func (i *Installer) latestRelease(ctx context.Context, repository string) (releaseResponse, error) {
-	parts := strings.Split(strings.Trim(repository, "/"), "/")
+	parts := strings.Split(strings.Trim(repository, pathSeparator), pathSeparator)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return releaseResponse{}, fmt.Errorf("invalid GitHub repository %q", repository)
 	}
 	base := strings.TrimRight(i.APIBaseURL, "/")
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/repos/"+parts[0]+"/"+parts[1]+"/releases/latest", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+pathSeparator+"repos"+pathSeparator+parts[0]+pathSeparator+parts[1]+pathSeparator+"releases"+pathSeparator+"latest", nil)
 	if err != nil {
 		return releaseResponse{}, fmt.Errorf("create GitHub request: %w", err)
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("User-Agent", "ai-launcher")
+	request.Header.Set("User-Agent", config.LauncherName)
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -327,8 +333,8 @@ func (i *Installer) download(ctx context.Context, asset Asset) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Accept", "application/octet-stream")
-	request.Header.Set("User-Agent", "ai-launcher")
+	request.Header.Set("Accept", config.BinaryAssetMediaType)
+	request.Header.Set("User-Agent", config.LauncherName)
 	client := i.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
@@ -402,7 +408,7 @@ func compareSHA256(expected string, data []byte) error {
 	digest := sha256.Sum256(data)
 	actual := hex.EncodeToString(digest[:])
 	if !strings.EqualFold(expected, actual) {
-		return fmt.Errorf("sha256 mismatch: expected %s, got %s", expected, actual)
+		return fmt.Errorf(checksumMismatchFormat, expected, actual)
 	}
 	return nil
 }
@@ -591,7 +597,7 @@ func archiveNameMatches(path, wanted string) bool {
 	base := filepath.Base(path)
 	wantedBase := filepath.Base(wanted)
 	// Windows release archives ship the binary with the .exe suffix.
-	return path == wanted || base == wantedBase || base == wantedBase+".exe"
+	return path == wanted || base == wantedBase || base == wantedBase+executableSuffix
 }
 
 func validateArchivePath(path string) error {
@@ -625,8 +631,8 @@ func (i *Installer) targetPath(configured, command string) (string, error) {
 	}
 	target = filepath.Clean(target)
 	// Windows executables need the .exe suffix to be runnable and discoverable.
-	if i.goos() == "windows" && !strings.HasSuffix(strings.ToLower(target), ".exe") {
-		target += ".exe"
+	if i.goos() == config.PlatformWindows && !strings.HasSuffix(strings.ToLower(target), executableSuffix) {
+		target += executableSuffix
 	}
 	return target, nil
 }
@@ -646,17 +652,21 @@ func (i *Installer) installFile(target string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(target), ".ai-launcher-install-*")
+	return atomicWriteFile(target, data, 0o755)
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-atomic-*")
 	if err != nil {
 		return err
 	}
 	temporaryName := temporary.Name()
 	defer func() { _ = os.Remove(temporaryName) }()
-	if err := temporary.Chmod(0o755); err != nil {
+	if _, err := temporary.Write(data); err != nil {
 		_ = temporary.Close()
 		return err
 	}
-	if _, err := temporary.Write(data); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -667,7 +677,7 @@ func (i *Installer) installFile(target string, data []byte) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryName, target)
+	return os.Rename(temporaryName, path)
 }
 
 func (i *Installer) loadState() (state, error) {
@@ -701,25 +711,8 @@ func (i *Installer) saveState(value state) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create install state directory: %w", err)
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-state-*")
-	if err != nil {
-		return fmt.Errorf("create install state: %w", err)
-	}
-	temporaryName := temporary.Name()
-	defer func() { _ = os.Remove(temporaryName) }()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryName, path); err != nil {
-		return fmt.Errorf("replace install state: %w", err)
+	if err := atomicWriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write install state: %w", err)
 	}
 	return nil
 }

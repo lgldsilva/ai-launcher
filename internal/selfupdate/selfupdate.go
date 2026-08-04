@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/installer"
 )
 
@@ -125,7 +126,7 @@ func SameVersion(current, tag string) bool {
 // (ai-launcher_<version>_<os>_<arch>.tar.gz, or .zip on Windows).
 func AssetName(tag, goos, goarch string) string {
 	ext := "tar.gz"
-	if goos == "windows" {
+	if goos == config.PlatformWindows {
 		ext = "zip"
 	}
 	return fmt.Sprintf("ai-launcher_%s_%s_%s.%s", strings.TrimPrefix(tag, "v"), goos, goarch, ext)
@@ -133,10 +134,10 @@ func AssetName(tag, goos, goarch string) string {
 
 // BinaryName returns the executable name inside the archive.
 func BinaryName(goos string) string {
-	if goos == "windows" {
+	if goos == config.PlatformWindows {
 		return "ai-launcher.exe"
 	}
-	return "ai-launcher"
+	return config.LauncherName
 }
 
 type releaseInfo struct {
@@ -246,7 +247,7 @@ func (u *Updater) DownloadVerifiedBinary(ctx context.Context, tag string) ([]byt
 // through the assets API; without one it uses the public download URL.
 func (u *Updater) downloadAsset(ctx context.Context, tag, name string) ([]byte, error) {
 	if u.Token == "" {
-		return u.get(ctx, u.downloadBase()+"/"+tag+"/"+name, "application/octet-stream")
+		return u.get(ctx, u.downloadBase()+"/"+tag+"/"+name, config.BinaryAssetMediaType)
 	}
 	return u.assetBytesViaAPI(ctx, tag, name)
 }
@@ -272,7 +273,7 @@ func (u *Updater) assetBytesViaAPI(ctx context.Context, tag, name string) ([]byt
 	}
 	for _, asset := range release.Assets {
 		if asset.Name == name && asset.URL != "" {
-			return u.get(ctx, asset.URL, "application/octet-stream")
+			return u.get(ctx, asset.URL, config.BinaryAssetMediaType)
 		}
 	}
 	return nil, fmt.Errorf("asset %s not found in release %s", name, tag)
@@ -288,7 +289,7 @@ func (u *Updater) Apply(ctx context.Context, tag string) error {
 	if err != nil {
 		return err
 	}
-	return replaceExecutableAt(exe, binary, u.goos() == "windows")
+	return replaceExecutableAt(exe, binary, u.goos() == config.PlatformWindows)
 }
 
 // executablePath resolves the running executable through symlinks so the
@@ -316,29 +317,54 @@ func (u *Updater) executablePath() (string, error) {
 // user-writable location.
 func replaceExecutableAt(exePath string, binary []byte, windows bool) error {
 	dir := filepath.Dir(exePath)
-	tmp, err := os.CreateTemp(dir, ".ai-launcher-upgrade-*")
+	if !windows {
+		if err := atomicWriteFile(exePath, binary, 0o755); err != nil {
+			return fmt.Errorf("write to %s: %w — install ai-launcher to a user-writable location (e.g. ~/.local/bin) instead of a system directory", dir, err)
+		}
+		return nil
+	}
+	tmpName, err := writeAtomicTemp(exePath, binary, 0o755)
 	if err != nil {
 		return fmt.Errorf("write to %s: %w — install ai-launcher to a user-writable location (e.g. ~/.local/bin) instead of a system directory", dir, err)
 	}
-	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(binary); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write %s: %w", tmpName, err)
+	return replaceExecutableWindows(exePath, tmpName)
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	temporaryName, err := writeAtomicTemp(path, data, mode)
+	if err != nil {
+		return err
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
+	defer func() { _ = os.Remove(temporaryName) }()
+	return os.Rename(temporaryName, path)
+}
+
+func writeAtomicTemp(path string, data []byte, mode os.FileMode) (string, error) {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-upgrade-*")
+	if err != nil {
+		return "", err
 	}
-	if err := os.Chmod(tmpName, 0o755); err != nil { // #nosec G302 -- the file is the executable being installed
-		return fmt.Errorf("chmod %s: %w", tmpName, err)
+	temporaryName := temporary.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(temporaryName)
+		}
+	}()
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return "", err
 	}
-	if windows {
-		return replaceExecutableWindows(exePath, tmpName)
+	if err := temporary.Chmod(mode); err != nil { // #nosec G302 -- the file is the executable being installed
+		_ = temporary.Close()
+		return "", err
 	}
-	if err := os.Rename(tmpName, exePath); err != nil {
-		return fmt.Errorf("replace %s: %w", exePath, err)
+	if err := temporary.Close(); err != nil {
+		return "", err
 	}
-	return nil
+	keep = true
+	return temporaryName, nil
 }
 
 func replaceExecutableWindows(exePath, tmpName string) error {
@@ -363,7 +389,7 @@ func (u *Updater) get(ctx context.Context, url, accept string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", accept)
-	req.Header.Set("User-Agent", "ai-launcher")
+	req.Header.Set("User-Agent", config.LauncherName)
 	if u.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+u.Token)
 	}

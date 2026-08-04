@@ -98,19 +98,22 @@ func (c Catalog) Permission(id string) (config.Permission, bool) {
 // NormalizePermissions enables dependencies for enabled permissions and removes
 // dependents when a parent is disabled. Locked defaults are always retained.
 func (c Catalog) NormalizePermissions(selected map[string]bool) map[string]bool {
-	result := c.seedPermissions(selected)
-	c.propagateRequirements(result)
-	c.disableOrphanDependents(result)
+	result := c.applyDefaults()
+	c.applySelection(result, selected)
+	c.propagateRequires(result)
+	c.stripOrphans(result)
 	return result
 }
 
-// seedPermissions starts from the configured defaults, applies the valid
-// selections, and forces locked permissions on.
-func (c Catalog) seedPermissions(selected map[string]bool) map[string]bool {
+func (c Catalog) applyDefaults() map[string]bool {
 	result := make(map[string]bool, len(c.Global.Permissions))
 	for _, permission := range c.Global.Permissions {
 		result[permission.ID] = permission.Default
 	}
+	return result
+}
+
+func (c Catalog) applySelection(result map[string]bool, selected map[string]bool) {
 	for id, enabled := range selected {
 		if _, ok := c.Permission(id); ok {
 			result[id] = enabled
@@ -121,12 +124,11 @@ func (c Catalog) seedPermissions(selected map[string]bool) map[string]bool {
 			result[permission.ID] = true
 		}
 	}
-	return result
 }
 
-// propagateRequirements enables every transitive dependency of an enabled
+// propagateRequires enables every transitive dependency of an enabled
 // permission until a fixed point is reached.
-func (c Catalog) propagateRequirements(result map[string]bool) {
+func (c Catalog) propagateRequires(result map[string]bool) {
 	changed := true
 	for changed {
 		changed = false
@@ -144,8 +146,8 @@ func (c Catalog) propagateRequirements(result map[string]bool) {
 	}
 }
 
-// disableOrphanDependents turns off permissions that require a disabled one.
-func (c Catalog) disableOrphanDependents(result map[string]bool) {
+// stripOrphans turns off permissions that require a disabled one.
+func (c Catalog) stripOrphans(result map[string]bool) {
 	for _, permission := range c.Global.Permissions {
 		if result[permission.ID] {
 			continue

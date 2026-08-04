@@ -54,10 +54,10 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 		goos = runtime.GOOS
 	}
 	report := make([]UpstreamStatus, 0, 2)
-	if goos != "windows" {
-		report = append(report, probeUpstream(lookPath, "ai-jail", config.MinAIJailVersion, "ai-jail-version-too-old"))
+	if goos != config.PlatformWindows {
+		report = append(report, probeUpstream(lookPath, config.AIJailCommand, config.MinAIJailVersion, "ai-jail-version-too-old"))
 	}
-	report = append(report, probeUpstream(lookPath, "ai-memory", config.MinAIMemoryVersion, "ai-memory-version-too-old"))
+	report = append(report, probeUpstream(lookPath, config.AIMemoryCommand, config.MinAIMemoryVersion, "ai-memory-version-too-old"))
 	return report
 }
 
