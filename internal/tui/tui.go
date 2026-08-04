@@ -17,6 +17,7 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
+	"github.com/muesli/termenv"
 )
 
 // ErrCancelled is returned when the user quits the TUI without launching.
@@ -83,6 +84,7 @@ type Model struct {
 	status          string
 	result          []string
 	cancelled       bool
+	opts            Options
 }
 
 // NewModel builds the initial TUI model from the global catalog and the
@@ -138,6 +140,15 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	return model
 }
 
+// Options holds display preferences and reload paths for the TUI.
+type Options struct {
+	NoColor       bool
+	HighContrast  bool
+	GlobalPath    string
+	LocalPath     string
+	NoLocalConfig bool
+}
+
 // Run starts the interactive TUI and returns the confirmed launch
 // configuration, or ErrCancelled when the user quits.
 func Run(global config.Global, launch launcher.LaunchConfig) (launcher.LaunchConfig, error) {
@@ -147,7 +158,7 @@ func Run(global config.Global, launch launcher.LaunchConfig) (launcher.LaunchCon
 // RunWithHooks is Run with optional save hooks invoked on Ctrl+S (local
 // config) and Ctrl+P (named profile in the global config).
 func RunWithHooks(global config.Global, launch launcher.LaunchConfig, hooks Hooks) (launcher.LaunchConfig, error) {
-	return RunWithMessage(global, launch, hooks, "")
+	return RunWithMessage(global, launch, hooks, "", Options{})
 }
 
 // RunWithMessage is RunWithHooks with an initial status line. It is used to
@@ -155,12 +166,14 @@ func RunWithHooks(global config.Global, launch launcher.LaunchConfig, hooks Hook
 // operator sees why the last run failed and can adjust (toggle New
 // workstream / ai-memory off) and retry with r, or quit, without restarting
 // ai-launcher. An empty message keeps the default section hint.
-func RunWithMessage(global config.Global, launch launcher.LaunchConfig, hooks Hooks, message string) (launcher.LaunchConfig, error) {
+func RunWithMessage(global config.Global, launch launcher.LaunchConfig, hooks Hooks, message string, opts Options) (launcher.LaunchConfig, error) {
 	model := NewModel(global, launch)
 	model.hooks = hooks
+	model.opts = opts
 	if msg := strings.TrimSpace(message); msg != "" {
 		model.status = msg
 	}
+	applyDisplayOptions(&model)
 	final, err := newProgram(model).Run()
 	if err != nil {
 		return launch, err
@@ -185,6 +198,18 @@ func RunWithMessage(global config.Global, launch launcher.LaunchConfig, hooks Ho
 // line count nor a view taller than the terminal scrolls the layout.
 func newProgram(model tea.Model) *tea.Program {
 	return tea.NewProgram(model, tea.WithAltScreen())
+}
+
+// applyDisplayOptions configures lipgloss according to the user's preferences.
+func applyDisplayOptions(m *Model) {
+	if m.opts.NoColor {
+		lipgloss.SetColorProfile(termenv.Ascii)
+		return
+	}
+	if m.opts.HighContrast {
+		// Force a small, high-contrast ANSI palette.
+		lipgloss.SetColorProfile(termenv.ANSI256)
+	}
 }
 
 // Init implements tea.Model; the TUI has no startup command.
@@ -246,6 +271,8 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.saveLocal()
 	case "ctrl+p":
 		m.startProfileInput()
+	case "ctrl+l":
+		return m.reloadConfig()
 	case "enter":
 		m.handleEnterKey()
 	}
@@ -1487,7 +1514,8 @@ func (m Model) helpView() string {
 		"Other\n" +
 		"  Space             toggle permission / option\n" +
 		"  Ctrl+S            save .ai-launch.yaml\n" +
-		"  Ctrl+P            save as a named profile\n\n" +
+		"  Ctrl+P            save as a named profile\n" +
+		"  Ctrl+L            reload global config from disk\n\n" +
 		mutedStyle.Render("Press any key to close")
 }
 
@@ -1642,4 +1670,23 @@ func cursorForLaunch(agents []catalog.AgentStatus, launch launcher.LaunchConfig)
 		return 1
 	}
 	return 0
+}
+
+// reloadConfig re-reads the global config from disk and rebuilds the model.
+// The current selection is preserved so the operator does not lose in-flight
+// edits; changes to the workspace config require a restart.
+func (m Model) reloadConfig() (tea.Model, tea.Cmd) {
+	global, err := config.LoadGlobal(m.opts.GlobalPath)
+	if err != nil {
+		m.status = "Reload failed: " + err.Error()
+		return m, nil
+	}
+
+	fresh := NewModel(global, m.launch)
+	fresh.opts = m.opts
+	fresh.hooks = m.hooks
+	fresh.width = m.width
+	fresh.height = m.height
+	fresh.status = "Global config reloaded"
+	return fresh, nil
 }

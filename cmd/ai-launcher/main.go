@@ -99,6 +99,8 @@ type cliOptions struct {
 	listProfiles                   bool
 	continueSession                bool
 	showVersion, doctor            bool
+	noLocalConfig                  bool
+	noColor, highContrast          bool
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
@@ -138,6 +140,9 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.extraArgs, "args", "", "alias for --extra-args")
 	flags.StringVar(&o.globalPath, "config", "", "global config path")
 	flags.StringVar(&o.localPath, "local-config", "", "workspace config path")
+	flags.BoolVar(&o.noLocalConfig, "no-local-config", false, "ignore workspace config and start from defaults")
+	flags.BoolVar(&o.noColor, "no-color", false, "disable color output")
+	flags.BoolVar(&o.highContrast, "high-contrast", false, "use high-contrast colors")
 	flags.StringVar(&o.addName, "add", "", "add or update an agent in the global catalog")
 	flags.StringVar(&o.addPath, "path", "", "executable path used with --add")
 	flags.StringVar(&o.addCommand, "command", "", "command name used with --add; defaults to the executable basename")
@@ -280,11 +285,11 @@ func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local co
 // replaced never reaches the argv, so refusing the launch over it would block
 // on input that was already discarded: `agent: other-cli` in the workspace file
 // is harmless once --agent or a profile picks something else.
-func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Local, profile *config.Profile) localTrust {
+func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Local, profile *config.Profile, noLocalConfig bool) localTrust {
 	overrides := profileOverrides(profile)
 	trust := localTrust{
-		optionsRaw: !overrides.options,
-		fromFile:   flagAgent == "" && !overrides.agent,
+		optionsRaw: !overrides.options && !noLocalConfig,
+		fromFile:   flagAgent == "" && !overrides.agent && !noLocalConfig,
 	}
 	if trust.fromFile {
 		trust.agent = raw.Agent
@@ -301,12 +306,12 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 		trust.jailFlags = raw.Options.JailFlags
 		trust.paramValues = raw.Options.ParamValues
 	}
-	if !overrides.mounts {
+	if !overrides.mounts && !noLocalConfig {
 		trust.mounts = raw.Mounts
 	}
 	// Permissions the profile replaced are trusted global input — only the
 	// file-owned map is subject to the CLI-flag opt-in check.
-	if !overrides.permissions {
+	if !overrides.permissions && !noLocalConfig {
 		trust.rawPermissions = copyPermissions(raw.Permissions)
 	}
 	return trust
@@ -593,7 +598,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	positionalArgs := append([]string(nil), flags.Args()...)
 
 	status := resolveAgentSelection(catalogue, opts.agent, local)
-	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile)
+	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
 	permissions := resolvePermissions(flags, &opts, local, catalogue)
 	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
 		return err
@@ -783,6 +788,10 @@ func resolveWorkstreamID(opts *cliOptions) (string, error) {
 // launch, while the raw one is the only honest input to the trust boundary
 // (see localTrustFrom).
 func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer) (merged, raw config.Local, applied *config.Profile, err error) {
+	if opts.noLocalConfig {
+		defaults := config.DefaultLocal()
+		return defaults, defaults, nil, nil
+	}
 	local, localErr := config.LoadLocal(opts.localPath)
 	if localErr != nil {
 		_, _ = fmt.Fprintln(errOut, warningLabel, localErr)
@@ -1145,7 +1154,13 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 			}
 			return config.SaveGlobal(r.opts.globalPath, r.global)
 		},
-	}, initialStatus)
+	}, initialStatus, tui.Options{
+		NoColor:       r.opts.noColor,
+		HighContrast:  r.opts.highContrast,
+		GlobalPath:    r.opts.globalPath,
+		LocalPath:     r.opts.localPath,
+		NoLocalConfig: r.opts.noLocalConfig,
+	})
 	if err != nil {
 		// A cancellation is a quiet exit; any other failure is reported.
 		return false, classifyTUIError(err)
