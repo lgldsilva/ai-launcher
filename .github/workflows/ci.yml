@@ -136,10 +136,11 @@ jobs:
   # repo variables with the defaults below. Every step skips cleanly until the
   # secret exists, so forks and early setup stay green.
   #
-  # SONAR_TOKEN is scoped ONLY to the scanner step (not job env, not coverage).
-  # Same-repo PR test code must never see the credential. The scanner package
-  # is pinned to an exact version so a newly published npm tag cannot run with
-  # the secret.
+  # SONAR_TOKEN is bound at the job level ONLY because step `if:` conditions
+  # cannot see `secrets` — every step skips cleanly except the scan, so only
+  # the pinned SonarSource action ever consumes it (never the coverage/tests
+  # steps). The action is pinned by SHA so a newly published release cannot
+  # run with the secret.
   sonar:
     name: SonarCloud
     runs-on: ubuntu-latest
@@ -165,14 +166,16 @@ jobs:
           go test -covermode=atomic \
             -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher \
             -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher
+      # Official SonarSource action pinned by SHA (an npx install trips the
+      # githubactions:S6505 supply-chain rule and fails the new-security gate).
       - name: SonarCloud analysis (waits for the quality gate)
         if: ${{ env.SONAR_TOKEN != '' }}
-        run: |
-          npx -y sonarqube-scanner@5.0.0 \
-            -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.token="$SONAR_TOKEN" \
-            -Dsonar.organization="$SONAR_ORGANIZATION" \
-            -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        with:
+          args: >-
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.organization=${{ env.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
             -Dsonar.qualitygate.wait=true
       - name: SonarCloud skipped
         if: ${{ env.SONAR_TOKEN == '' }}
