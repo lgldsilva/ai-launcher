@@ -876,6 +876,7 @@ func (m *Model) loadProfile(name string) {
 			agent = config.Agent{Name: profile.Agent, Command: profile.Agent}
 			executable = ""
 		} else if status.ResolvedCommand != "" {
+			agent.CatalogCommand = agent.Command
 			agent.Command = status.ResolvedCommand
 		}
 		m.launch.Agent = agent
@@ -1703,6 +1704,7 @@ func (m *Model) applyAgentCursorSelection() error {
 	selected := m.agents[index]
 	selectedAgent := selected.Agent
 	if selected.ResolvedCommand != "" {
+		selectedAgent.CatalogCommand = selectedAgent.Command
 		selectedAgent.Command = selected.ResolvedCommand
 	}
 	m.launch.ContinueSession = false

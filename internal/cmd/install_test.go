@@ -228,6 +228,9 @@ func TestExpandHomePathAndLogicalMemoryConfigFile(t *testing.T) {
 	if got := logicalMemoryConfigFile("/home/tester", "antigravity-cli", false); got != "/home/tester/.gemini/antigravity-cli/mcp_config.json" {
 		t.Fatalf("antigravity MCP file = %q", got)
 	}
+	if got := logicalMemoryConfigFile("/home/tester", "antigravity", false); got != "/home/tester/.gemini/antigravity-cli/mcp_config.json" {
+		t.Fatalf("antigravity (harness) MCP file = %q", got)
+	}
 	if got := logicalMemoryConfigFile("/home/tester", "kimi-code", false); got != "" {
 		t.Fatalf("unknown target file = %q; want empty", got)
 	}

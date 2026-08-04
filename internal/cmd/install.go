@@ -586,7 +586,7 @@ func logicalMemoryConfigFile(home, target string, hooks bool) string {
 	switch {
 	case hooks && target == "claude-code":
 		return filepath.Join(home, ".claude", "settings.json")
-	case target == "antigravity-cli":
+	case target == "antigravity-cli" || target == "antigravity":
 		if hooks {
 			return filepath.Join(home, ".gemini", "config", "hooks.json")
 		}

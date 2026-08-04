@@ -146,6 +146,11 @@ type Agent struct {
 	Params          []Param            `yaml:"params,omitempty"`
 	Release         *GitHubRelease     `yaml:"release,omitempty"`
 	Memory          *MemoryIntegration `yaml:"memory,omitempty"`
+	// CatalogCommand preserves the canonical command from the catalog before
+	// resolution overwrites Command with the alias actually found on PATH.
+	// It is used by launcher internals that need the original catalog identity
+	// (for example agent-specific state-directory mounts).
+	CatalogCommand string `yaml:"catalog_command,omitempty"`
 }
 
 // Param declares a harness-specific CLI flag in the catalog so new agents or

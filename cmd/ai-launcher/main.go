@@ -298,6 +298,9 @@ func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local co
 	if status.ResolvedCommand != "" {
 		// Keep the configured catalog name for display, but invoke the alias
 		// that was actually found on this machine (for example kilocode).
+		// Preserve the original catalog command so launcher internals (state
+		// directory mounts, memory harness mapping, etc.) keep working.
+		status.Agent.CatalogCommand = status.Agent.Command
 		status.Agent.Command = status.ResolvedCommand
 	}
 	return status, true
