@@ -454,6 +454,37 @@ func TestNewModelInitializesNilPermissions(t *testing.T) {
 	}
 }
 
+// TestModelDisablesMemoryForUnsupportedAgent proves that selecting an agent
+// with SupportsMemory=false automatically turns ai-memory off in the TUI.
+func TestModelDisablesMemoryForUnsupportedAgent(t *testing.T) {
+	stubWindows(t, false)
+	global := config.DefaultGlobal()
+	global.Agents = append(global.Agents, config.Agent{Name: "Cursor", Command: "cursor-agent", SupportsMemory: false})
+	launch := launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "claude", SupportsMemory: true},
+		UseJail:     true,
+		UseMemory:   true,
+		Permissions: map[string]bool{},
+	}
+	model := NewModel(global, launch)
+	if !model.launch.UseMemory {
+		t.Fatal("initial model must have memory enabled for claude")
+	}
+	// Add cursor-agent to the visible list and move the cursor to it.
+	model.agents = append(model.agents, catalog.AgentStatus{
+		Agent: config.Agent{Name: "Cursor", Command: "cursor-agent", SupportsMemory: false},
+		Path:  "/bin/cursor-agent", Installed: true,
+	})
+	model.cursor = len(model.agents)
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if model.launch.UseMemory {
+		t.Fatal("selecting cursor-agent must disable ai-memory")
+	}
+	if !strings.Contains(model.status, "ai-memory disabled") {
+		t.Fatalf("status = %q; want ai-memory disabled message", model.status)
+	}
+}
+
 func TestModelCanExecuteFromTheAgentSection(t *testing.T) {
 	// Use a real PATH binary so in-TUI pre-flight validation passes.
 	sh, err := exec.LookPath("sh")

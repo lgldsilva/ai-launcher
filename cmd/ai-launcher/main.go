@@ -251,24 +251,52 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 	return nil
 }
 
+// disableMemoryIfUnsupported turns the ai-memory layer off when the selected
+// agent would build a command that ai-memory run cannot execute. This covers
+// both agents that declare supports_memory: false and agents whose catalog
+// entry is stale/wrong and names a run_harness that ai-memory does not accept
+// (for example cursor-agent). Unresolved agents are left alone.
+func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool, errOut io.Writer) {
+	if !resolved || !*memory {
+		return
+	}
+	if !agent.SupportsMemory {
+		_, _ = fmt.Fprintf(errOut, "%s agent %q does not support ai-memory; disabling memory for this launch\n", warningLabel, agent.Command)
+		*memory = false
+		return
+	}
+	harness := agent.Command
+	if agent.Memory != nil {
+		if h := strings.TrimSpace(agent.Memory.RunHarness); h != "" {
+			harness = h
+		}
+	}
+	if !config.SupportsMemoryRunHarness(harness) {
+		_, _ = fmt.Fprintf(errOut, "%s ai-memory run does not accept harness %q for agent %q; disabling memory for this launch\n", warningLabel, harness, agent.Command)
+		*memory = false
+	}
+}
+
 // resolveAgentSelection picks the agent (the --agent flag wins over the local
 // config). An unresolved agent is still synthesized here; enforceLocalConfigTrust
-// decides whether it may be used.
-func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) catalog.AgentStatus {
+// decides whether it may be used. The returned bool is true when the agent was
+// actually found in the catalog (so callers can tell a real catalog entry from
+// a synthesized fallback).
+func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) (catalog.AgentStatus, bool) {
 	selected := flagAgent
 	if selected == "" {
 		selected = local.Agent
 	}
 	status, err := catalogue.Resolve(selected)
 	if err != nil {
-		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}
+		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}, false
 	}
 	if status.ResolvedCommand != "" {
 		// Keep the configured catalog name for display, but invoke the alias
 		// that was actually found on this machine (for example kilocode).
 		status.Agent.Command = status.ResolvedCommand
 	}
-	return status
+	return status, true
 }
 
 // localTrustFrom records what the workspace file itself asked for, so the trust
@@ -597,7 +625,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	positionalArgs := append([]string(nil), flags.Args()...)
 
-	status := resolveAgentSelection(catalogue, opts.agent, local)
+	status, resolved := resolveAgentSelection(catalogue, opts.agent, local)
+	disableMemoryIfUnsupported(status.Agent, resolved, &local.Options.Memory, errOut)
 	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
 	permissions := resolvePermissions(flags, &opts, local, catalogue)
 	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {

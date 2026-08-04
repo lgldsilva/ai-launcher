@@ -136,6 +136,7 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	// first Enter runs what the user is looking at instead of silently switching
 	// to "Continue last session".
 	model.cursor = cursorForLaunch(model.agents, model.launch)
+	model.syncMemoryForAgent()
 	model.status = model.sectionHint()
 	return model
 }
@@ -862,6 +863,7 @@ func (m *Model) loadProfile(name string) {
 		}
 		m.launch.Agent = agent
 		m.launch.Executable = executable
+		m.syncMemoryForAgent()
 	}
 	if profile.Permissions != nil {
 		m.launch.Permissions = m.catalog.NormalizePermissions(profile.Permissions)
@@ -1526,8 +1528,12 @@ func (m *Model) selectHighlightedAgent() {
 		m.status = err.Error()
 		return
 	}
+	memoryDisabled := m.syncMemoryForAgent()
 	if m.launch.ContinueSession {
 		m.status = "Selected: Continue last session — press r to RUN"
+		return
+	}
+	if memoryDisabled {
 		return
 	}
 	name := m.launch.Agent.Name
@@ -1535,6 +1541,39 @@ func (m *Model) selectHighlightedAgent() {
 		name = m.launch.Agent.Command
 	}
 	m.status = "Selected: " + name + " (" + m.launch.Agent.Command + ") — press r to RUN"
+}
+
+// syncMemoryForAgent disables ai-memory automatically when the selected agent
+// would build a command that ai-memory run cannot execute: either the agent
+// declares supports_memory: false, or its run_harness is not in the accepted
+// harness list. This prevents the TUI from building an unsupported
+// "ai-memory run <harness>" command when the user just picked an agent while
+// the memory toggle stayed on by default. It returns true when it changed the
+// memory setting.
+func (m *Model) syncMemoryForAgent() bool {
+	if m.launch.ContinueSession {
+		return false
+	}
+	if strings.TrimSpace(m.launch.Agent.Command) == "" {
+		return false
+	}
+	if !m.launch.Agent.SupportsMemory && m.launch.UseMemory {
+		m.launch.UseMemory = false
+		m.status = "ai-memory disabled: " + m.launch.Agent.Command + " does not support it"
+		return true
+	}
+	harness := m.launch.Agent.Command
+	if m.launch.Agent.Memory != nil {
+		if h := strings.TrimSpace(m.launch.Agent.Memory.RunHarness); h != "" {
+			harness = h
+		}
+	}
+	if m.launch.UseMemory && !config.SupportsMemoryRunHarness(harness) {
+		m.launch.UseMemory = false
+		m.status = "ai-memory disabled: harness " + harness + " is not accepted by ai-memory"
+		return true
+	}
+	return false
 }
 
 // confirmRun builds argv, validates pre-flight inside the TUI, and either
