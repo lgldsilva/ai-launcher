@@ -3,6 +3,7 @@ package launcher
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
@@ -23,8 +24,12 @@ func AgentRequiredMounts(agent config.Agent, home string, goos string) []config.
 			continue
 		}
 		// Resolve tilde to the supplied home so tests can use a temp dir.
-		if d == "~" || len(d) > 0 && d[0] == '~' && (len(d) == 1 || d[1] == filepath.Separator) {
-			d = filepath.Join(home, d[1:])
+		// Use strings.TrimPrefix instead of slicing so the remainder is not
+		// interpreted as an absolute path by filepath.Join.
+		if d == "~" {
+			d = home
+		} else if strings.HasPrefix(d, "~"+string(filepath.Separator)) {
+			d = filepath.Join(home, strings.TrimPrefix(d[1:], string(filepath.Separator)))
 		}
 		abs, err := filepath.Abs(d)
 		if err != nil {
@@ -43,7 +48,11 @@ func AgentRequiredMounts(agent config.Agent, home string, goos string) []config.
 // interpreted against $HOME; when a well-known environment variable overrides
 // the default location, it is read from the current process environment.
 func agentStateDirs(agent config.Agent, home string) []string {
-	switch agent.Command {
+	cmd := agent.CatalogCommand
+	if cmd == "" {
+		cmd = agent.Command
+	}
+	switch cmd {
 	case "claude":
 		return []string{envOrHome(home, "CLAUDE_CONFIG_DIR", ".claude")}
 	case "codex":
@@ -54,7 +63,7 @@ func agentStateDirs(agent config.Agent, home string) []string {
 		return []string{envOrHome(home, "KIMI_CODE_HOME", ".kimi-code")}
 	case "kilo":
 		return []string{
-			envOrHome(home, "XDG_CONFIG_HOME", filepath.Join(".config", "kilo")),
+			xdgConfigDir(home, "kilo"),
 			filepath.Join(home, ".kilo"),
 		}
 	case "mimo":
@@ -68,7 +77,7 @@ func agentStateDirs(agent config.Agent, home string) []string {
 			filepath.Join(home, ".antigravity"),
 		}
 	case "pi", "omp":
-		if agent.Command == "omp" {
+		if cmd == "omp" {
 			return []string{envOrHome(home, "PI_CODING_AGENT_DIR", filepath.Join(".omp", "agent"))}
 		}
 		return []string{envOrHome(home, "PI_CODING_AGENT_DIR", filepath.Join(".pi", "agent"))}

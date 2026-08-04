@@ -314,12 +314,19 @@ func appendYoloFlag(command []string, cfg LaunchConfig) []string {
 	if cfg.UseMemory || strings.TrimSpace(flag) == "" {
 		flag = "--yolo"
 	}
+	// Some agents (e.g. Devin) declare a yolo flag that is passed as two
+	// separate argv entries such as "--permission-mode dangerous". Split on
+	// whitespace so the harness receives them as distinct arguments.
+	flagParts := strings.Fields(flag)
+	if len(flagParts) == 0 {
+		flagParts = []string{"--yolo"}
+	}
 	for _, arg := range cfg.ExtraArgs {
-		if arg == flag {
+		if arg == flagParts[0] {
 			return command
 		}
 	}
-	return append(command, flag)
+	return append(command, flagParts...)
 }
 
 // appendJailArgs prepends the ai-jail wrapper with the programmatic-mode

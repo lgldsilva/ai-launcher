@@ -66,6 +66,46 @@ func TestAgentRequiredMountsResolvesTildePath(t *testing.T) {
 	}
 }
 
+func TestAgentRequiredMountsResolvesTildeWithoutLeadingSlash(t *testing.T) {
+	// Regression: filepath.Join(home, "/.claude") treats the remainder as
+	// absolute and resolves to /.claude instead of under home.
+	dir := t.TempDir()
+	got := AgentRequiredMounts(config.Agent{Command: "claude"}, dir, "darwin")
+	want := filepath.Join(dir, ".claude")
+	if len(got) != 1 || got[0].Path != want {
+		t.Fatalf("AgentRequiredMounts() = %#v; want one mount for %s", got, want)
+	}
+}
+
+func TestAgentRequiredMountsUsesCatalogCommandWhenResolved(t *testing.T) {
+	// When the PATH alias differs from the catalog command, the launcher must
+	// still mount the agent's canonical state directories.
+	dir := t.TempDir()
+	agent := config.Agent{Name: "Cursor Agent", Command: "cursor", CatalogCommand: "cursor-agent"}
+	got := AgentRequiredMounts(agent, dir, "darwin")
+	want := filepath.Join(dir, ".cursor")
+	if len(got) != 1 || got[0].Path != want {
+		t.Fatalf("AgentRequiredMounts() = %#v; want one mount for %s", got, want)
+	}
+}
+
+func TestAgentRequiredMountsForKiloRespectsXDGConfigHome(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
+	got := AgentRequiredMounts(config.Agent{Command: "kilo"}, "/unused-home", "linux")
+	want := filepath.Join(dir, "xdg-config", "kilo")
+	found := false
+	for _, m := range got {
+		if m.Path == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("AgentRequiredMounts() = %#v; want mount for %s", got, want)
+	}
+}
+
 func TestAgentRequiredMountsForCodex(t *testing.T) {
 	dir := t.TempDir()
 	got := AgentRequiredMounts(config.Agent{Command: "codex"}, dir, "linux")

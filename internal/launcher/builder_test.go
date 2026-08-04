@@ -301,6 +301,24 @@ func TestBuildYoloDoesNotDuplicateFlagPresentInExtraArgs(t *testing.T) {
 	}
 }
 
+func TestBuildSplitsMultiWordYoloFlag(t *testing.T) {
+	devin := config.Agent{Command: "devin", SupportsYolo: true, YoloFlag: "--permission-mode dangerous"}
+	got, err := Build(LaunchConfig{Agent: devin, Yolo: true})
+	want := []string{"devin", "--permission-mode", "dangerous"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
+	}
+}
+
+func TestBuildSplitsMultiWordYoloFlagDoesNotDuplicate(t *testing.T) {
+	devin := config.Agent{Command: "devin", SupportsYolo: true, YoloFlag: "--permission-mode dangerous"}
+	got, err := Build(LaunchConfig{Agent: devin, Yolo: true, ExtraArgs: []string{"--permission-mode", "dangerous", "--verbose"}})
+	want := []string{"devin", "--permission-mode", "dangerous", "--verbose"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
+	}
+}
+
 func TestBuildMapsV115PassthroughPermissions(t *testing.T) {
 	got, err := Build(LaunchConfig{
 		Agent:   config.Agent{Command: "claude"},
