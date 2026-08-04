@@ -277,6 +277,17 @@ func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool,
 	}
 }
 
+// disableYoloIfUnsupported turns the dangerous-mode flag off when the selected
+// agent does not declare support for it. Without this, toggling --yolo for an
+// agent like Cursor would append a raw --yolo argument that the agent does not
+// understand. Unresolved agents are left alone.
+func disableYoloIfUnsupported(agent config.Agent, resolved bool, yolo *bool, errOut io.Writer) {
+	if resolved && *yolo && !agent.SupportsYolo {
+		_, _ = fmt.Fprintf(errOut, "%s agent %q does not support --yolo; disabling it for this launch\n", warningLabel, agent.Command)
+		*yolo = false
+	}
+}
+
 // resolveAgentSelection picks the agent (the --agent flag wins over the local
 // config). An unresolved agent is still synthesized here; enforceLocalConfigTrust
 // decides whether it may be used. The returned bool is true when the agent was
@@ -626,7 +637,6 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	positionalArgs := append([]string(nil), flags.Args()...)
 
 	status, resolved := resolveAgentSelection(catalogue, opts.agent, local)
-	disableMemoryIfUnsupported(status.Agent, resolved, &local.Options.Memory, errOut)
 	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
 	permissions := resolvePermissions(flags, &opts, local, catalogue)
 	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
@@ -636,6 +646,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	disableMemoryIfUnsupported(status.Agent, resolved, &local.Options.Memory, errOut)
+	disableYoloIfUnsupported(status.Agent, resolved, &local.Options.Yolo, errOut)
 	if len(positionalArgs) > 0 {
 		local.Options.ExtraArgs = append(local.Options.ExtraArgs, positionalArgs...)
 	}

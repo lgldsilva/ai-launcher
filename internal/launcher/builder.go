@@ -280,9 +280,10 @@ func flagEnabled(value string) bool {
 // wraps the harness, --yolo is passed to the ai-memory run invocation, which
 // does its own per-harness translation; otherwise the agent's declared
 // yolo_flag is used, falling back to --yolo. A flag already present in
-// extra_args is never duplicated.
+// extra_args is never duplicated. Agents that do not declare yolo support
+// keep the flag off regardless of the launch option.
 func appendYoloFlag(command []string, cfg LaunchConfig) []string {
-	if !cfg.Yolo {
+	if !cfg.Yolo || !cfg.Agent.SupportsYolo {
 		return command
 	}
 	flag := cfg.Agent.YoloFlag

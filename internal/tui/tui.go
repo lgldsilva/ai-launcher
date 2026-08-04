@@ -137,6 +137,7 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 	// to "Continue last session".
 	model.cursor = cursorForLaunch(model.agents, model.launch)
 	model.syncMemoryForAgent()
+	model.syncYoloForAgent()
 	model.status = model.sectionHint()
 	return model
 }
@@ -408,8 +409,10 @@ func (m *Model) optionRows() []optionRow {
 	rows = append(rows,
 		optionRow{name: "ai-memory", on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
 		optionRow{name: "New workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
-		optionRow{name: "--yolo", on: m.launch.Yolo, toggle: func(m *Model) { m.launch.Yolo = !m.launch.Yolo }},
 	)
+	if m.launch.Agent.SupportsYolo {
+		rows = append(rows, optionRow{name: "--yolo", on: m.launch.Yolo, toggle: func(m *Model) { m.launch.Yolo = !m.launch.Yolo }})
+	}
 	if m.launch.UseMemory {
 		rows = append(rows, optionRow{name: "--fresh", on: m.launch.Fresh, toggle: func(m *Model) { m.launch.Fresh = !m.launch.Fresh }})
 	}
@@ -864,6 +867,7 @@ func (m *Model) loadProfile(name string) {
 		m.launch.Agent = agent
 		m.launch.Executable = executable
 		m.syncMemoryForAgent()
+		m.syncYoloForAgent()
 	}
 	if profile.Permissions != nil {
 		m.launch.Permissions = m.catalog.NormalizePermissions(profile.Permissions)
@@ -1529,6 +1533,7 @@ func (m *Model) selectHighlightedAgent() {
 		return
 	}
 	memoryDisabled := m.syncMemoryForAgent()
+	m.syncYoloForAgent()
 	if m.launch.ContinueSession {
 		m.status = "Selected: Continue last session — press r to RUN"
 		return
@@ -1574,6 +1579,22 @@ func (m *Model) syncMemoryForAgent() bool {
 		return true
 	}
 	return false
+}
+
+// syncYoloForAgent disables the dangerous-mode flag automatically when the
+// selected agent does not declare support for it, so a saved local config or
+// profile cannot sneak a raw --yolo into an agent that does not understand it.
+func (m *Model) syncYoloForAgent() {
+	if m.launch.ContinueSession {
+		return
+	}
+	if strings.TrimSpace(m.launch.Agent.Command) == "" {
+		return
+	}
+	if !m.launch.Agent.SupportsYolo && m.launch.Yolo {
+		m.launch.Yolo = false
+		m.status = "--yolo disabled: " + m.launch.Agent.Command + " does not support it"
+	}
 }
 
 // confirmRun builds argv, validates pre-flight inside the TUI, and either

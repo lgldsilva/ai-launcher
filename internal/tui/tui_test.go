@@ -485,6 +485,37 @@ func TestModelDisablesMemoryForUnsupportedAgent(t *testing.T) {
 	}
 }
 
+// TestModelDisablesYoloForUnsupportedAgent proves that selecting an agent with
+// SupportsYolo=false automatically turns --yolo off in the TUI.
+func TestModelDisablesYoloForUnsupportedAgent(t *testing.T) {
+	stubWindows(t, false)
+	global := config.DefaultGlobal()
+	global.Agents = append(global.Agents, config.Agent{Name: "Cursor", Command: "cursor-agent", SupportsMemory: false, SupportsYolo: false})
+	launch := launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "claude", SupportsMemory: true, SupportsYolo: true},
+		UseJail:     true,
+		UseMemory:   true,
+		Yolo:        true,
+		Permissions: map[string]bool{},
+	}
+	model := NewModel(global, launch)
+	if !model.launch.Yolo {
+		t.Fatal("initial model must have yolo enabled for claude")
+	}
+	model.agents = append(model.agents, catalog.AgentStatus{
+		Agent: config.Agent{Name: "Cursor", Command: "cursor-agent", SupportsMemory: false, SupportsYolo: false},
+		Path:  "/bin/cursor-agent", Installed: true,
+	})
+	model.cursor = len(model.agents)
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if model.launch.Yolo {
+		t.Fatal("selecting cursor-agent must disable --yolo")
+	}
+	if !strings.Contains(model.status, "--yolo disabled") {
+		t.Fatalf("status = %q; want --yolo disabled message", model.status)
+	}
+}
+
 func TestModelCanExecuteFromTheAgentSection(t *testing.T) {
 	// Use a real PATH binary so in-TUI pre-flight validation passes.
 	sh, err := exec.LookPath("sh")

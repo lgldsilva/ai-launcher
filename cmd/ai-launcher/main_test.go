@@ -72,6 +72,7 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
   - name: Custom
     command: custom-cli
     supports_memory: true
+    supports_yolo: true
     yolo_flag: --custom-yolo
     # custom-cli is a wrapper: ai-memory run only accepts its fixed harness
     # list, so the catalog declares which of those it maps onto.
@@ -84,6 +85,7 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
   - name: Codex
     command: codex
     supports_memory: true
+    supports_yolo: false
     params:
       - name: model
         flag: --model
@@ -431,6 +433,38 @@ permissions:
 	}
 	if !strings.Contains(errOut.String(), "does not accept harness") {
 		t.Fatalf("stderr = %q; want warning about unsupported harness", errOut.String())
+	}
+}
+
+// TestAgentWithoutYoloSupportDisablesYolo proves that passing --yolo for an
+// agent with supports_yolo: false does not append a raw --yolo argument.
+func TestAgentWithoutYoloSupportDisablesYolo(t *testing.T) {
+	stubToolsOnPath(t, "cursor-agent", "ai-jail", "ai-memory")
+	dir := t.TempDir()
+	globalYAML := `agents:
+  - name: Cursor
+    command: cursor-agent
+    supports_memory: false
+    supports_yolo: false
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+`
+	globalPath := filepath.Join(dir, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	out, err := runDryRunWithErrOut(t, []string{"--config", globalPath, "--agent", "cursor-agent", "--yolo", "--dry-run"}, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(out, "--yolo") {
+		t.Fatalf("dry-run = %q; --yolo must be disabled for cursor-agent", out)
+	}
+	if !strings.Contains(errOut.String(), "does not support --yolo") {
+		t.Fatalf("stderr = %q; want warning about unsupported yolo", errOut.String())
 	}
 }
 

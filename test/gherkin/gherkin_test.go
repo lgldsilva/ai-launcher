@@ -198,6 +198,9 @@ func runLocalConfigScenario(t *testing.T, scenario featureScenario) {
 
 func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 	agent := config.Agent{Command: spec.Agent, YoloFlag: spec.YoloFlag, Params: spec.Params}
+	if spec.Yolo || strings.TrimSpace(spec.YoloFlag) != "" {
+		agent.SupportsYolo = true
+	}
 	if spec.RunHarness != "" {
 		agent.Memory = &config.MemoryIntegration{RunHarness: spec.RunHarness}
 	}

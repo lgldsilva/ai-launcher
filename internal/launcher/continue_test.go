@@ -15,6 +15,7 @@ import (
 func TestContinueKeepsEveryWrapperFlag(t *testing.T) {
 	got, err := Build(LaunchConfig{
 		ContinueSession: true,
+		Agent:           config.Agent{Command: "claude", SupportsYolo: true},
 		UseMemory:       true,
 		Workspace:       "acme",
 		Project:         "billing",
