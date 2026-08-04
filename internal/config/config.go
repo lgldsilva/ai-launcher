@@ -86,6 +86,32 @@ const (
 	MinAIMemoryVersion = "1.19.0"
 )
 
+// Shared catalog names and platform identifiers. Keeping these values in the
+// config package avoids slightly different spellings in the CLI, catalog and
+// launcher packages that all consume the same persisted IDs.
+const (
+	LauncherName         = "ai-launcher"
+	AIMemoryCommand      = "ai-memory"
+	AIJailCommand        = "ai-jail"
+	BinaryAssetMediaType = "application/octet-stream"
+	MountReadOnlyLabel   = "read-only"
+	PlatformWindows      = "windows"
+
+	PermissionJail      = "jail"
+	PermissionSSH       = "ssh"
+	PermissionGitHub    = "gh"
+	PermissionDocker    = "docker"
+	PermissionGPU       = "gpu"
+	PermissionDisplay   = "display"
+	PermissionPictures  = "pictures"
+	PermissionTailscale = "tailscale"
+	PermissionSystemd   = "systemd-user"
+	PermissionMise      = "mise"
+	PermissionWorktree  = "worktree"
+	MountReadOnly       = "ro"
+	MountReadWrite      = "rw"
+)
+
 // Platform keys shared by the GitHubRelease.Assets maps of the built-in
 // catalog entries (see GitHubRelease).
 const (
@@ -96,8 +122,8 @@ const (
 // Catalog identifiers repeated within a single built-in entry (name, command,
 // binary) or across an entry and its memory integration.
 const (
-	aiJailTool   = "ai-jail"
-	aiMemoryTool = "ai-memory"
+	aiJailTool   = AIJailCommand
+	aiMemoryTool = AIMemoryCommand
 	kimiCodeID   = "kimi-code"
 	antigravID   = "antigravity-cli"
 	geminiCLIID  = "gemini-cli"
@@ -551,10 +577,10 @@ func DefaultGlobal() Global {
 		Version:         CurrentVersion,
 		MemoryServerURL: DefaultMemoryServerURL,
 		Agents: []Agent{
-			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: defaultMemoryIntegration("claude-code", "claude-code")},
-			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: defaultMemoryIntegration("codex", "codex")},
-			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: defaultMemoryIntegration("opencode", "opencode")},
-			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: defaultMemoryIntegration(kimiCodeID, kimiCodeID)},
+			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: memoryFor("claude-code")},
+			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: false, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: memoryFor("codex")},
+			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: memoryFor("opencode")},
+			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: false, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: memoryFor(kimiCodeID)},
 			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
 				Assets: map[string]string{
@@ -566,18 +592,18 @@ func DefaultGlobal() Global {
 				Binary: "kilo",
 			}},
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI"},
-			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: false, SupportsYolo: false, Description: "Antigravity CLI", Memory: defaultMemoryIntegration(antigravID, antigravID)},
+			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: false, SupportsYolo: false, Description: "Antigravity CLI", Memory: memoryFor(antigravID)},
 			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
 			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: false, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
-			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: defaultMemoryIntegration("omp", "omp")},
-			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: defaultMemoryIntegration("cursor", "cursor")},
-			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: false, Description: "Grok CLI", Memory: defaultMemoryIntegration("grok", "grok")},
-			{Name: "Zero", Command: "zero", SupportsMemory: false, SupportsYolo: false, Description: "Zero agent CLI", Memory: defaultMemoryIntegration("zero", "zero")},
-			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: false, Description: "Devin CLI", Memory: defaultMemoryIntegration("devin", "devin")},
+			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: memoryFor("omp")},
+			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: false, Description: "Cursor Agent CLI", Memory: memoryFor("cursor")},
+			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: false, Description: "Grok CLI", Memory: memoryFor("grok")},
+			{Name: "Zero", Command: "zero", SupportsMemory: false, SupportsYolo: false, Description: "Zero agent CLI", Memory: memoryFor("zero")},
+			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: false, Description: "Devin CLI", Memory: memoryFor("devin")},
 			// oc is a local preset TUI that ends up launching opencode; ai-memory
 			// only knows the harness name "opencode", so RunHarness remaps it.
-			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: &MemoryIntegration{Client: "opencode", Agent: "opencode", RunHarness: "opencode", InstallMCP: true, InstallHooks: true}},
-			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: defaultMemoryIntegration(geminiCLIID, geminiCLIID)},
+			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: memoryForHarness("opencode")},
+			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: false, Description: "Google Gemini CLI", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: memoryFor(geminiCLIID)},
 			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Alibaba Qwen Code CLI"},
 			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI"},
 			{Name: "Goose", Command: "goose", SupportsMemory: false, SupportsYolo: false, Description: "Block Goose CLI"},
@@ -621,21 +647,21 @@ func DefaultGlobal() Global {
 			},
 		},
 		Permissions: []Permission{
-			{ID: "jail", Name: "Jail / Sandbox", Default: true, Locked: true},
-			{ID: "ssh", Name: "SSH access", Requires: []string{"jail"}},
-			{ID: "gh", Name: "GitHub CLI", Requires: []string{"jail"}},
-			{ID: "docker", Name: "Docker socket", Requires: []string{"jail"}},
-			{ID: "gpu", Name: "GPU passthrough", Requires: []string{"jail"}},
+			{ID: PermissionJail, Name: "Jail / Sandbox", Default: true, Locked: true},
+			{ID: PermissionSSH, Name: "SSH access", Requires: []string{PermissionJail}},
+			{ID: PermissionGitHub, Name: "GitHub CLI", Requires: []string{PermissionJail}},
+			{ID: PermissionDocker, Name: "Docker socket", Requires: []string{PermissionJail}},
+			{ID: PermissionGPU, Name: "GPU passthrough", Requires: []string{PermissionJail}},
 			// The passthroughs below default to off because ai-jail already
 			// auto-enables display, mise and worktree when the resource exists.
 			// Turning one on here forces it on; forcing one off is a jail_flags
 			// decision, which is tri-state and can express it.
-			{ID: "display", Name: "Display passthrough", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux"}},
-			{ID: "pictures", Name: "Pictures folder", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux", "darwin"}},
-			{ID: "tailscale", Name: "Tailscale socket", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux", "darwin"}},
-			{ID: "systemd-user", Name: "systemd user bus", Default: false, Requires: []string{"jail"}, Platforms: []string{"linux"}},
-			{ID: "mise", Name: "mise integration", Default: false, Requires: []string{"jail"}},
-			{ID: "worktree", Name: "Git worktree passthrough", Default: false, Requires: []string{"jail"}},
+			{ID: PermissionDisplay, Name: "Display passthrough", Default: false, Requires: []string{PermissionJail}, Platforms: []string{"linux"}},
+			{ID: PermissionPictures, Name: "Pictures folder", Default: false, Requires: []string{PermissionJail}, Platforms: []string{"linux", "darwin"}},
+			{ID: PermissionTailscale, Name: "Tailscale socket", Default: false, Requires: []string{PermissionJail}, Platforms: []string{"linux", "darwin"}},
+			{ID: PermissionSystemd, Name: "systemd user bus", Default: false, Requires: []string{PermissionJail}, Platforms: []string{"linux"}},
+			{ID: PermissionMise, Name: "mise integration", Default: false, Requires: []string{PermissionJail}},
+			{ID: PermissionWorktree, Name: "Git worktree passthrough", Default: false, Requires: []string{PermissionJail}},
 		},
 		DefaultMounts: DefaultMountCandidates(runtime.GOOS),
 	}
@@ -696,8 +722,14 @@ func DefaultLocal() Local {
 	return Local{Version: CurrentVersion, Agent: "claude", Permissions: map[string]bool{}, Options: Options{Jail: true, Memory: true}}
 }
 
-func defaultMemoryIntegration(client, agent string) *MemoryIntegration {
-	return &MemoryIntegration{Client: client, Agent: agent, InstallMCP: true, InstallHooks: true}
+func memoryFor(command string) *MemoryIntegration {
+	return &MemoryIntegration{Client: command, Agent: command, InstallMCP: true, InstallHooks: true}
+}
+
+func memoryForHarness(command string) *MemoryIntegration {
+	integration := memoryFor(command)
+	integration.RunHarness = command
+	return integration
 }
 
 func modelParam(example string) Param {
@@ -719,7 +751,7 @@ func hooksOnlyMemoryIntegration(agent string) *MemoryIntegration {
 // directly or transitively (including "jail" itself). Platforms without
 // ai-jail support use it to filter the offered permissions.
 func JailDependentIDs(permissions []Permission) map[string]bool {
-	dependent := map[string]bool{"jail": true}
+	dependent := map[string]bool{PermissionJail: true}
 	changed := true
 	for changed {
 		changed = false
@@ -973,31 +1005,60 @@ func parseTrustedLocalEntry(raw any) (TrustedLocalEntry, bool) {
 	}
 }
 
+type atomicWriteError struct {
+	stage string
+	err   error
+}
+
+func (e *atomicWriteError) Error() string { return e.stage + ": " + e.err.Error() }
+func (e *atomicWriteError) Unwrap() error { return e.err }
+
+// atomicWriteFile writes data through a temporary file and renames it into
+// place. Callers create the destination directory and add their domain label
+// to errors, while this helper owns the failure-prone write lifecycle.
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	temporary, err := createTempFile(filepath.Dir(path), ".ai-launch-atomic-*.tmp")
+	if err != nil {
+		return &atomicWriteError{stage: "create temporary", err: err}
+	}
+	temporaryName := temporary.Name()
+	defer func() { _ = os.Remove(temporaryName) }()
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return &atomicWriteError{stage: "write", err: err}
+	}
+	if err := temporary.Chmod(mode); err != nil {
+		_ = temporary.Close()
+		return &atomicWriteError{stage: "protect", err: err}
+	}
+	if err := temporary.Close(); err != nil {
+		return &atomicWriteError{stage: "close", err: err}
+	}
+	if err := os.Rename(temporaryName, path); err != nil {
+		return &atomicWriteError{stage: "replace", err: err}
+	}
+	return nil
+}
+
+func wrapAtomicWriteError(label string, err error) error {
+	var failure *atomicWriteError
+	if errors.As(err, &failure) {
+		if label == "local config" && failure.stage == "create temporary" {
+			return fmt.Errorf("create temporary config: %w", failure.err)
+		}
+		return fmt.Errorf("%s %s: %w", failure.stage, label, failure.err)
+	}
+	return err
+}
+
 // writeGlobalAtomically writes the global config through a temporary file with
 // user-only permissions, so a crash mid-write never leaves a partial catalog.
 func writeGlobalAtomically(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create global config directory: %w", err)
 	}
-	tmp, err := createTempFile(filepath.Dir(path), ".ai-launch-global-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary global config: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write global config: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("protect global config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close global config: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace global config: %w", err)
+	if err := atomicWriteFile(path, b, 0o600); err != nil {
+		return wrapAtomicWriteError("global config", err)
 	}
 	return nil
 }
@@ -1096,25 +1157,8 @@ func SaveLocal(path string, cfg Local) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	tmp, err := createTempFile(filepath.Dir(path), ".ai-launch-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary config: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write local config: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("protect local config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close local config: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace local config: %w", err)
+	if err := atomicWriteFile(path, b, 0o600); err != nil {
+		return wrapAtomicWriteError("local config", err)
 	}
 	return nil
 }

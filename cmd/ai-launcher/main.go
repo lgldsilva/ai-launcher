@@ -38,12 +38,13 @@ const (
 	flagNoJail = "no-jail"
 	// permissionSystemdUser is the catalog permission id behind the
 	// --systemd-user flag.
-	permissionSystemdUser = "systemd-user"
+	permissionSystemdUser = config.PermissionSystemd
 	// warningLabel prefixes non-fatal diagnostics on stderr.
 	warningLabel = "warning:"
+	valueFormat  = "%v"
 	// aiMemoryCommand is the upstream memory CLI, resolved on PATH for the
 	// read-only surfaces this binary forwards to it.
-	aiMemoryCommand = "ai-memory"
+	aiMemoryCommand = config.AIMemoryCommand
 	// memoryWorkstreamIDEnv is the variable ai-memory exports into a managed
 	// child so it can address its own workstream. The launcher does not own it
 	// (it is absent from ownedMemoryEnvKeys), so it survives into an agent
@@ -68,6 +69,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ai-launcher:", err)
 		os.Exit(1)
 	}
+}
+
+func warnf(errOut io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(errOut, warningLabel+" "+format+"\n", args...)
 }
 
 // cliOptions holds every command-line flag value in one place so run() stays
@@ -105,10 +110,10 @@ type cliOptions struct {
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.agent, "agent", "", "agent command (claude, codex, opencode, ...)")
-	flags.BoolVar(&o.ssh, "ssh", false, "enable SSH permission")
-	flags.BoolVar(&o.gh, "gh", false, "optional: map ~/.config/gh into the jail (for host gh auth; not required)")
-	flags.BoolVar(&o.docker, "docker", false, "enable Docker permission")
-	flags.BoolVar(&o.gpu, "gpu", false, "enable GPU permission")
+	flags.BoolVar(&o.ssh, config.PermissionSSH, false, "enable SSH permission")
+	flags.BoolVar(&o.gh, config.PermissionGitHub, false, "optional: map ~/.config/gh into the jail (for host gh auth; not required)")
+	flags.BoolVar(&o.docker, config.PermissionDocker, false, "enable Docker permission")
+	flags.BoolVar(&o.gpu, config.PermissionGPU, false, "enable GPU permission")
 	flags.BoolVar(&o.display, "display", false, "force X11/Wayland display passthrough in the jail (Linux only)")
 	flags.BoolVar(&o.pictures, "pictures", false, "map the Pictures folder into the jail (Linux/macOS)")
 	flags.BoolVar(&o.tailscale, "tailscale", false, "expose the Tailscale socket in the jail (Linux/macOS)")
@@ -186,38 +191,26 @@ func (o *cliOptions) applyToLocal(flags *flag.FlagSet, local *config.Local, defa
 // store. Special-casing --no-memory to "only ever disable" made
 // --no-memory=false silently inert.
 func (o *cliOptions) applyOptionFlags(flags *flag.FlagSet, local *config.Local) {
-	if flagsWasSet(flags, flagNoJail) {
-		local.Options.Jail = !o.noJail
+	options := []struct {
+		name  string
+		apply func()
+	}{
+		{flagNoJail, func() { local.Options.Jail = !o.noJail }},
+		{"sandbox", func() { local.Options.Jail = o.sandbox }},
+		{"memory", func() { local.Options.Memory = o.memory }},
+		{"no-memory", func() { local.Options.Memory = !o.noMemory }},
+		{"fresh", func() { local.Options.Fresh = o.fresh }},
+		{"yolo", func() { local.Options.Yolo = o.yolo }},
+		{"no-yolo", func() { local.Options.Yolo = !o.noYolo }},
+		{"new", func() { local.Options.NewWorkstream = o.newWorkstream }},
+		{"workstream", func() { local.Options.Workstream = o.workstream }},
+		{"workspace", func() { local.Options.Workspace = o.workspace }},
+		{"project", func() { local.Options.Project = o.project }},
 	}
-	if flagsWasSet(flags, "sandbox") {
-		local.Options.Jail = o.sandbox
-	}
-	if flagsWasSet(flags, "memory") {
-		local.Options.Memory = o.memory
-	}
-	if flagsWasSet(flags, "no-memory") {
-		local.Options.Memory = !o.noMemory
-	}
-	if flagsWasSet(flags, "fresh") {
-		local.Options.Fresh = o.fresh
-	}
-	if flagsWasSet(flags, "yolo") {
-		local.Options.Yolo = o.yolo
-	}
-	if flagsWasSet(flags, "no-yolo") {
-		local.Options.Yolo = !o.noYolo
-	}
-	if flagsWasSet(flags, "new") {
-		local.Options.NewWorkstream = o.newWorkstream
-	}
-	if flagsWasSet(flags, "workstream") {
-		local.Options.Workstream = o.workstream
-	}
-	if flagsWasSet(flags, "workspace") {
-		local.Options.Workspace = o.workspace
-	}
-	if flagsWasSet(flags, "project") {
-		local.Options.Project = o.project
+	for _, option := range options {
+		if flagsWasSet(flags, option.name) {
+			option.apply()
+		}
 	}
 }
 
@@ -261,7 +254,7 @@ func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool,
 		return
 	}
 	if !agent.SupportsMemory {
-		_, _ = fmt.Fprintf(errOut, "%s agent %q does not support ai-memory; disabling memory for this launch\n", warningLabel, agent.Command)
+		warnf(errOut, "agent %q does not support ai-memory; disabling memory for this launch", agent.Command)
 		*memory = false
 		return
 	}
@@ -272,7 +265,7 @@ func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool,
 		}
 	}
 	if !config.SupportsMemoryRunHarness(harness) {
-		_, _ = fmt.Fprintf(errOut, "%s ai-memory run does not accept harness %q for agent %q; disabling memory for this launch\n", warningLabel, harness, agent.Command)
+		warnf(errOut, "ai-memory run does not accept harness %q for agent %q; disabling memory for this launch", harness, agent.Command)
 		*memory = false
 	}
 }
@@ -283,7 +276,7 @@ func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool,
 // understand. Unresolved agents are left alone.
 func disableYoloIfUnsupported(agent config.Agent, resolved bool, yolo *bool, errOut io.Writer) {
 	if resolved && *yolo && !agent.SupportsYolo {
-		_, _ = fmt.Fprintf(errOut, "%s agent %q does not support --yolo; disabling it for this launch\n", warningLabel, agent.Command)
+		warnf(errOut, "agent %q does not support --yolo; disabling it for this launch", agent.Command)
 		*yolo = false
 	}
 }
@@ -500,17 +493,17 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 // enforceLocalConfigTrust (F1) to keep that function under the gocognit cap.
 func enforcePermissionConsent(flags *flag.FlagSet, trust localTrust) error {
 	permissionFlagName := map[string]string{
-		"ssh":          "ssh",
-		"github":       "gh",
-		"gh":           "gh",
-		"docker":       "docker",
-		"gpu":          "gpu",
-		"display":      "display",
-		"pictures":     "pictures",
-		"tailscale":    "tailscale",
-		"systemd-user": permissionSystemdUser,
-		"mise":         "mise",
-		"worktree":     "worktree",
+		config.PermissionSSH:       config.PermissionSSH,
+		"github":                   config.PermissionGitHub,
+		config.PermissionGitHub:    config.PermissionGitHub,
+		config.PermissionDocker:    config.PermissionDocker,
+		config.PermissionGPU:       config.PermissionGPU,
+		config.PermissionDisplay:   config.PermissionDisplay,
+		config.PermissionPictures:  config.PermissionPictures,
+		config.PermissionTailscale: config.PermissionTailscale,
+		config.PermissionSystemd:   permissionSystemdUser,
+		config.PermissionMise:      config.PermissionMise,
+		config.PermissionWorktree:  config.PermissionWorktree,
 	}
 	for permID, enabled := range trust.rawPermissions {
 		if !enabled {
@@ -532,7 +525,7 @@ func enforcePermissionConsent(flags *flag.FlagSet, trust localTrust) error {
 // by a local config that agrees with them.
 func globalRequiresJail(global config.Global) bool {
 	for _, permission := range global.Permissions {
-		if permission.ID == "jail" {
+		if permission.ID == config.PermissionJail {
 			return permission.Default
 		}
 	}
@@ -544,11 +537,11 @@ func globalRequiresJail(global config.Global) bool {
 func reportPreflight(errOut io.Writer, issues []launcher.Issue) bool {
 	fatal := false
 	for _, issue := range issues {
-		label := "error:"
 		if issue.Warning {
-			label = warningLabel
+			warnf(errOut, valueFormat, issue)
+		} else {
+			_, _ = fmt.Fprintln(errOut, "error:", issue)
 		}
-		_, _ = fmt.Fprintln(errOut, label, issue)
 		if !issue.Warning {
 			fatal = true
 		}
@@ -595,12 +588,20 @@ func reportDoctor(out io.Writer) error {
 	return nil
 }
 
+type resolvedLaunchInputs struct {
+	handled        bool
+	global         config.Global
+	local          config.Local
+	status         catalog.AgentStatus
+	resolved       bool
+	permissions    map[string]bool
+	mounts         []config.Mount
+	positionalArgs []string
+}
+
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
-	// A positional `upgrade` as the first argument is the self-update
-	// subcommand (mirroring semidx). It must be intercepted before the launch
-	// flag parsing, which would otherwise treat it as extra agent arguments.
-	// It is unrelated to the --upgrade flag, which forces a reinstall of the
-	// configured third-party tools.
+	// A positional `upgrade` is intercepted before normal flag parsing because
+	// the remaining arguments belong to the self-update command.
 	if len(args) > 0 && args[0] == "upgrade" {
 		return runUpgrade(args[1:], out, errOut)
 	}
@@ -608,92 +609,98 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if handled || err != nil {
 		return err
 	}
-
 	home := userHome()
 	resolveConfigPaths(&opts, home)
-	if flagsWasSet(flags, "add") {
-		return launchcmd.AddAgent(opts.globalPath, opts.addName, opts.addPath, opts.addCommand, opts.addDescription, out)
-	}
-	global, globalErr := config.LoadGlobal(opts.globalPath)
-	if globalErr != nil {
-		_, _ = fmt.Fprintln(errOut, warningLabel, globalErr)
-	}
-	if handled, err := runGlobalCommands(&opts, global, home, out, errOut); handled {
+	global, handled, err := dispatchSideCommands(flags, &opts, home, out, errOut)
+	if handled || err != nil {
 		return err
 	}
-	// A corrupt local config degrades exactly like a corrupt global one:
-	// warn and continue with safe defaults. LoadLocal already returns
-	// DefaultLocal() on error, so blocking every launch on a broken
-	// .ai-launch.yaml was pure asymmetry, not extra safety.
-	local, rawLocal, appliedProfile, err := loadLocalSelection(&opts, global, errOut)
+	inputs, err := resolveLaunchInputs(flags, &opts, global)
 	if err != nil {
 		return err
 	}
-	catalogue := catalog.New(global)
-	if flags.NArg() > 0 && flags.Arg(0) == "help" {
-		flags.Usage()
+	if inputs.handled {
 		return nil
 	}
-	positionalArgs := append([]string(nil), flags.Args()...)
-
-	status, resolved := resolveAgentSelection(catalogue, opts.agent, local)
-	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
-	permissions := resolvePermissions(flags, &opts, local, catalogue)
-	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
-		return err
+	disableMemoryIfUnsupported(inputs.status.Agent, inputs.resolved, &inputs.local.Options.Memory, errOut)
+	disableYoloIfUnsupported(inputs.status.Agent, inputs.resolved, &inputs.local.Options.Yolo, errOut)
+	if len(inputs.positionalArgs) > 0 {
+		inputs.local.Options.ExtraArgs = append(inputs.local.Options.ExtraArgs, inputs.positionalArgs...)
 	}
-	mountConfig, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
-	if err != nil {
-		return err
-	}
-	disableMemoryIfUnsupported(status.Agent, resolved, &local.Options.Memory, errOut)
-	disableYoloIfUnsupported(status.Agent, resolved, &local.Options.Yolo, errOut)
-	if len(positionalArgs) > 0 {
-		local.Options.ExtraArgs = append(local.Options.ExtraArgs, positionalArgs...)
-	}
-
 	launchConfig := launcher.LaunchConfig{
-		Agent:           status.Agent,
-		Executable:      status.Path,
+		Agent:           inputs.status.Agent,
+		Executable:      inputs.status.Path,
 		HomeDir:         home,
-		MemoryServerURL: global.MemoryServerURL,
-		MemoryAuthToken: global.MemoryAuthToken,
-		UseJail:         local.Options.Jail,
-		UseMemory:       local.Options.Memory,
+		MemoryServerURL: inputs.global.MemoryServerURL,
+		MemoryAuthToken: inputs.global.MemoryAuthToken,
+		UseJail:         inputs.local.Options.Jail,
+		UseMemory:       inputs.local.Options.Memory,
 		ContinueSession: opts.continueSession,
 		JailExec:        len(args) > 0,
-		NewWorkstream:   local.Options.NewWorkstream,
-		Workstream:      local.Options.Workstream,
-		Workspace:       local.Options.Workspace,
-		Project:         local.Options.Project,
-		JailFlags:       local.Options.JailFlags,
-		Permissions:     permissions,
-		Mounts:          mountConfig,
-		Yolo:            local.Options.Yolo,
-		Fresh:           local.Options.Fresh,
-		ExtraArgs:       local.Options.ExtraArgs,
-		ParamValues:     local.Options.ParamValues,
+		NewWorkstream:   inputs.local.Options.NewWorkstream,
+		Workstream:      inputs.local.Options.Workstream,
+		Workspace:       inputs.local.Options.Workspace,
+		Project:         inputs.local.Options.Project,
+		JailFlags:       inputs.local.Options.JailFlags,
+		Permissions:     inputs.permissions,
+		Mounts:          inputs.mounts,
+		Yolo:            inputs.local.Options.Yolo,
+		Fresh:           inputs.local.Options.Fresh,
+		ExtraArgs:       inputs.local.Options.ExtraArgs,
+		ParamValues:     inputs.local.Options.ParamValues,
 	}
 	launchConfig = finalizeLaunchConfig(launchConfig, global, home, errOut)
 	if opts.saveProfile != "" {
 		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
 	}
-	return launch(launchRequest{
-		args:         args,
-		opts:         opts,
-		global:       global,
-		local:        local,
-		launchConfig: launchConfig,
-		in:           in,
-		out:          out,
-		errOut:       errOut,
-	})
+	return launch(launchRequest{args: args, opts: opts, global: global, local: inputs.local,
+		launchConfig: launchConfig, in: in, out: out, errOut: errOut})
+}
+
+// dispatchSideCommands handles commands that do not launch an agent. It also
+// loads the global catalog once, so every later path uses the same defaults.
+func dispatchSideCommands(flags *flag.FlagSet, opts *cliOptions, home string, out, errOut io.Writer) (config.Global, bool, error) {
+	if flagsWasSet(flags, "add") {
+		return config.Global{}, true, launchcmd.AddAgent(opts.globalPath, opts.addName, opts.addPath, opts.addCommand, opts.addDescription, out)
+	}
+	global, loadErr := config.LoadGlobal(opts.globalPath)
+	if loadErr != nil {
+		warnf(errOut, valueFormat, loadErr)
+	}
+	if handled, err := runGlobalCommands(opts, global, home, out, errOut); handled {
+		return global, true, err
+	}
+	return global, false, nil
+}
+
+func resolveLaunchInputs(flags *flag.FlagSet, opts *cliOptions, global config.Global) (resolvedLaunchInputs, error) {
+	local, rawLocal, appliedProfile, err := loadLocalSelection(opts, global, flags.Output())
+	if err != nil {
+		return resolvedLaunchInputs{}, err
+	}
+	catalogue := catalog.New(global)
+	if flags.NArg() > 0 && flags.Arg(0) == "help" {
+		flags.Usage()
+		return resolvedLaunchInputs{handled: true}, nil
+	}
+	status, resolved := resolveAgentSelection(catalogue, opts.agent, local)
+	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
+	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
+		return resolvedLaunchInputs{}, err
+	}
+	permissions := resolvePermissions(flags, opts, local, catalogue)
+	mounts, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
+	if err != nil {
+		return resolvedLaunchInputs{}, err
+	}
+	return resolvedLaunchInputs{global: global, local: local, status: status, resolved: resolved,
+		permissions: permissions, mounts: mounts, positionalArgs: append([]string(nil), flags.Args()...)}, nil
 }
 
 // parseCommandLine builds the flag set, parses args, and runs the flags that
 // only print information and exit. handled is true when one of them ran.
 func parseCommandLine(args []string, out, errOut io.Writer) (*flag.FlagSet, cliOptions, bool, error) {
-	flags := flag.NewFlagSet("ai-launcher", flag.ContinueOnError)
+	flags := flag.NewFlagSet(config.LauncherName, flag.ContinueOnError)
 	flags.SetOutput(errOut)
 	var opts cliOptions
 	opts.register(flags)
@@ -835,7 +842,7 @@ func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer
 	}
 	local, localErr := config.LoadLocal(opts.localPath)
 	if localErr != nil {
-		_, _ = fmt.Fprintln(errOut, warningLabel, localErr)
+		warnf(errOut, valueFormat, localErr)
 	}
 	raw = cloneLocal(local)
 	if opts.profile == "" {
@@ -868,16 +875,16 @@ func cloneLocal(local config.Local) config.Local {
 // toggle, produced the right one.
 func resolvePermissions(flags *flag.FlagSet, opts *cliOptions, local config.Local, catalogue catalog.Catalog) map[string]bool {
 	permissions := copyPermissions(local.Permissions)
-	applyBoolFlag(flags, "ssh", permissions, "ssh", opts.ssh)
-	applyBoolFlag(flags, "gh", permissions, "gh", opts.gh)
-	applyBoolFlag(flags, "docker", permissions, "docker", opts.docker)
-	applyBoolFlag(flags, "gpu", permissions, "gpu", opts.gpu)
-	applyBoolFlag(flags, "display", permissions, "display", opts.display)
-	applyBoolFlag(flags, "pictures", permissions, "pictures", opts.pictures)
-	applyBoolFlag(flags, "tailscale", permissions, "tailscale", opts.tailscale)
+	applyBoolFlag(flags, config.PermissionSSH, permissions, config.PermissionSSH, opts.ssh)
+	applyBoolFlag(flags, config.PermissionGitHub, permissions, config.PermissionGitHub, opts.gh)
+	applyBoolFlag(flags, config.PermissionDocker, permissions, config.PermissionDocker, opts.docker)
+	applyBoolFlag(flags, config.PermissionGPU, permissions, config.PermissionGPU, opts.gpu)
+	applyBoolFlag(flags, config.PermissionDisplay, permissions, config.PermissionDisplay, opts.display)
+	applyBoolFlag(flags, config.PermissionPictures, permissions, config.PermissionPictures, opts.pictures)
+	applyBoolFlag(flags, config.PermissionTailscale, permissions, config.PermissionTailscale, opts.tailscale)
 	applyBoolFlag(flags, permissionSystemdUser, permissions, permissionSystemdUser, opts.systemdUser)
-	applyBoolFlag(flags, "mise", permissions, "mise", opts.mise)
-	applyBoolFlag(flags, "worktree", permissions, "worktree", opts.worktree)
+	applyBoolFlag(flags, config.PermissionMise, permissions, config.PermissionMise, opts.mise)
+	applyBoolFlag(flags, config.PermissionWorktree, permissions, config.PermissionWorktree, opts.worktree)
 	return catalogue.NormalizePermissions(permissions)
 }
 
@@ -888,7 +895,7 @@ func resolvePermissions(flags *flag.FlagSet, opts *cliOptions, local config.Loca
 func finalizeLaunchConfig(launchConfig launcher.LaunchConfig, global config.Global, home string, errOut io.Writer) launcher.LaunchConfig {
 	launchConfig, platformIssues := launcher.ConstrainToPlatform(launchConfig, runtime.GOOS, global.Permissions)
 	for _, issue := range platformIssues {
-		_, _ = fmt.Fprintln(errOut, warningLabel, issue)
+		warnf(errOut, valueFormat, issue)
 	}
 	if launchConfig.UseJail {
 		launchConfig = applyJailAutoDetection(launchConfig, home, errOut)
@@ -947,7 +954,7 @@ Environment overrides:
 	// The Bearer token is only ever sent to the default release host; with an
 	// overridden endpoint it is withheld (and said so) rather than exfiltrated.
 	if token != "" && (apiBase != selfupdate.DefaultAPIBaseURL || downloadBase != selfupdate.DefaultDownloadBaseURL) {
-		_, _ = fmt.Fprintln(errOut, "warning: AI_LAUNCHER_UPDATE_TOKEN withheld: the update endpoint is overridden and the token is only sent to the default release host")
+		warnf(errOut, "AI_LAUNCHER_UPDATE_TOKEN withheld: the update endpoint is overridden and the token is only sent to the default release host")
 		token = ""
 	}
 	updater := &selfupdate.Updater{
@@ -1163,7 +1170,7 @@ func launch(req launchRequest) error {
 		if autoArmedNew && req.launchConfig.NewWorkstream != "" {
 			req.launchConfig.NewWorkstream = ""
 			if err := saveLocalSelection(req.opts.globalPath, true, req.opts.localPath, req.local, req.launchConfig); err != nil {
-				_, _ = fmt.Fprintf(req.errOut, "warning: could not clear the recovery workstream from %s: %v\n", req.opts.localPath, err)
+				warnf(req.errOut, "could not clear the recovery workstream from %s: %v", req.opts.localPath, err)
 			}
 		}
 		return nil
@@ -1212,7 +1219,7 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 	// the launcher itself wrote. Best-effort: a failed save never blocks a
 	// launch, it warns.
 	if err := saveLocalSelection(r.opts.globalPath, true, r.opts.localPath, r.local, confirmed); err != nil {
-		_, _ = fmt.Fprintf(r.errOut, "warning: could not save the selection to %s: %v\n", r.opts.localPath, err)
+		warnf(r.errOut, "could not save the selection to %s: %v", r.opts.localPath, err)
 	}
 	return true, nil
 }
@@ -1356,7 +1363,7 @@ func symlinkedProjectJailConfig() *bool {
 func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Writer) launcher.LaunchConfig {
 	auto, refused := launcher.HomeSymlinkMounts(home)
 	for _, entry := range refused {
-		_, _ = fmt.Fprintf(errOut, "warning: not auto-mounting %s -> %s (%s)\n", entry.Link, entry.Target, entry.Reason)
+		warnf(errOut, "not auto-mounting %s -> %s (%s)", entry.Link, entry.Target, entry.Reason)
 	}
 	for _, mount := range auto {
 		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), a home symlink target outside $HOME\n", mount.Path, mount.Mode)
@@ -1370,7 +1377,7 @@ func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Wr
 		return cfg
 	}
 	if hide := symlinkedProjectJailConfig(); hide != nil {
-		_, _ = fmt.Fprintln(errOut, "warning: .ai-jail in this project is a symlink; ai-jail config masking is disabled for this launch (--no-hide-config)")
+		warnf(errOut, ".ai-jail in this project is a symlink; ai-jail config masking is disabled for this launch (--no-hide-config)")
 		cfg.JailFlags.HideConfig = hide
 	}
 	return cfg
@@ -1381,11 +1388,11 @@ func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Wr
 // configured mounts stand, falling back to the catalog default_mounts.
 func (o *cliOptions) buildMountConfig(flags *flag.FlagSet, configured []config.Mount, defaultMounts []string) ([]config.Mount, error) {
 	if flagsWasSet(flags, "mount") || flagsWasSet(flags, "map") || flagsWasSet(flags, "rw-map") {
-		mounts, err := parseMounts(o.mounts, "ro")
+		mounts, err := parseMounts(o.mounts, config.MountReadOnly)
 		if err != nil {
 			return nil, err
 		}
-		writable, err := parseMounts(o.rwMounts, "rw")
+		writable, err := parseMounts(o.rwMounts, config.MountReadWrite)
 		if err != nil {
 			return nil, err
 		}
@@ -1397,7 +1404,7 @@ func (o *cliOptions) buildMountConfig(flags *flag.FlagSet, configured []config.M
 	// Built-in / catalog default_mounts are suggestions. Skip paths that do not
 	// exist on this host so a Linux layout on macOS (or an unplugged external
 	// volume) does not fail pre-flight validation.
-	return parseMounts(config.ExistingPaths(defaultMounts), "rw")
+	return parseMounts(config.ExistingPaths(defaultMounts), config.MountReadWrite)
 }
 
 // parseMounts parses every value with the same default mode, failing on the
@@ -1432,7 +1439,7 @@ func parseMount(value, defaultMode string) (config.Mount, error) {
 	path, mode := value, defaultMode
 	if index := strings.LastIndex(value, ":"); index >= 0 {
 		switch suffix := value[index+1:]; suffix {
-		case "ro", "rw", "read-only":
+		case config.MountReadOnly, config.MountReadWrite, config.MountReadOnlyLabel:
 			path, mode = value[:index], suffix
 		}
 	}

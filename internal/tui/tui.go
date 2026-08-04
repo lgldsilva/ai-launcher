@@ -25,7 +25,7 @@ var ErrCancelled = errors.New("launcher cancelled")
 
 // isWindows reports whether the host is Windows; it is a variable so tests
 // can stub platform detection while running on Linux.
-var isWindows = func() bool { return runtime.GOOS == "windows" }
+var isWindows = func() bool { return runtime.GOOS == config.PlatformWindows }
 
 // goos reports the host platform for permission platform filtering; it is a
 // variable so tests can exercise the filter for any target platform.
@@ -33,7 +33,21 @@ var goos = func() string { return runtime.GOOS }
 
 // modeReadOnly is the canonical read-only mount label; the "ro" shorthand is
 // also accepted (matched case-insensitively).
-const modeReadOnly = "read-only"
+const (
+	modeReadOnly    = config.MountReadOnlyLabel
+	modeReadOnlyID  = config.MountReadOnly
+	modeReadWriteID = config.MountReadWrite
+	pointerEmpty    = "  "
+	pointerSelected = "❯ "
+	lineBreak       = "\n"
+	keyEscape       = "esc"
+	keyUp           = "up"
+	keyUpLetter     = "k"
+	keyDown         = "down"
+	keyDownLetter   = "j"
+	keyBackspace    = "backspace"
+	keyEnter        = "enter"
+)
 
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#b4befe"))
@@ -112,7 +126,7 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 		permissionIDs: make([]string, 0, len(global.Permissions)),
 		profiles:      global.Profiles,
 		profileNames:  config.ProfileNames(global),
-		mountMode:     "rw",
+		mountMode:     modeReadWriteID,
 	}
 	// ai-jail has no Windows build: hide the jail permission and everything
 	// that requires it there. On macOS (including /Volumes) the jail stays
@@ -241,7 +255,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleMainKey dispatches key presses when no text input is active.
 func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "ctrl+c", "q", "esc":
+	case "ctrl+c", "q", keyEscape:
 		m.cancelled = true
 		return m, tea.Quit
 	case "tab", "ctrl+j":
@@ -250,15 +264,15 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleSection(-1)
 	case "1", "2", "3", "4", "5":
 		m.jumpToSection(key.String())
-	case "up", "k":
+	case keyUp, keyUpLetter:
 		m.moveCursor(-1)
-	case "down", "j":
+	case keyDown, keyDownLetter:
 		m.moveCursor(1)
 	case "space", " ":
 		m.handleSpaceKey()
 	case "/", "a", "+":
 		m.handleAddMountKey()
-	case "backspace":
+	case keyBackspace:
 		m.removeMount()
 	case "d", "ctrl+d":
 		m.confirmRun(true)
@@ -275,7 +289,7 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.startProfileInput()
 	case "ctrl+l":
 		return m.reloadConfig()
-	case "enter":
+	case keyEnter:
 		m.handleEnterKey()
 	}
 	return m, nil
@@ -407,7 +421,7 @@ func (m *Model) optionRows() []optionRow {
 		rows = append(rows, optionRow{name: "Jail / Sandbox", on: m.launch.UseJail, toggle: func(m *Model) { m.launch.UseJail = !m.launch.UseJail }})
 	}
 	rows = append(rows,
-		optionRow{name: "ai-memory", on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
+		optionRow{name: config.AIMemoryCommand, on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
 		optionRow{name: "New workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
 	)
 	if m.launch.Agent.SupportsYolo {
@@ -435,7 +449,7 @@ func (m Model) View() string {
 		return m.helpView()
 	}
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("ai-launcher"))
+	b.WriteString(titleStyle.Render(config.LauncherName))
 	m.agentsView(&b)
 	m.permissionsView(&b)
 	m.mountsView(&b)
@@ -449,7 +463,7 @@ func (m Model) View() string {
 		}
 		fmt.Fprintf(&b, "\n  %s: %s█\n", label, m.textInputValue)
 	}
-	b.WriteString("\n")
+	b.WriteString(lineBreak)
 	preview, err := launcher.Build(m.launch)
 	if err == nil {
 		safe := make([]string, len(preview))
@@ -457,23 +471,23 @@ func (m Model) View() string {
 			safe[i] = launcher.SanitizeDisplay(part)
 		}
 		b.WriteString(mutedStyle.Render("Preview: " + strings.Join(safe, " ")))
-		b.WriteString("\n")
+		b.WriteString(lineBreak)
 	}
 	if m.status != "" {
-		b.WriteString("\n" + m.status + "\n")
+		b.WriteString(lineBreak + m.status + lineBreak)
 	}
 	return b.String()
 }
 
 func (m Model) agentsView(b *strings.Builder) {
 	b.WriteString("\n\nAgent\n")
-	b.WriteString(mutedStyle.Render("  (installed only · most recently used first · Space/Enter select · r RUN)") + "\n")
+	b.WriteString(mutedStyle.Render("  (installed only · most recently used first · Space/Enter select · r RUN)") + lineBreak)
 	// Selected line (what will launch) vs cursor (what ↑/↓ is on).
-	b.WriteString(goodStyle.Render("  Selected: "+m.selectedAgentLabel()) + "\n")
+	b.WriteString(goodStyle.Render("  Selected: "+m.selectedAgentLabel()) + lineBreak)
 
 	m.continueRowView(b)
 	if len(m.agents) == 0 {
-		b.WriteString(badStyle.Render("  (no installed agents found — install one or check PATH)") + "\n")
+		b.WriteString(badStyle.Render("  (no installed agents found — install one or check PATH)") + lineBreak)
 	}
 	for i, status := range m.agents {
 		m.agentRowView(b, i, status)
@@ -498,9 +512,9 @@ func (m Model) selectedAgentLabel() string {
 
 // continueRowView renders the always-present "Continue last session" row.
 func (m Model) continueRowView(b *strings.Builder) {
-	pointer := "  "
+	pointer := pointerEmpty
 	if m.section == 0 && m.cursor == 0 {
-		pointer = "❯ "
+		pointer = pointerSelected
 	}
 	sel := "[ ]"
 	if m.launch.ContinueSession {
@@ -512,9 +526,9 @@ func (m Model) continueRowView(b *strings.Builder) {
 // agentRowView renders one catalog agent row with cursor, selection mark and
 // install/recency tag.
 func (m Model) agentRowView(b *strings.Builder, index int, status catalog.AgentStatus) {
-	pointer := "  "
+	pointer := pointerEmpty
 	if m.section == 0 && index+1 == m.cursor {
-		pointer = "❯ "
+		pointer = pointerSelected
 	}
 	command := status.Agent.Command
 	if status.ResolvedCommand != "" && status.ResolvedCommand != status.Agent.Command {
@@ -581,9 +595,9 @@ func (m Model) permissionsView(b *strings.Builder) {
 	b.WriteString("\nPermissions\n")
 	for i, id := range m.permissionIDs {
 		permission, _ := m.catalog.Permission(id)
-		pointer := "  "
+		pointer := pointerEmpty
 		if m.section == 1 && i == m.cursor {
-			pointer = "❯ "
+			pointer = pointerSelected
 		}
 		mark := "[ ]"
 		if m.launch.Permissions[id] {
@@ -601,26 +615,26 @@ func (m Model) mountsView(b *strings.Builder) {
 	// Always visible (not only when the section is focused) so the user never
 	// has to guess how to add folders.
 	if !m.inputActive {
-		b.WriteString(titleStyle.Render("  Tips") + "\n")
-		b.WriteString(goodStyle.Render("    a  or  +  or  /     add a folder") + "\n")
-		b.WriteString(mutedStyle.Render("    Space                toggle read-only ↔ read-write") + "\n")
-		b.WriteString(mutedStyle.Render("    Backspace            remove highlighted mount") + "\n")
-		b.WriteString(goodStyle.Render("    r                    RUN the selected agent") + "\n")
+		b.WriteString(titleStyle.Render("  Tips") + lineBreak)
+		b.WriteString(goodStyle.Render("    a  or  +  or  /     add a folder") + lineBreak)
+		b.WriteString(mutedStyle.Render("    Space                toggle read-only ↔ read-write") + lineBreak)
+		b.WriteString(mutedStyle.Render("    Backspace            remove highlighted mount") + lineBreak)
+		b.WriteString(goodStyle.Render("    r                    RUN the selected agent") + lineBreak)
 	}
 	if len(m.launch.Mounts) == 0 && !m.inputActive {
-		b.WriteString(goodStyle.Render("  (empty — press a to add a folder, or r to run without extra mounts)") + "\n")
+		b.WriteString(goodStyle.Render("  (empty — press a to add a folder, or r to run without extra mounts)") + lineBreak)
 	}
 	for i, mount := range m.launch.Mounts {
-		pointer := "  "
+		pointer := pointerEmpty
 		if m.section == 2 && i == m.cursor && !m.inputActive {
-			pointer = "❯ "
+			pointer = pointerSelected
 		}
 		mode := mount.Mode
 		if mode == "" {
-			mode = "rw"
+			mode = modeReadWriteID
 		}
 		modeLabel := "read-write"
-		if strings.EqualFold(mode, "ro") || strings.EqualFold(mode, modeReadOnly) {
+		if strings.EqualFold(mode, modeReadOnlyID) || strings.EqualFold(mode, modeReadOnly) {
 			modeLabel = modeReadOnly
 		}
 		fmt.Fprintf(b, "%s%s  (%s)\n", pointer, mount.Path, modeLabel)
@@ -634,27 +648,27 @@ func (m Model) mountsView(b *strings.Builder) {
 // user never has to guess bindings (status lines are easy to miss / overwrite).
 func (m Model) mountBrowserView(b *strings.Builder) {
 	modeLabel := "read-write (agent can edit files)"
-	if m.mountMode == "ro" {
+	if m.mountMode == modeReadOnlyID {
 		modeLabel = "read-only (agent can only read)"
 	}
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render("  ── Add a folder to the jail ──") + "\n")
+	b.WriteString(lineBreak)
+	b.WriteString(titleStyle.Render("  ── Add a folder to the jail ──") + lineBreak)
 	fmt.Fprintf(b, "  Path: %s█\n", m.mountInput)
 	fmt.Fprintf(b, "  Mode: %s\n", modeLabel)
 	fmt.Fprintf(b, "  Looking in: %s\n", m.mountDir)
 	m.mountCommitHintView(b)
-	b.WriteString(mutedStyle.Render("  Folders:") + "\n")
+	b.WriteString(mutedStyle.Render("  Folders:") + lineBreak)
 	m.mountEntriesView(b)
-	b.WriteString(mutedStyle.Render("  Keys:  ↑/↓ move   → open folder   ← parent   Tab autocomplete") + "\n")
-	b.WriteString(mutedStyle.Render("         type a path   Ctrl+T mode   Enter ADD   Esc cancel") + "\n")
+	b.WriteString(mutedStyle.Render("  Keys:  ↑/↓ move   → open folder   ← parent   Tab autocomplete") + lineBreak)
+	b.WriteString(mutedStyle.Render("         type a path   Ctrl+T mode   Enter ADD   Esc cancel") + lineBreak)
 }
 
 // mountCommitHintView renders the "Enter will add" preview line.
 func (m Model) mountCommitHintView(b *strings.Builder) {
 	if willAdd := m.mountCommitPath(); willAdd != "" {
-		b.WriteString(goodStyle.Render("  → Enter will add: "+willAdd) + "\n")
+		b.WriteString(goodStyle.Render("  → Enter will add: "+willAdd) + lineBreak)
 	} else {
-		b.WriteString(badStyle.Render("  → Enter will add: (nothing selected — type a path or pick a folder)") + "\n")
+		b.WriteString(badStyle.Render("  → Enter will add: (nothing selected — type a path or pick a folder)") + lineBreak)
 	}
 }
 
@@ -677,7 +691,7 @@ func (m Model) mountEntriesView(b *strings.Builder) {
 		b.WriteString(mutedStyle.Render(fmt.Sprintf("    … %d above\n", start)))
 	}
 	for i := start; i < end; i++ {
-		b.WriteString(mountEntryRow(i, m.mountCursor, m.mountEntries[i]) + "\n")
+		b.WriteString(mountEntryRow(i, m.mountCursor, m.mountEntries[i]) + lineBreak)
 	}
 	if end < len(m.mountEntries) {
 		b.WriteString(mutedStyle.Render(fmt.Sprintf("    … %d more\n", len(m.mountEntries)-end)))
@@ -715,9 +729,9 @@ func (m Model) mountCommitPath() string {
 func (m Model) optionsView(b *strings.Builder) {
 	b.WriteString("\nOptions\n")
 	for i, option := range m.optionRows() {
-		pointer := "  "
+		pointer := pointerEmpty
 		if m.section == 3 && i == m.cursor {
-			pointer = "❯ "
+			pointer = pointerSelected
 		}
 		mark := "[ ]"
 		if option.on {
@@ -726,12 +740,12 @@ func (m Model) optionsView(b *strings.Builder) {
 		fmt.Fprintf(b, "%s%s %s\n", pointer, mark, option.name)
 	}
 	if m.launch.NewWorkstream != "" {
-		b.WriteString("  workstream: " + m.launch.NewWorkstream + "\n")
+		b.WriteString("  workstream: " + m.launch.NewWorkstream + lineBreak)
 	}
 	for i, param := range m.launch.Agent.Params {
-		pointer := "  "
+		pointer := pointerEmpty
 		if m.section == 3 && m.cursor == len(m.optionRows())+i {
-			pointer = "❯ "
+			pointer = pointerSelected
 		}
 		value := m.launch.ParamValues[param.Name]
 		if value == "" {
@@ -749,16 +763,16 @@ func (m Model) profilesView(b *strings.Builder) {
 	}
 	b.WriteString("\nProfiles\n")
 	for i, name := range m.profileNames {
-		pointer := "  "
+		pointer := pointerEmpty
 		if m.section == 4 && i == m.cursor {
-			pointer = "❯ "
+			pointer = pointerSelected
 		}
 		profile := m.profiles[name]
 		line := fmt.Sprintf("%s%-18s (%s)", pointer, name, profile.Agent)
 		if summary := config.ProfileSummary(profile); summary != "" {
 			line += " " + mutedStyle.Render(summary)
 		}
-		b.WriteString(line + "\n")
+		b.WriteString(line + lineBreak)
 	}
 }
 
@@ -800,10 +814,10 @@ func (m *Model) toggleCurrent() {
 		m.togglePermission()
 	case 2:
 		if m.cursor < len(m.launch.Mounts) {
-			if strings.EqualFold(m.launch.Mounts[m.cursor].Mode, "ro") || strings.EqualFold(m.launch.Mounts[m.cursor].Mode, modeReadOnly) {
-				m.launch.Mounts[m.cursor].Mode = "rw"
+			if strings.EqualFold(m.launch.Mounts[m.cursor].Mode, modeReadOnlyID) || strings.EqualFold(m.launch.Mounts[m.cursor].Mode, modeReadOnly) {
+				m.launch.Mounts[m.cursor].Mode = modeReadWriteID
 			} else {
-				m.launch.Mounts[m.cursor].Mode = "ro"
+				m.launch.Mounts[m.cursor].Mode = modeReadOnlyID
 			}
 			m.status = "Mount mode toggled"
 		}
@@ -925,12 +939,12 @@ func copyParamValues(values map[string]string) map[string]string {
 // or profile name) is active.
 func (m *Model) updateTextInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "esc":
+	case keyEscape:
 		m.textInputActive = false
 		m.status = "Edit cancelled"
-	case "enter":
+	case keyEnter:
 		m.commitTextInput()
-	case "backspace":
+	case keyBackspace:
 		if m.textInputValue != "" {
 			runes := []rune(m.textInputValue)
 			m.textInputValue = string(runes[:len(runes)-1])
@@ -1014,10 +1028,10 @@ func containsString(values []string, wanted string) bool {
 
 func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "esc":
+	case keyEscape:
 		m.inputActive = false
 		m.status = "Mount addition cancelled"
-	case "enter":
+	case keyEnter:
 		m.commitMountInput()
 	case "tab":
 		// Tab completes directory names (shell-style). Mode toggle is Ctrl+T.
@@ -1029,13 +1043,13 @@ func (m *Model) updateMountInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.enterSelectedMountDir()
 	case "left":
 		m.mountBrowserUp()
-	case "up":
+	case keyUp:
 		m.moveMountCursor(-1)
-	case "down":
+	case keyDown:
 		m.moveMountCursor(1)
-	case "l", "h", "k", "j":
+	case "l", "h", keyUpLetter, keyDownLetter:
 		m.handleMountNavKey(key)
-	case "backspace":
+	case keyBackspace:
 		m.handleMountBackspace()
 	default:
 		if key.Type == tea.KeyRunes {
@@ -1058,10 +1072,10 @@ func (m *Model) commitMountInput() {
 
 // toggleMountBrowserMode flips the ro/rw mode of the mount being added.
 func (m *Model) toggleMountBrowserMode() {
-	if m.mountMode == "ro" {
-		m.mountMode = "rw"
+	if m.mountMode == modeReadOnlyID {
+		m.mountMode = modeReadWriteID
 	} else {
-		m.mountMode = "ro"
+		m.mountMode = modeReadOnlyID
 	}
 	m.status = "Mount mode: " + m.mountMode
 }
@@ -1081,9 +1095,9 @@ func (m *Model) handleMountNavKey(key tea.KeyMsg) {
 		m.enterSelectedMountDir()
 	case "h":
 		m.mountBrowserUp()
-	case "k":
+	case keyUpLetter:
 		m.moveMountCursor(-1)
-	case "j":
+	case keyDownLetter:
 		m.moveMountCursor(1)
 	}
 }
@@ -1175,7 +1189,7 @@ func (m *Model) startMountBrowser() {
 	m.mountInput = ""
 	m.mountTyped = false
 	m.mountFilter = ""
-	m.mountMode = "rw"
+	m.mountMode = modeReadWriteID
 	m.mountDir = mustWorkingDirectory()
 	m.refreshMountEntries()
 	m.status = "Pick a folder below (or type a path). Enter adds it. Esc cancels."
@@ -1356,7 +1370,7 @@ func (m *Model) addMount(path string) {
 	m.mountTyped = false
 	m.mountFilter = ""
 	modeLabel := "read-write"
-	if m.mountMode == "ro" {
+	if m.mountMode == modeReadOnlyID {
 		modeLabel = modeReadOnly
 	}
 	m.status = "Added " + path + " (" + modeLabel + "). r = RUN · a = add another · Space = ro/rw · Backspace = remove"
@@ -1628,7 +1642,7 @@ func (m *Model) confirmRun(dryRun bool) bool {
 	}
 	m.status = m.startingStatus()
 	if len(warns) > 0 {
-		m.status += "\n" + mutedStyle.Render(strings.Join(warns, " · "))
+		m.status += lineBreak + mutedStyle.Render(strings.Join(warns, " · "))
 	}
 	m.result = argv
 	return true
@@ -1655,7 +1669,7 @@ func validateLaunch(launch launcher.LaunchConfig) (fatal, warns []string) {
 func blockedStatus(fatal, warns []string) string {
 	status := badStyle.Render("Cannot run — fix these first:") + "\n  · " + strings.Join(fatal, "\n  · ")
 	if len(warns) > 0 {
-		status += "\n" + mutedStyle.Render(strings.Join(warns, " · "))
+		status += lineBreak + mutedStyle.Render(strings.Join(warns, " · "))
 	}
 	return status
 }
