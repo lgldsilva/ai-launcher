@@ -19,6 +19,8 @@ func writeProfileConfigs(t *testing.T) (globalPath, localPath string) {
 	globalYAML := `agents:
   - name: Custom
     command: custom-cli
+    supports_memory: true
+    supports_yolo: true
     memory:
       run_harness: opencode
 permissions:

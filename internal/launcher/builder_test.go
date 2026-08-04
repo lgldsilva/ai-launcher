@@ -3,6 +3,7 @@ package launcher
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestBuildRemapsOcWrapperToOpencodeHarness(t *testing.T) {
 
 func TestBuildAllOptions(t *testing.T) {
 	got, err := Build(LaunchConfig{
-		Agent:         config.Agent{Command: "claude"},
+		Agent:         config.Agent{Command: "claude", SupportsYolo: true},
 		Executable:    "/usr/bin/claude",
 		HomeDir:       "/home/lgldsilva",
 		UseJail:       true,
@@ -266,7 +267,7 @@ func TestBuildIgnoresUndeclaredParamValues(t *testing.T) {
 }
 
 func TestBuildUsesAgentYoloFlagWithoutMemory(t *testing.T) {
-	claude := config.Agent{Command: "claude", YoloFlag: "--dangerously-skip-permissions"}
+	claude := config.Agent{Command: "claude", SupportsYolo: true, YoloFlag: "--dangerously-skip-permissions"}
 	got, err := Build(LaunchConfig{Agent: claude, Yolo: true})
 	want := []string{"claude", "--dangerously-skip-permissions"}
 	if err != nil || !reflect.DeepEqual(got, want) {
@@ -275,7 +276,7 @@ func TestBuildUsesAgentYoloFlagWithoutMemory(t *testing.T) {
 }
 
 func TestBuildYoloWithoutDeclaredFlagFallsBackToDashYolo(t *testing.T) {
-	got, err := Build(LaunchConfig{Agent: config.Agent{Command: "aider"}, Yolo: true})
+	got, err := Build(LaunchConfig{Agent: config.Agent{Command: "aider", SupportsYolo: true}, Yolo: true})
 	want := []string{"aider", "--yolo"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
@@ -283,7 +284,7 @@ func TestBuildYoloWithoutDeclaredFlagFallsBackToDashYolo(t *testing.T) {
 }
 
 func TestBuildYoloWithMemoryKeepsDashYoloForAiMemory(t *testing.T) {
-	claude := config.Agent{Command: "claude", YoloFlag: "--dangerously-skip-permissions"}
+	claude := config.Agent{Command: "claude", SupportsYolo: true, YoloFlag: "--dangerously-skip-permissions"}
 	got, err := Build(LaunchConfig{Agent: claude, UseMemory: true, Yolo: true})
 	want := []string{"ai-memory", "run", "claude", "--yolo"}
 	if err != nil || !reflect.DeepEqual(got, want) {
@@ -292,7 +293,7 @@ func TestBuildYoloWithMemoryKeepsDashYoloForAiMemory(t *testing.T) {
 }
 
 func TestBuildYoloDoesNotDuplicateFlagPresentInExtraArgs(t *testing.T) {
-	claude := config.Agent{Command: "claude", YoloFlag: "--dangerously-skip-permissions"}
+	claude := config.Agent{Command: "claude", SupportsYolo: true, YoloFlag: "--dangerously-skip-permissions"}
 	got, err := Build(LaunchConfig{Agent: claude, Yolo: true, ExtraArgs: []string{"--dangerously-skip-permissions", "--verbose"}})
 	want := []string{"claude", "--dangerously-skip-permissions", "--verbose"}
 	if err != nil || !reflect.DeepEqual(got, want) {
@@ -360,5 +361,100 @@ func TestValidatorIgnoresUnsupportedPlatformForDisabledOrUnknownPermissions(t *t
 	})
 	if len(issues) != 0 {
 		t.Fatalf("issues = %#v; disabled and unknown permissions must not warn", issues)
+	}
+}
+
+func TestEnvironmentSetsCursorCredentialStoreOnMacOSJail(t *testing.T) {
+	old := runtimeGOOS
+	runtimeGOOS = func() string { return "darwin" }
+	defer func() { runtimeGOOS = old }()
+
+	env := Environment(LaunchConfig{
+		Agent:   config.Agent{Command: "cursor-agent"},
+		UseJail: true,
+	})
+	found := false
+	for _, entry := range env {
+		if entry == "AGENT_CLI_CREDENTIAL_STORE=file" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Environment() = %#v; want AGENT_CLI_CREDENTIAL_STORE=file", env)
+	}
+}
+
+func TestEnvironmentPreservesUserCursorCredentialStore(t *testing.T) {
+	old := runtimeGOOS
+	runtimeGOOS = func() string { return "darwin" }
+	defer func() { runtimeGOOS = old }()
+
+	t.Setenv("AGENT_CLI_CREDENTIAL_STORE", "keychain")
+	env := Environment(LaunchConfig{
+		Agent:   config.Agent{Command: "cursor-agent"},
+		UseJail: true,
+	})
+	for _, entry := range env {
+		if entry == "AGENT_CLI_CREDENTIAL_STORE=file" {
+			t.Fatal("user-supplied AGENT_CLI_CREDENTIAL_STORE was overwritten")
+		}
+	}
+	found := false
+	for _, entry := range env {
+		if entry == "AGENT_CLI_CREDENTIAL_STORE=keychain" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Environment() = %#v; want AGENT_CLI_CREDENTIAL_STORE=keychain", env)
+	}
+}
+
+func TestEnvironmentDoesNotSetCursorCredentialStoreWithoutJail(t *testing.T) {
+	old := runtimeGOOS
+	runtimeGOOS = func() string { return "darwin" }
+	defer func() { runtimeGOOS = old }()
+
+	env := Environment(LaunchConfig{
+		Agent:   config.Agent{Command: "cursor-agent"},
+		UseJail: false,
+	})
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "AGENT_CLI_CREDENTIAL_STORE=") {
+			t.Fatalf("AGENT_CLI_CREDENTIAL_STORE should not be set without jail: %s", entry)
+		}
+	}
+}
+
+func TestAgentRequiredMountsCursorOnDarwin(t *testing.T) {
+	dir := t.TempDir()
+	cursorDir := filepath.Join(dir, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "darwin")
+	want := []config.Mount{{Path: cursorDir, Mode: "rw"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("AgentRequiredMounts() = %#v; want %#v", got, want)
+	}
+}
+
+func TestAgentRequiredMountsEmptyWhenCursorDirMissing(t *testing.T) {
+	dir := t.TempDir()
+	if got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "darwin"); got != nil {
+		t.Fatalf("AgentRequiredMounts() = %#v; want nil", got)
+	}
+}
+
+func TestAgentRequiredMountsEmptyOnLinux(t *testing.T) {
+	dir := t.TempDir()
+	cursorDir := filepath.Join(dir, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "linux"); got != nil {
+		t.Fatalf("AgentRequiredMounts() = %#v; want nil", got)
 	}
 }

@@ -251,24 +251,63 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 	return nil
 }
 
+// disableMemoryIfUnsupported turns the ai-memory layer off when the selected
+// agent would build a command that ai-memory run cannot execute. This covers
+// both agents that declare supports_memory: false and agents whose catalog
+// entry is stale/wrong and names a run_harness that ai-memory does not accept
+// (for example cursor-agent). Unresolved agents are left alone.
+func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool, errOut io.Writer) {
+	if !resolved || !*memory {
+		return
+	}
+	if !agent.SupportsMemory {
+		_, _ = fmt.Fprintf(errOut, "%s agent %q does not support ai-memory; disabling memory for this launch\n", warningLabel, agent.Command)
+		*memory = false
+		return
+	}
+	harness := agent.Command
+	if agent.Memory != nil {
+		if h := strings.TrimSpace(agent.Memory.RunHarness); h != "" {
+			harness = h
+		}
+	}
+	if !config.SupportsMemoryRunHarness(harness) {
+		_, _ = fmt.Fprintf(errOut, "%s ai-memory run does not accept harness %q for agent %q; disabling memory for this launch\n", warningLabel, harness, agent.Command)
+		*memory = false
+	}
+}
+
+// disableYoloIfUnsupported turns the dangerous-mode flag off when the selected
+// agent does not declare support for it. Without this, toggling --yolo for an
+// agent like Cursor would append a raw --yolo argument that the agent does not
+// understand. Unresolved agents are left alone.
+func disableYoloIfUnsupported(agent config.Agent, resolved bool, yolo *bool, errOut io.Writer) {
+	if resolved && *yolo && !agent.SupportsYolo {
+		_, _ = fmt.Fprintf(errOut, "%s agent %q does not support --yolo; disabling it for this launch\n", warningLabel, agent.Command)
+		*yolo = false
+	}
+}
+
 // resolveAgentSelection picks the agent (the --agent flag wins over the local
 // config). An unresolved agent is still synthesized here; enforceLocalConfigTrust
-// decides whether it may be used.
-func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) catalog.AgentStatus {
+// decides whether it may be used. The returned bool is true when the agent was
+// actually found in the catalog (so callers can tell a real catalog entry from
+// a synthesized fallback).
+func resolveAgentSelection(catalogue catalog.Catalog, flagAgent string, local config.Local) (catalog.AgentStatus, bool) {
 	selected := flagAgent
 	if selected == "" {
 		selected = local.Agent
 	}
 	status, err := catalogue.Resolve(selected)
 	if err != nil {
-		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}
+		return catalog.AgentStatus{Agent: config.Agent{Name: selected, Command: selected}}, false
 	}
 	if status.ResolvedCommand != "" {
 		// Keep the configured catalog name for display, but invoke the alias
 		// that was actually found on this machine (for example kilocode).
 		status.Agent.Command = status.ResolvedCommand
 	}
-	return status
+	return status, true
 }
 
 // localTrustFrom records what the workspace file itself asked for, so the trust
@@ -597,7 +636,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	positionalArgs := append([]string(nil), flags.Args()...)
 
-	status := resolveAgentSelection(catalogue, opts.agent, local)
+	status, resolved := resolveAgentSelection(catalogue, opts.agent, local)
 	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
 	permissions := resolvePermissions(flags, &opts, local, catalogue)
 	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath)); err != nil {
@@ -607,6 +646,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	disableMemoryIfUnsupported(status.Agent, resolved, &local.Options.Memory, errOut)
+	disableYoloIfUnsupported(status.Agent, resolved, &local.Options.Yolo, errOut)
 	if len(positionalArgs) > 0 {
 		local.Options.ExtraArgs = append(local.Options.ExtraArgs, positionalArgs...)
 	}
@@ -1240,6 +1281,8 @@ func launchFailureHint(errText string) string {
 		return "hint: memory server TLS failed — check memory_server_url (expect *.internal.lgldsilva.com.br) or use --no-memory"
 	case strings.Contains(errText, "canonicalizing managed run cwd") || strings.Contains(errText, "Operation not permitted"):
 		return "hint: ai-memory inside the jail failed on this cwd — try --no-memory (keep Jail) or run from a path under $HOME"
+	case strings.Contains(errText, "keychain"):
+		return "hint: the agent could not access the macOS keychain inside the jail — try launching from a path under $HOME, or run with --no-jail"
 	default:
 		return "hint: try --no-memory if the memory server fails, or --no-jail if the project is on an external volume"
 	}
@@ -1318,7 +1361,11 @@ func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Wr
 	for _, mount := range auto {
 		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), a home symlink target outside $HOME\n", mount.Path, mount.Mode)
 	}
-	cfg.Mounts = launcher.MergeAutoMounts(cfg.Mounts, auto)
+	required := launcher.AgentRequiredMounts(cfg.Agent, home, runtime.GOOS)
+	for _, mount := range required {
+		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), required by %s\n", mount.Path, mount.Mode, cfg.Agent.Command)
+	}
+	cfg.Mounts = launcher.MergeAutoMounts(cfg.Mounts, append(auto, required...))
 	if cfg.JailFlags.HideConfig != nil {
 		return cfg
 	}

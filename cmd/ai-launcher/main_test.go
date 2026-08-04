@@ -71,6 +71,8 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
 	globalYAML := `agents:
   - name: Custom
     command: custom-cli
+    supports_memory: true
+    supports_yolo: true
     yolo_flag: --custom-yolo
     # custom-cli is a wrapper: ai-memory run only accepts its fixed harness
     # list, so the catalog declares which of those it maps onto.
@@ -82,6 +84,8 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
         takes_value: true
   - name: Codex
     command: codex
+    supports_memory: true
+    supports_yolo: false
     params:
       - name: model
         flag: --model
@@ -364,4 +368,110 @@ func TestWorkstreamConflictDetectedThroughExecuteErrorShape(t *testing.T) {
 	if hint := launchFailureHint(wrapped.Error()); !strings.Contains(hint, "90 seconds") {
 		t.Fatalf("hint = %q; want the 90s workstream recovery tip", hint)
 	}
+}
+
+// TestAgentWithoutMemorySupportDisablesMemory proves that selecting an agent
+// with supports_memory: false automatically turns ai-memory off, instead of
+// building an unsupported "ai-memory run <harness>" command.
+func TestAgentWithoutMemorySupportDisablesMemory(t *testing.T) {
+	stubToolsOnPath(t, "cursor-agent", "ai-jail", "ai-memory")
+	dir := t.TempDir()
+	globalYAML := `agents:
+  - name: Cursor
+    command: cursor-agent
+    supports_memory: false
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+`
+	globalPath := filepath.Join(dir, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	out, err := runDryRunWithErrOut(t, []string{"--config", globalPath, "--agent", "cursor-agent", "--dry-run"}, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(out, "ai-memory") {
+		t.Fatalf("dry-run = %q; ai-memory must be disabled for cursor-agent", out)
+	}
+	if !strings.Contains(errOut.String(), "does not support ai-memory") {
+		t.Fatalf("stderr = %q; want warning about unsupported memory", errOut.String())
+	}
+}
+
+// TestAgentWithUnsupportedRunHarnessDisablesMemory proves that an agent whose
+// catalog entry claims memory support but names a run_harness that ai-memory
+// does not accept also gets memory disabled automatically.
+func TestAgentWithUnsupportedRunHarnessDisablesMemory(t *testing.T) {
+	stubToolsOnPath(t, "cursor-agent", "ai-jail", "ai-memory")
+	dir := t.TempDir()
+	globalYAML := `agents:
+  - name: Cursor
+    command: cursor-agent
+    supports_memory: true
+    memory:
+      run_harness: cursor-agent
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+`
+	globalPath := filepath.Join(dir, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	out, err := runDryRunWithErrOut(t, []string{"--config", globalPath, "--agent", "cursor-agent", "--dry-run"}, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(out, "ai-memory") {
+		t.Fatalf("dry-run = %q; ai-memory must be disabled for unsupported harness", out)
+	}
+	if !strings.Contains(errOut.String(), "does not accept harness") {
+		t.Fatalf("stderr = %q; want warning about unsupported harness", errOut.String())
+	}
+}
+
+// TestAgentWithoutYoloSupportDisablesYolo proves that passing --yolo for an
+// agent with supports_yolo: false does not append a raw --yolo argument.
+func TestAgentWithoutYoloSupportDisablesYolo(t *testing.T) {
+	stubToolsOnPath(t, "cursor-agent", "ai-jail", "ai-memory")
+	dir := t.TempDir()
+	globalYAML := `agents:
+  - name: Cursor
+    command: cursor-agent
+    supports_memory: false
+    supports_yolo: false
+permissions:
+  - id: jail
+    name: Jail
+    default: true
+`
+	globalPath := filepath.Join(dir, "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(globalYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	out, err := runDryRunWithErrOut(t, []string{"--config", globalPath, "--agent", "cursor-agent", "--yolo", "--dry-run"}, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(out, "--yolo") {
+		t.Fatalf("dry-run = %q; --yolo must be disabled for cursor-agent", out)
+	}
+	if !strings.Contains(errOut.String(), "does not support --yolo") {
+		t.Fatalf("stderr = %q; want warning about unsupported yolo", errOut.String())
+	}
+}
+
+// runDryRunWithErrOut is like runDryRun but captures stderr for assertions.
+func runDryRunWithErrOut(t *testing.T, args []string, errOut *bytes.Buffer) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	err := run(args, strings.NewReader(""), &out, errOut)
+	return out.String(), err
 }

@@ -26,6 +26,9 @@ const aiMemoryCommand = "ai-memory"
 var userHomeDir = os.UserHomeDir
 var isWindows = func() bool { return runtime.GOOS == "windows" }
 
+// runtimeGOOS mirrors runtime.GOOS so tests can simulate macOS behavior.
+var runtimeGOOS = func() string { return runtime.GOOS }
+
 // ownedMemoryEnvKeys are the AI_MEMORY_* variables the launcher owns. They are
 // always stripped from the inherited environment first; only an enabled memory
 // wrapper re-adds the exact values it needs. Leaving them in when memory is
@@ -35,6 +38,14 @@ var ownedMemoryEnvKeys = []string{
 	"AI_MEMORY_AUTH_TOKEN",
 	"AI_MEMORY_NATIVE_BIN",
 }
+
+// cursorCredentialStoreEnv is the variable Cursor's wrapper reads to decide
+// whether to use the macOS login keychain. Inside ai-jail the keychain is not
+// accessible, so the launcher defaults it to "file" on macOS when jail is on.
+// A user-supplied value is preserved.
+//
+// #nosec G101 — this is the name of an upstream env var, not a secret value.
+const cursorCredentialStoreEnv = "AGENT_CLI_CREDENTIAL_STORE"
 
 // Environment returns the inherited environment with the configured ai-memory
 // server URL and auth token applied to child processes. ai-memory reads these
@@ -50,6 +61,14 @@ func Environment(cfg LaunchConfig) []string {
 	env := append([]string(nil), os.Environ()...)
 	for _, key := range ownedMemoryEnvKeys {
 		env = upsertEnv(env, key, "")
+	}
+	// Cursor's macOS wrapper reaches for the login keychain, which is not
+	// accessible inside ai-jail. Default it to a file-backed store unless the
+	// operator already configured a different value.
+	if cfg.UseJail && runtimeGOOS() == "darwin" && cfg.Agent.Command == "cursor-agent" {
+		if !envHas(env, cursorCredentialStoreEnv) {
+			env = upsertEnv(env, cursorCredentialStoreEnv, "file")
+		}
 	}
 	if !cfg.UseMemory {
 		return env
@@ -79,6 +98,35 @@ func Environment(cfg LaunchConfig) []string {
 		}
 	}
 	return env
+}
+
+// envHas reports whether env already contains a value for key.
+func envHas(env []string, key string) bool {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// AgentRequiredMounts returns read-write mounts an agent needs to function
+// inside ai-jail that are not covered by the generic auto-detection. These are
+// agent-specific state directories (e.g. Cursor's ~/.cursor) and are only
+// returned when the directory exists on the host.
+func AgentRequiredMounts(agent config.Agent, home string, goos string) []config.Mount {
+	if goos != "darwin" {
+		return nil
+	}
+	switch agent.Command {
+	case "cursor-agent":
+		dir := filepath.Join(home, ".cursor")
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return []config.Mount{{Path: dir, Mode: "rw"}}
+		}
+	}
+	return nil
 }
 
 // managedNativeRunnerPath resolves the launcher's managed install location of
@@ -280,9 +328,10 @@ func flagEnabled(value string) bool {
 // wraps the harness, --yolo is passed to the ai-memory run invocation, which
 // does its own per-harness translation; otherwise the agent's declared
 // yolo_flag is used, falling back to --yolo. A flag already present in
-// extra_args is never duplicated.
+// extra_args is never duplicated. Agents that do not declare yolo support
+// keep the flag off regardless of the launch option.
 func appendYoloFlag(command []string, cfg LaunchConfig) []string {
-	if !cfg.Yolo {
+	if !cfg.Yolo || !cfg.Agent.SupportsYolo {
 		return command
 	}
 	flag := cfg.Agent.YoloFlag
