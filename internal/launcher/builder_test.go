@@ -431,9 +431,6 @@ func TestEnvironmentDoesNotSetCursorCredentialStoreWithoutJail(t *testing.T) {
 func TestAgentRequiredMountsCursorOnDarwin(t *testing.T) {
 	dir := t.TempDir()
 	cursorDir := filepath.Join(dir, ".cursor")
-	if err := os.MkdirAll(cursorDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
 	got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "darwin")
 	want := []config.Mount{{Path: cursorDir, Mode: "rw"}}
 	if !reflect.DeepEqual(got, want) {
@@ -441,20 +438,23 @@ func TestAgentRequiredMountsCursorOnDarwin(t *testing.T) {
 	}
 }
 
-func TestAgentRequiredMountsEmptyWhenCursorDirMissing(t *testing.T) {
+func TestAgentRequiredMountsCreatesMissingStateDir(t *testing.T) {
 	dir := t.TempDir()
-	if got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "darwin"); got != nil {
-		t.Fatalf("AgentRequiredMounts() = %#v; want nil", got)
+	cursorDir := filepath.Join(dir, ".cursor")
+	if _, err := os.Stat(cursorDir); !os.IsNotExist(err) {
+		t.Fatalf("pre-condition: %s should not exist", cursorDir)
+	}
+	AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "darwin")
+	info, err := os.Stat(cursorDir)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("expected %s to be created as directory", cursorDir)
 	}
 }
 
-func TestAgentRequiredMountsEmptyOnLinux(t *testing.T) {
+func TestAgentRequiredMountsWorksOnLinux(t *testing.T) {
 	dir := t.TempDir()
 	cursorDir := filepath.Join(dir, ".cursor")
-	if err := os.MkdirAll(cursorDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "linux"); got != nil {
-		t.Fatalf("AgentRequiredMounts() = %#v; want nil", got)
+	if got := AgentRequiredMounts(config.Agent{Command: "cursor-agent"}, dir, "linux"); len(got) != 1 || got[0].Path != cursorDir {
+		t.Fatalf("AgentRequiredMounts() = %#v; want one mount for %s", got, cursorDir)
 	}
 }
