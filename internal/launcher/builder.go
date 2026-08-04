@@ -39,14 +39,6 @@ var ownedMemoryEnvKeys = []string{
 	"AI_MEMORY_NATIVE_BIN",
 }
 
-// cursorCredentialStoreEnv is the variable Cursor's wrapper reads to decide
-// whether to use the macOS login keychain. Inside ai-jail the keychain is not
-// accessible, so the launcher defaults it to "file" on macOS when jail is on.
-// A user-supplied value is preserved.
-//
-// #nosec G101 — this is the name of an upstream env var, not a secret value.
-const cursorCredentialStoreEnv = "AGENT_CLI_CREDENTIAL_STORE"
-
 // Environment returns the inherited environment with the configured ai-memory
 // server URL and auth token applied to child processes. ai-memory reads these
 // variables for its runtime wrapper and generated integrations. When the
@@ -62,12 +54,14 @@ func Environment(cfg LaunchConfig) []string {
 	for _, key := range ownedMemoryEnvKeys {
 		env = upsertEnv(env, key, "")
 	}
-	// Cursor's macOS wrapper reaches for the login keychain, which is not
-	// accessible inside ai-jail. Default it to a file-backed store unless the
-	// operator already configured a different value.
-	if cfg.UseJail && runtimeGOOS() == "darwin" && cfg.Agent.Command == "cursor-agent" {
-		if !envHas(env, cursorCredentialStoreEnv) {
-			env = upsertEnv(env, cursorCredentialStoreEnv, "file")
+	// Some agents reach for host credential stores that are inaccessible inside
+	// ai-jail (e.g. the macOS login keychain). Default them to a file-backed
+	// store unless the operator already configured a different value.
+	if cfg.UseJail {
+		if key, value := AgentCredentialStoreEnv(cfg.Agent, runtimeGOOS()); key != "" {
+			if !envHas(env, key) {
+				env = upsertEnv(env, key, value)
+			}
 		}
 	}
 	if !cfg.UseMemory {
@@ -109,24 +103,6 @@ func envHas(env []string, key string) bool {
 		}
 	}
 	return false
-}
-
-// AgentRequiredMounts returns read-write mounts an agent needs to function
-// inside ai-jail that are not covered by the generic auto-detection. These are
-// agent-specific state directories (e.g. Cursor's ~/.cursor) and are only
-// returned when the directory exists on the host.
-func AgentRequiredMounts(agent config.Agent, home string, goos string) []config.Mount {
-	if goos != "darwin" {
-		return nil
-	}
-	switch agent.Command {
-	case "cursor-agent":
-		dir := filepath.Join(home, ".cursor")
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return []config.Mount{{Path: dir, Mode: config.MountReadWrite}}
-		}
-	}
-	return nil
 }
 
 // managedNativeRunnerPath resolves the launcher's managed install location of
