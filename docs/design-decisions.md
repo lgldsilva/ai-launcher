@@ -233,16 +233,26 @@ operator-added declarations.
   out until it gets its own flag and its own answer to "which file may it
   touch". Nothing is blocked meanwhile — running the upstream command by hand
   does the same thing.
-- **Two upstream questions we cannot answer from here.** Both need a live
-  upstream and are tracked as issues rather than pretended closed:
-  [#17](https://github.com/lgldsilva/ai-launcher/issues/17) — whether ai-jail
-  permits writes through a checkout-controlled `.ai-jail` symlink when the
-  launcher emits `--no-hide-config`; and
-  [#18](https://github.com/lgldsilva/ai-launcher/issues/18) — whether one
-  authenticated ai-memory token can resume or mutate a workstream under another
-  workspace/project when the launcher forwards repository-selected scope
-  fields. Neither is a launcher bug we can fix by composing a different argv;
-  both change what the launcher is allowed to forward if the answer is bad.
+- **Two upstream questions we handle at the trust boundary.** Both need a live
+  upstream runtime for a definitive answer, so the launcher treats them as
+  policy decisions rather than pretending they are closed:
+  [#17](https://github.com/lgldsilva/ai-launcher/issues/17) — a
+  checkout-controlled `.ai-jail` symlink can change what ai-jail reads and
+  writes when config masking is disabled. The launcher already emits
+  `--no-hide-config` automatically for bwrap compatibility; for an unsaved
+  workspace file that is a security decision made by the repository, so the
+  trust gate now refuses the launch unless the operator passes
+  `--no-local-config` or saves the selection.
+  [#18](https://github.com/lgldsilva/ai-launcher/issues/18) — an authenticated
+  ai-memory token could in principle resume or mutate a workstream under another
+  workspace/project if the launcher forwards repository-selected scope fields.
+  The trust gate now treats `options.workspace` and `options.project` like
+  `options.yolo` or `options.extra_args`: an unsaved local config setting them
+  requires the matching `--workspace` / `--project` CLI flag (or a saved
+  selection). This does not prove what the upstream server authorizes, but it
+  ensures the operator explicitly agrees with the scope the launcher forwards.
+  A live upstream integration test remains the only way to close the question
+  fully; until then the boundary records the risk explicitly.
 
 ## Mistakes to avoid
 
