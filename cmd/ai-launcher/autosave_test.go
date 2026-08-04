@@ -17,7 +17,7 @@ import (
 func stubRunTUI(t *testing.T, confirmed launcher.LaunchConfig) func() {
 	t.Helper()
 	previous := runTUI
-	runTUI = func(config.Global, launcher.LaunchConfig, tui.Hooks, string) (launcher.LaunchConfig, error) {
+	runTUI = func(config.Global, launcher.LaunchConfig, tui.Hooks, string, tui.Options) (launcher.LaunchConfig, error) {
 		return confirmed, nil
 	}
 	return func() { runTUI = previous }

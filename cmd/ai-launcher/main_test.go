@@ -132,6 +132,27 @@ func runDryRun(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// TestNoLocalConfigIgnoresWorkspaceFile proves that --no-local-config skips
+// the workspace .ai-launch.yaml entirely: a file that disables the sandbox is
+// treated as absent, so the global default jail stays on and the launch
+// succeeds without the explicit --no-jail normally required by the trust gate.
+func TestNoLocalConfigIgnoresWorkspaceFile(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--agent", "codex", "--no-local-config", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v; --no-local-config must ignore the local file", err)
+	}
+	if !strings.Contains(out, "ai-jail") {
+		t.Fatalf("dry-run = %q; want the global default jail applied", out)
+	}
+
+	// Without the flag the same invocation must be refused by the trust boundary.
+	_, err = runDryRun(t, "--config", globalPath, "--local-config", localPath, "--agent", "codex", "--dry-run")
+	if err == nil || !strings.Contains(err.Error(), "local config disables the sandbox") {
+		t.Fatalf("without --no-local-config error = %v; want trust refusal", err)
+	}
+}
+
 func TestCorruptLocalConfigWarnsAndContinues(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "options: [not, valid")
 	var out, errOut bytes.Buffer

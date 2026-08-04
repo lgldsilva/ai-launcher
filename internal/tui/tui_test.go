@@ -10,9 +10,11 @@ import (
 	"unsafe"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
+	"github.com/muesli/termenv"
 )
 
 func applyKey(t *testing.T, model Model, key tea.KeyMsg) Model {
@@ -27,6 +29,30 @@ func applyKey(t *testing.T, model Model, key tea.KeyMsg) Model {
 
 func runeKey(value string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+}
+
+func TestReloadConfigPreservesSelection(t *testing.T) {
+	stubWindows(t, false)
+	launch := launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "codex"},
+		UseJail:     true,
+		UseMemory:   true,
+		Permissions: map[string]bool{},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	model.opts.GlobalPath = ""
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	got, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update() returned %T; want Model", updated)
+	}
+	if got.launch.Agent.Command != "codex" {
+		t.Fatalf("reload changed agent selection: %q", got.launch.Agent.Command)
+	}
+	if !strings.Contains(got.status, "reloaded") {
+		t.Fatalf("expected reload status, got %q", got.status)
+	}
 }
 
 func TestModelRendersAndNavigatesAllSections(t *testing.T) {
@@ -671,5 +697,28 @@ func TestNewProgramEnablesAltScreen(t *testing.T) {
 	opts := *(*int16)(unsafe.Pointer(field.UnsafeAddr()))
 	if opts&1 == 0 {
 		t.Fatal("newProgram must be created with tea.WithAltScreen() to keep the layout stable on short terminals")
+	}
+}
+
+// TestApplyDisplayOptionsSetsColorProfile guards the --no-color and
+// --high-contrast flag wiring: the TUI must force lipgloss into the requested
+// color profile so the rest of the rendering stays consistent.
+func TestApplyDisplayOptionsSetsColorProfile(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	original := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(original) })
+
+	model.opts.NoColor = true
+	applyDisplayOptions(&model)
+	if got := lipgloss.ColorProfile(); got != termenv.Ascii {
+		t.Fatalf("NoColor profile = %v; want Ascii", got)
+	}
+
+	model.opts.NoColor = false
+	model.opts.HighContrast = true
+	applyDisplayOptions(&model)
+	if got := lipgloss.ColorProfile(); got != termenv.ANSI256 {
+		t.Fatalf("HighContrast profile = %v; want ANSI256", got)
 	}
 }
