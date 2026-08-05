@@ -272,6 +272,19 @@ func TestSymlinkedProjectJailConfigDisablesHideConfig(t *testing.T) {
 	}
 	restore := chdir(t, dir)
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	// A checkout-controlled .ai-jail symlink is refused by the trust boundary
+	// unless the selection was saved by the operator (provenance), so save first.
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseJail:   true,
+		UseMemory: false,
+	}); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
 	restore()
 	if err != nil {
@@ -302,7 +315,8 @@ func TestRealProjectJailConfigKeepsHideConfig(t *testing.T) {
 
 // Disabling the project's config mask because .ai-jail is a symlink is a
 // policy downgrade: it must be announced, naming the file and the effect,
-// not applied silently.
+// not applied silently. Saved selections are trusted, so the warning path is
+// reached after recording provenance.
 func TestSymlinkedProjectJailConfigWarnsWhenDisablingHideConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
@@ -315,8 +329,19 @@ func TestSymlinkedProjectJailConfigWarnsWhenDisablingHideConfig(t *testing.T) {
 	}
 	restore := chdir(t, dir)
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseJail:   true,
+		UseMemory: false,
+	}); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
 	var out, errOut bytes.Buffer
-	err := run([]string{"--config", globalPath, "--local-config", localPath, "--dry-run"}, strings.NewReader(""), &out, &errOut)
+	err = run([]string{"--config", globalPath, "--local-config", localPath, "--dry-run"}, strings.NewReader(""), &out, &errOut)
 	restore()
 	if err != nil {
 		t.Fatalf("run() error = %v", err)

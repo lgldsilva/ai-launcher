@@ -340,6 +340,8 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
 		trust.jailFlags = raw.Options.JailFlags
 		trust.paramValues = raw.Options.ParamValues
+		trust.workspace = raw.Options.Workspace
+		trust.project = raw.Options.Project
 	}
 	if !overrides.mounts && !noLocalConfig {
 		trust.mounts = raw.Mounts
@@ -394,6 +396,8 @@ type localTrust struct {
 	extraArgs      []string          // file value when profile does not own options
 	jailFlags      config.JailFlags  // file value when profile does not own options
 	paramValues    map[string]string // file value when profile does not own options
+	workspace      string            // file value when profile does not own options
+	project        string            // file value when profile does not own options
 }
 
 // enforceLocalConfigTrust refuses a workspace-local config that lowers the
@@ -487,7 +491,57 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 			strings.Join(names, ", "))
 	}
 
+	if err := enforceMemoryScopeConsent(flags, trust); err != nil {
+		return err
+	}
+	if err := enforceProjectJailSymlinkConsent(trust, savedLocally); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// enforceMemoryScopeConsent refuses an unsaved local config that sets
+// ai-memory workspace/project/workstream scopes. Those values are forwarded
+// verbatim to `ai-memory run`, so a repository file must not redirect an
+// authenticated token to another scope without the operator repeating the
+// same value on the command line.
+func enforceMemoryScopeConsent(flags *flag.FlagSet, trust localTrust) error {
+	if !trust.optionsRaw {
+		return nil
+	}
+	if strings.TrimSpace(trust.workspace) != "" && !flagsWasSet(flags, "workspace") {
+		return fmt.Errorf("local config sets options.workspace %q without --workspace; "+
+			"pass --workspace %s to accept explicitly, or save the selection",
+			trust.workspace, trust.workspace)
+	}
+	if strings.TrimSpace(trust.project) != "" && !flagsWasSet(flags, "project") {
+		return fmt.Errorf("local config sets options.project %q without --project; "+
+			"pass --project %s to accept explicitly, or save the selection",
+			trust.project, trust.project)
+	}
+	return nil
+}
+
+// enforceProjectJailSymlinkConsent refuses when the project has a symlinked
+// .ai-jail file. A checkout-controlled symlink changes what ai-jail reads and
+// writes when config masking is disabled, so it must not happen without
+// operator consent. When the local file is ignored entirely the symlink is not
+// attributed to repository input, hence the check is gated on trust.optionsRaw.
+func enforceProjectJailSymlinkConsent(trust localTrust, savedLocally bool) error {
+	if savedLocally || !trust.optionsRaw {
+		return nil
+	}
+	link, target, ok := projectJailConfigSymlink()
+	if !ok {
+		return nil
+	}
+	if target == "" {
+		return fmt.Errorf("%s is a broken symlink; ai-jail config masking cannot be disabled safely. "+
+			"Remove the symlink, launch with --no-local-config, or save the selection", link)
+	}
+	return fmt.Errorf("%s is a symlink to %s; ai-jail config masking would be disabled for this launch. "+
+		"Pass --no-local-config, or save the selection to accept", link, target)
 }
 
 // enforcePermissionConsent requires an explicit CLI flag for every permission
@@ -1339,18 +1393,35 @@ func saveLocalSelection(globalPath string, save bool, path string, local config.
 	return config.RecordTrustedLocalConfig(globalPath, path)
 }
 
+// projectJailConfigSymlink reports whether the working directory's .ai-jail
+// entry is a symlink and, if so, where it resolves. A checkout-controlled
+// symlink here can change what ai-jail reads and writes when config masking is
+// disabled, so the trust boundary needs to see it before the launch proceeds.
+func projectJailConfigSymlink() (link, target string, ok bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", false
+	}
+	link = filepath.Join(wd, ".ai-jail")
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", "", false
+	}
+	target, err = filepath.EvalSymlinks(link)
+	if err != nil {
+		return link, "", true
+	}
+	return link, target, true
+}
+
 // symlinkedProjectJailConfig returns a pointer to false when the working
 // directory's .ai-jail file is a symlink, nil otherwise. ai-jail's default
 // --hide-config masks <project>/.ai-jail with a bind mount, which bwrap
 // cannot create over a symlink ("Can't create file ... No such file or
 // directory"), so the mask must be disabled for that project.
 func symlinkedProjectJailConfig() *bool {
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil
-	}
-	info, err := os.Lstat(filepath.Join(wd, ".ai-jail"))
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+	_, _, ok := projectJailConfigSymlink()
+	if !ok {
 		return nil
 	}
 	disable := false
