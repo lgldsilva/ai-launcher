@@ -304,10 +304,13 @@ func TestLocalConfigSymlinkedProjectJailRequiresExplicitConsent(t *testing.T) {
 	}
 
 	// --no-local-config is the explicit opt-out that bypasses the checkout file.
-	stdout, stderr, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
-		"--no-local-config", "--no-jail", "--dry-run")
+	// --agent is required because DefaultLocal() picks the built-in "claude"
+	// agent when no workspace file owns the selection, and "claude" is not in
+	// the test PATH.
+	_, _, err = runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--no-local-config", "--no-jail", "--agent", "custom-cli", "--dry-run")
 	if err != nil {
-		t.Fatalf("run() error = %v; stderr=%q stdout=%q; --no-local-config must bypass symlink refusal", err, stderr, stdout)
+		t.Fatalf("run() error = %v; --no-local-config must bypass symlink refusal", err)
 	}
 }
 

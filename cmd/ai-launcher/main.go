@@ -895,16 +895,6 @@ func resolveWorkstreamID(opts *cliOptions) (string, error) {
 func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer) (merged, raw config.Local, applied *config.Profile, err error) {
 	if opts.noLocalConfig {
 		defaults := config.DefaultLocal()
-		// When the workspace file is ignored, the operator's trusted global
-		// catalog is the only source for the default agent. DefaultLocal's
-		// built-in agent (claude) is only meaningful when the local file owns
-		// the selection.
-		if len(global.Agents) > 0 {
-			defaults.Agent = global.Agents[0].Name
-		} else {
-			defaults.Agent = ""
-		}
-		_, _ = fmt.Fprintf(errOut, "[debug] noLocalConfig: globalPath=%q agents=%d defaultAgent=%q\n", opts.globalPath, len(global.Agents), defaults.Agent)
 		return defaults, defaults, nil, nil
 	}
 	local, localErr := config.LoadLocal(opts.localPath)
