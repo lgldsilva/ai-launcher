@@ -904,6 +904,7 @@ func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer
 		} else {
 			defaults.Agent = ""
 		}
+		_, _ = fmt.Fprintf(errOut, "[debug] noLocalConfig: agents=%d defaultAgent=%q\n", len(global.Agents), defaults.Agent)
 		return defaults, defaults, nil, nil
 	}
 	local, localErr := config.LoadLocal(opts.localPath)
