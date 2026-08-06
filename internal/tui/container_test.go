@@ -161,3 +161,39 @@ func TestContainerCursorWraps(t *testing.T) {
 		t.Fatalf("cursor = %d; want wrap to last stack %d", model.cursor, len(model.stackIDs)-1)
 	}
 }
+
+// H2: switching agents with docker active must re-plan the image selection
+// (kind follows the new agent), or the image would be built for the old one.
+func TestSelectAgentUpdatesDockerSelection(t *testing.T) {
+	stubWindows(t, false)
+	launch := launcher.LaunchConfig{
+		UseDocker:   true,
+		UseMemory:   true,
+		Permissions: map[string]bool{},
+		Docker: container.RunConfig{
+			Selection: container.Selection{Stacks: []string{"go"}},
+		},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	// Move the cursor to a script agent (claude) and select it.
+	for i, agent := range model.agents {
+		if agent.Agent.Command == "claude" {
+			// cursor 0 is "continue"; agent rows start at 1.
+			for model.cursor < i+1 {
+				model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
+			}
+			break
+		}
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(model.launch.Docker.Selection.Agents) != 1 {
+		t.Fatalf("docker selection agents = %d; want 1 after selecting claude", len(model.launch.Docker.Selection.Agents))
+	}
+	got := model.launch.Docker.Selection.Agents[0]
+	if got.Command != "claude" {
+		t.Fatalf("selection agent = %q; want claude", got.Command)
+	}
+	if got.Kind != container.InstallScript {
+		t.Fatalf("selection kind = %s; want script (claude has source_url)", got.Kind)
+	}
+}

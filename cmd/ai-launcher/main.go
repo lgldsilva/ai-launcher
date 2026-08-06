@@ -832,6 +832,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		ExtraArgs:       inputs.local.Options.ExtraArgs,
 		ParamValues:     inputs.local.Options.ParamValues,
 	}
+	// The docker backend mounts the current project; default the workspace to
+	// the working directory when neither workspace nor project were configured
+	// (the jail gets the cwd implicitly, docker needs it explicitly — M6).
+	if launchConfig.UseDocker && strings.TrimSpace(launchConfig.Workspace) == "" && strings.TrimSpace(launchConfig.Project) == "" {
+		launchConfig.Workspace = mustGetwd()
+	}
 	launchConfig = finalizeLaunchConfig(launchConfig, global, home, errOut)
 	if opts.saveProfile != "" {
 		return saveProfileCommand(opts.globalPath, global, opts.saveProfile, launchConfig, out)
@@ -1508,7 +1514,7 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, func(), 
 	}
 
 	// The image needs the launcher binary only when a release-recipe agent is
-	// selected (design C1); script and host-binary agents build without it.
+	// selected (design C1); script, npm and host-binary agents build without it.
 	needLauncher := false
 	for _, agent := range sel.Agents {
 		if agent.Kind == container.InstallRelease {
@@ -1537,20 +1543,32 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, func(), 
 	cleanup()
 
 	// Apply MCP config overlays: rewrite loopback URLs in known config files
-	// into temp copies mounted over the originals (R7 item 31). The argv built
-	// by launcher.Build mounts the original paths; appending the overlay mount
-	// after it makes the rewritten copy win inside the container.
+	// into temp copies mounted over the originals (R7 item 31). The overlays
+	// go into the RunConfig so BuildRunCommand emits them as -v flags BEFORE
+	// the image argument — appended after the image, docker would treat them
+	// as the agent's native args (C2).
 	overlayDir, err := os.MkdirTemp("", "ai-launcher-overlay-")
 	if err != nil {
 		return argv, noop, err
 	}
 	disableRewrite := container.RewriteDisabled(os.Environ())
+	runConfig := r.launchConfig.Docker
+	runConfig.Overlays = nil
 	for _, mount := range overlayCandidates(r.launchConfig.HomeDir) {
 		overlay := container.PlanOverlay(mount, overlayDir, container.RewriteLocalhost, disableRewrite)
 		if overlay == nil {
 			continue
 		}
-		argv = append(argv, "-v", overlay.OverlayMountSpec())
+		runConfig.Overlays = append(runConfig.Overlays, *overlay)
+	}
+	// Rebuild the argv with the overlays in place (the launcher build is pure
+	// and deterministic, so this reproduces the same command plus the mounts).
+	launch := r.launchConfig
+	launch.Docker = runConfig
+	argv, err = launcher.Build(launch)
+	if err != nil {
+		_ = os.RemoveAll(overlayDir)
+		return argv, noop, err
 	}
 	// The overlay copies may carry tokens (claude.json, MCP configs): remove
 	// the whole temp dir after the container exits, success or failure.

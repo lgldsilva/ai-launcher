@@ -48,9 +48,23 @@ func selectionCanonical(selection Selection) (string, error) {
 		b.WriteString(agent.Version)
 		b.WriteString("@")
 		b.WriteString(string(agent.Kind))
+		// The recipe text must be part of the hash: a changed source_url,
+		// npm package, or setup flag changes the Dockerfile and therefore the
+		// image — the tag must change too or the cache lies (H1).
+		if agent.Kind == InstallScript {
+			b.WriteString(":")
+			b.WriteString(agent.Script)
+		}
+		if agent.Kind == InstallNpm {
+			b.WriteString(":")
+			b.WriteString(agent.NpmPackage)
+		}
 		if agent.Kind == InstallHostBinary {
 			b.WriteString(":")
 			b.WriteString(agent.HostPath)
+		}
+		if agent.AllowSetupFailure {
+			b.WriteString(":setup-failure-tolerant")
 		}
 		b.WriteString(",")
 	}

@@ -47,6 +47,11 @@ type RunConfig struct {
 	// cargo, go-build, npm, m2...). Same-path mounts so downloads are reused
 	// on both sides. Resolved by the caller from the selection + home.
 	StackCacheMounts []string
+	// Overlays are rewritten config copies mounted over the originals inside
+	// the container (MCP localhost→host.docker.internal). They must be
+	// emitted as -v flags BEFORE the image argument, or docker treats them as
+	// the agent's native args (C2).
+	Overlays []OverlayFile
 	// Env are extra KEY=VALUE entries passed via -e (memory server URL,
 	// auth token, ...). Loopback URLs are rewritten to host.docker.internal
 	// unless the value already references it (R5 item 21, R7 item 33).
@@ -111,6 +116,14 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	if cfg.UID > 0 || cfg.GID > 0 {
 		argv = append(argv, "--user", fmt.Sprintf("%d:%d", cfg.UID, cfg.GID))
 	}
+	// HOME must be explicit: docker run does not inherit the parent HOME, and
+	// with --user UID:GID (no passwd entry) the container defaults HOME to /
+	// or /root. Every same-path credential/cache mount resolves under $HOME,
+	// so without -e HOME the agent reads the wrong location and the mounts
+	// are unreachable (C1).
+	if strings.TrimSpace(cfg.HomeDir) != "" {
+		argv = append(argv, "-e", "HOME="+cfg.HomeDir)
+	}
 	argv = append(argv, "-w", cfg.ProjectDir)
 
 	// Same-path project mount (R2 item 6): rw, host path = container path.
@@ -162,6 +175,13 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 
 	if cfg.AddHostGateway {
 		argv = append(argv, hostGatewayArg)
+	}
+
+	// Overlay mounts (rewritten MCP configs) shadow the originals: they must
+	// precede the image argument so docker parses them as mount flags, not as
+	// the agent's native arguments (C2).
+	for _, overlay := range cfg.Overlays {
+		argv = append(argv, "-v", overlay.OverlayMountSpec())
 	}
 
 	argv = append(argv, image)

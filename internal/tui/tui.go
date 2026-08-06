@@ -1840,6 +1840,18 @@ func (m *Model) applyAgentCursorSelection() error {
 	m.launch.ContinueSession = false
 	m.launch.Agent = selectedAgent
 	m.launch.Executable = selected.Path
+	// In docker mode the image selection must follow the newly selected agent:
+	// re-plan the install kind (release/script/npm/host) for it so the image
+	// tag and the in-container executable match (H2). The home/version/env
+	// wiring stays with the CLI launch path; only the recipe is re-derived.
+	if m.launch.UseDocker {
+		// The home/version/env wiring stays with the CLI launch path; only the
+		// recipe is re-derived here so the image tag and the in-container
+		// executable match the newly selected agent (H2).
+		m.launch.Docker.Selection.Agents = []container.AgentInstall{
+			container.PlanInstall(selectedAgent, "", selected.Path),
+		}
+	}
 	return nil
 }
 

@@ -126,3 +126,60 @@ func TestImageTagHostBinaryPath(t *testing.T) {
 		t.Fatal("different host paths must produce different tags")
 	}
 }
+
+// H1: a changed install script or npm package must change the tag (the image
+// content changed, so the cache must not lie).
+func TestImageTagChangesWithScript(t *testing.T) {
+	agentsA := []AgentInstall{{Command: "muse", Kind: InstallScript, Script: "curl -fsSL https://a.dev/install.sh | bash"}}
+	agentsB := []AgentInstall{{Command: "muse", Kind: InstallScript, Script: "curl -fsSL https://b.dev/install.sh | bash"}}
+	selA, err := Normalize([]string{"go"}, agentsA, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	selB, err := Normalize([]string{"go"}, agentsB, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	tagA, _ := ImageTag(selA)
+	tagB, _ := ImageTag(selB)
+	if tagA == tagB {
+		t.Fatal("different install scripts must produce different tags")
+	}
+}
+
+func TestImageTagChangesWithNpmPackage(t *testing.T) {
+	agentsA := []AgentInstall{{Command: "gemini", Kind: InstallNpm, NpmPackage: "@google/gemini-cli"}}
+	agentsB := []AgentInstall{{Command: "gemini", Kind: InstallNpm, NpmPackage: "@custom/gemini"}}
+	selA, err := Normalize([]string{"go"}, agentsA, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	selB, err := Normalize([]string{"go"}, agentsB, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	tagA, _ := ImageTag(selA)
+	tagB, _ := ImageTag(selB)
+	if tagA == tagB {
+		t.Fatal("different npm packages must produce different tags")
+	}
+}
+
+func TestImageTagChangesWithSetupFailureFlag(t *testing.T) {
+	base := AgentInstall{Command: "devin", Kind: InstallScript, Script: "curl -fsSL https://x.dev/install.sh | bash"}
+	selA, err := Normalize([]string{"go"}, []AgentInstall{base}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	withFlag := base
+	withFlag.AllowSetupFailure = true
+	selB, err := Normalize([]string{"go"}, []AgentInstall{withFlag}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	tagA, _ := ImageTag(selA)
+	tagB, _ := ImageTag(selB)
+	if tagA == tagB {
+		t.Fatal("the setup-failure flag must be part of the tag")
+	}
+}

@@ -46,7 +46,7 @@ func TestDockerfile(t *testing.T) {
 		"# Agent: kiro-cli",
 		"bind-mounted from host /opt/kiro/bin",
 		"curl -fsSL https://dev.meta.ai/install.sh | bash",
-		"ENV PATH=\"/root/.local/bin:$(ls -d /root/.nvm/versions/node/*/bin | head -1):${PATH}\"",
+		"ENV PATH=\"/root/.local/bin:/usr/local/lib/nvm-bin/bin:${PATH}\"",
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("Dockerfile missing %q\n---\n%s", want, df)

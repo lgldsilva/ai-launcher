@@ -66,12 +66,53 @@ func AgentVersion(home, command string, statePath string) string {
 		if tag == "" || strings.EqualFold(tag, "latest") {
 			continue
 		}
-		// Prefer the newest entry when several paths match.
-		if tag > best {
+		// Prefer the newest entry when several paths match. Versions are
+		// compared numerically per component (v2.10 > v2.9), not as strings.
+		if semverGreater(tag, best) {
 			best = tag
 		}
 	}
 	return best
+}
+
+// semverGreater compares two version strings component-wise, stripping a
+// leading v and splitting on dots and dashes so numeric parts compare
+// numerically (v2.10.0 > v2.9.0). Empty is always lower.
+func semverGreater(a, b string) bool {
+	if strings.TrimSpace(a) == "" {
+		return false
+	}
+	if strings.TrimSpace(b) == "" {
+		return true
+	}
+	aParts := versionParts(a)
+	bParts := versionParts(b)
+	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+		an := parseVersionPart(aParts[i])
+		bn := parseVersionPart(bParts[i])
+		if an != bn {
+			return an > bn
+		}
+	}
+	return len(aParts) > len(bParts)
+}
+
+func versionParts(version string) []string {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	return strings.FieldsFunc(version, func(r rune) bool {
+		return r == '.' || r == '-' || r == '+'
+	})
+}
+
+func parseVersionPart(part string) int {
+	n := 0
+	for _, r := range part {
+		if r < '0' || r > '9' {
+			break
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 // PlanInstall derives the AgentInstall for a catalog agent: a release recipe

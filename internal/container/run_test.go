@@ -261,3 +261,72 @@ func TestBuildRunCommandSkipsMissingMountSources(t *testing.T) {
 	assertArg(t, got, "/work:/work")
 	assertArg(t, got, "/var/run/docker.sock:/var/run/docker.sock")
 }
+
+// C1: HOME must be passed explicitly so same-path credential/cache mounts
+// resolve under the host home (docker does not inherit the parent HOME).
+func TestBuildRunCommandEmitsHome(t *testing.T) {
+	sel := testSelection(t)
+	got, err := BuildRunCommand(RunConfig{
+		Selection:       sel,
+		HomeDir:         "/home/tester",
+		ProjectDir:      "/w",
+		AgentExecutable: "claude",
+	})
+	if err != nil {
+		t.Fatalf("BuildRunCommand() error = %v", err)
+	}
+	assertContains(t, got, "-e", "HOME=/home/tester")
+	// Without a home, no -e HOME is emitted.
+	got2, err := BuildRunCommand(RunConfig{
+		Selection:       sel,
+		ProjectDir:      "/w",
+		AgentExecutable: "claude",
+	})
+	if err != nil {
+		t.Fatalf("BuildRunCommand() error = %v", err)
+	}
+	for _, entry := range got2 {
+		if entry == "-e" {
+			t.Fatalf("no -e HOME expected without HomeDir, got %#v", got2)
+		}
+	}
+}
+
+// C2: overlays must appear as -v flags BEFORE the image argument, or docker
+// would treat them as the agent's native args.
+func TestBuildRunCommandOverlaysBeforeImage(t *testing.T) {
+	sel := testSelection(t)
+	overlay := OverlayFile{HostPath: "/home/u/.claude.json", RewrittenPath: "/tmp/ov/.claude.json"}
+	got, err := BuildRunCommand(RunConfig{
+		Selection:       sel,
+		HomeDir:         "/home/u",
+		ProjectDir:      "/w",
+		AgentExecutable: "claude",
+		Overlays:        []OverlayFile{overlay},
+	})
+	if err != nil {
+		t.Fatalf("BuildRunCommand() error = %v", err)
+	}
+	overlaySpec := overlay.OverlayMountSpec()
+	tag, err := ImageTag(sel)
+	if err != nil {
+		t.Fatalf("ImageTag() error = %v", err)
+	}
+	imageIdx, overlayIdx := -1, -1
+	for i, entry := range got {
+		if entry == tag {
+			imageIdx = i
+		}
+		if entry == overlaySpec {
+			overlayIdx = i
+		}
+	}
+	if imageIdx == -1 || overlayIdx == -1 {
+		t.Fatalf("argv %#v missing image or overlay", got)
+	}
+	if overlayIdx > imageIdx {
+		t.Fatalf("overlay (idx %d) must precede image (idx %d): %#v", overlayIdx, imageIdx, got)
+	}
+	// The -v flag and its spec must be adjacent.
+	assertContains(t, got, "-v", overlaySpec)
+}

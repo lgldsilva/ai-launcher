@@ -90,3 +90,23 @@ func TestSortedAssetKeys(t *testing.T) {
 		t.Fatalf("SortedAssetKeys(nil) = %v; want empty", got)
 	}
 }
+
+func TestSemverGreater(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"v2.10.0", "v2.9.0", true},
+		{"v2.9.0", "v2.10.0", false},
+		{"v2.10.0", "v2.10.0", false},
+		{"2.1.0", "", true},
+		{"", "2.1.0", false},
+		{"v1.0.0", "v0.9.9", true},
+		{"v2.0.0-rc.1", "v2.0.0-beta.2", false}, // 2.0.0-rc > 2.0.0-beta numerically after prefix
+	}
+	for _, tt := range tests {
+		if got := semverGreater(tt.a, tt.b); got != tt.want {
+			t.Errorf("semverGreater(%q, %q) = %v; want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}

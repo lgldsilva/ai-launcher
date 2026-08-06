@@ -38,6 +38,27 @@ devin) and 5 from npm (gemini, qwen, crush, openclaw, cline) — validated by
 real docker builds in the flavor matrix. kilo installs from its (currently
 drifting) release recipe.
 
+### Fixed — runtime correctness from the final review (GLM 5.2)
+
+The final code review caught three critical runtime bugs the argv-only tests
+could not see; all fixed and re-validated with real docker builds:
+
+- **HOME is now passed explicitly** (`-e HOME=<home>`) — docker run does not
+  inherit the parent HOME, and with `--user UID:GID` the container defaults
+  to `/` or `/root`, making every same-path credential/cache mount
+  unreachable.
+- **MCP overlays are emitted before the image argument** — appended after the
+  image, docker treated `-v` as the agent's native args and the rewrite never
+  applied.
+- **Declared params and the yolo flag reach the agent** in docker mode (the
+  jail path composed them; docker silently dropped them).
+- Image tag now hashes the install script / npm package / setup flag, so a
+  changed recipe invalidates the cache.
+- The TUI re-plans the image selection when the agent changes; npm global
+  prefix pinned to a fixed dir that joins PATH (ENV cannot expand `$(...)`);
+  the docker workspace defaults to the cwd; agent versions compare
+  component-wise (v2.10 > v2.9).
+
 ### Added — docker container backend with stack selection
 
 The launcher can now run the agent inside a docker container instead of

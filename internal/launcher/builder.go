@@ -290,7 +290,12 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 	if run.AgentExecutable == "" {
 		run.AgentExecutable = cfg.Agent.Command
 	}
-	run.AgentArgs = append([]string(nil), cfg.ExtraArgs...)
+	// Native args compose exactly like the jail path: declared params first,
+	// then the yolo flag, then extra args. Without params/yolo the docker
+	// backend silently dropped --param model=... and --yolo (C3).
+	run.AgentArgs = appendDeclaredParams(run.AgentArgs, cfg)
+	run.AgentArgs = appendYoloFlag(run.AgentArgs, cfg)
+	run.AgentArgs = append(run.AgentArgs, cfg.ExtraArgs...)
 	if err := run.Selection.Validate(); err != nil {
 		return nil, err
 	}

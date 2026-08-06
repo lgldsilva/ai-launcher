@@ -260,3 +260,27 @@ func TestDockerIssues(t *testing.T) {
 }
 
 var errNotFound = errors.New("not found")
+
+// C3: declared params and the yolo flag must reach the agent in docker mode
+// (the jail path composes them; the docker path used to drop them).
+func TestBuildDockerRunIncludesParamsAndYolo(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Agent = config.Agent{
+		Command:      "claude",
+		SupportsYolo: true,
+		YoloFlag:     "--dangerously-skip-permissions",
+		Params:       []config.Param{{Name: "model", Flag: "--model", TakesValue: true}},
+	}
+	cfg.ParamValues = map[string]string{"model": "sonnet"}
+	cfg.Yolo = true
+	got, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"--model", "sonnet", "--dangerously-skip-permissions"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Build() missing %q in %s", want, joined)
+		}
+	}
+}

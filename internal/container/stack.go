@@ -185,8 +185,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # Node LTS via nvm (agent installers require a recent Node; distro Node is
-# too old). nvm is shell-only, so symlink node/npm/npx into /usr/local/bin;
-# the npm global bin dir (where pi/devin/other npm CLIs land) joins PATH.
+# too old). nvm is shell-only, so node/npm/npx are symlinked into
+# /usr/local/bin. npm's global prefix is pinned to a fixed dir
+# (/usr/local/lib/nvm-bin) that joins PATH, so npm install -g CLIs land
+# runnable without shell interpolation in ENV (H3): ENV cannot expand
+# $(...), so the install target must be a constant path.
 RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash \
  && export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" \
  && nvm install --lts \
@@ -194,9 +197,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh |
  && ln -sf "$node_bin" /usr/local/bin/node \
  && ln -sf "$(dirname "$node_bin")/npm" /usr/local/bin/npm \
  && ln -sf "$(dirname "$node_bin")/npx" /usr/local/bin/npx \
+ && mkdir -p /usr/local/lib/nvm-bin \
+ && npm config set prefix /usr/local/lib/nvm-bin \
  && node --version && npm --version
 
-ENV PATH="/root/.local/bin:$(ls -d /root/.nvm/versions/node/*/bin | head -1):${PATH}"`
+ENV PATH="/root/.local/bin:/usr/local/lib/nvm-bin/bin:${PATH}"`
 
 // ErrNoStacks is returned when the Dockerfile is requested with an empty
 // stack selection: an agent box with no toolchain is a footgun, not a build.

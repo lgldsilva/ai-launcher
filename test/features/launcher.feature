@@ -943,6 +943,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      -e
+      HOME=/home/tester
       -w
       /home/tester/proj
       -v
@@ -984,6 +986,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      -e
+      HOME=/home/tester
       -w
       /w
       -v

@@ -57,7 +57,7 @@ func TestFlavorMatrix(t *testing.T) {
 			// (~/.local/bin for curl installers, /usr/local/bin for others,
 			// ~/.opencode/bin for opencode, the nvm node bin for npm CLIs like
 			// pi/devin).
-			probe := fmt.Sprintf(`for d in /root/.local/bin /usr/local/bin /usr/bin /root/.opencode/bin /root/.dev/bin /root/.nvm/versions/node/*/bin; do if test -x "$d/%s"; then echo FOUND "$d/%s"; exit 0; fi; done; echo MISSING; exit 1`, agent.Command, agent.Command)
+			probe := fmt.Sprintf(`for d in /root/.local/bin /usr/local/bin /usr/bin /root/.opencode/bin /root/.dev/bin /root/.nvm/versions/node/*/bin /usr/local/lib/nvm-bin/bin; do if test -x "$d/%s"; then echo FOUND "$d/%s"; exit 0; fi; done; echo MISSING; exit 1`, agent.Command, agent.Command)
 			if err := runDockerShell([]string{"docker", "run", "--rm", ctx.ImageTag, "sh", "-c", probe}); err != nil {
 				failures = append(failures, agent.Command+": binary "+err.Error())
 				t.Fatalf("%s binary missing in image: %v", agent.Command, err)
