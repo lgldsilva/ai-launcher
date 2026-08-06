@@ -13,6 +13,19 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Discovered — Kilo Code release assets drifted upstream
+
+The flavor battery surfaced that the built-in `kilo` catalog entry points at
+CLI assets (`kilo-linux-x64.tar.gz`, `kilo-darwin-arm64.zip`) that upstream
+stopped shipping on the `releases/latest` tag: Kilo-Org now publishes a
+parallel `jetbrains/` release series whose assets are JetBrains bundles
+without a CLI. The launcher's installer always resolves `releases/latest`, so
+`ai-launcher --install` (and the docker image build) fails for `kilo` with
+`release asset not found` until upstream ships CLI assets on a latest tag
+again, or the installer learns to skip release series without the platform
+asset. No action is required to use the launcher; this only affects
+installing the kilo agent.
+
 ### Added — docker container backend with stack selection
 
 The launcher can now run the agent inside a docker container instead of
