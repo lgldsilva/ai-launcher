@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -465,4 +466,43 @@ func selectionFromTest(stacks ...string) container.Selection {
 		panic(err)
 	}
 	return selection
+}
+
+// overlayCandidates returns the known per-file configs whose loopback URLs are
+// rewritten for the container, resolved under the home directory.
+func TestOverlayCandidates(t *testing.T) {
+	got := overlayCandidates("/home/u")
+	want := []string{
+		"/home/u/.claude.json",
+		"/home/u/.codex/config.toml",
+		"/home/u/.config/opencode/opencode.json",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("overlayCandidates() = %#v; want %#v", got, want)
+	}
+	if got := overlayCandidates(""); len(got) != 0 {
+		t.Fatalf("overlayCandidates(\"\") = %#v; want none", got)
+	}
+}
+
+// The docker dry-run surfaces the full argv including the image tag, proving
+// the docker chain composes end to end without a docker daemon.
+func TestDockerDryRunPrintsImageArgv(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  docker: true\n  memory: false\n  stacks: [go]\n  workspace: /w\n")
+	stubToolsOnPath(t, "docker")
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--docker-backend", "--stack", "python", "--workspace", "/w", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !strings.Contains(stdout, "docker run") {
+		t.Fatalf("stdout = %q; want docker run", stdout)
+	}
+	if !strings.Contains(stdout, "ai-launcher-box:") {
+		t.Fatalf("stdout = %q; want the image tag", stdout)
+	}
+	if !strings.Contains(stdout, "--add-host=host.docker.internal:host-gateway") {
+		t.Fatalf("stdout = %q; want the host gateway flag", stdout)
+	}
 }

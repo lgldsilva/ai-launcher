@@ -217,6 +217,16 @@ disables the jail (the TUI toggle and the CLI both enforce this). The
 canonical chain therefore becomes `docker run [flags] <image> <harness>
 [native args]` in docker mode.
 
+On launch the launcher materializes a build context (generated Dockerfile,
+a minimal install config naming the selected agents, and a cross-compiled
+linux copy of the launcher itself) and runs `docker build`, streaming the
+daemon output. The in-image install step runs `ai-launcher --install`
+against the minimal config, so the host installer's checksum verification
+and asset selection run inside the build with GOOS=linux — nothing is
+reimplemented in shell (design C1). The image is tagged by the content hash
+of the selection, so an identical selection reuses the cached image without
+rebuilding.
+
 Mounts are same-path: the project is mounted read-write at its own path, and
 the agent credential/history directories (`~/.claude`, `~/.claude.json`,
 `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode`, `~/.muse`) are
@@ -230,7 +240,11 @@ opt-in; write access there is root on the host, and the launcher's
 URLs pointing at `localhost`/`127.0.0.1` (the ai-memory server URL and MCP
 server configs) are rewritten to `host.docker.internal`, with
 `--add-host=host.docker.internal:host-gateway` emitted on Linux so the host
-stays reachable; `AI_LAUNCHER_NO_REWRITE=1` disables the rewrite.
+stays reachable; `AI_LAUNCHER_NO_REWRITE=1` disables the rewrite. Config
+files that store MCP URLs (`~/.claude.json`, opencode config) are handled
+via overlay: the launcher copies the file, rewrites the URLs in the copy,
+and mounts the copy over the original inside the container, so the host
+file is never modified (R7 item 31).
 
 ### Permission → jail argv (implementation)
 

@@ -42,6 +42,17 @@ What ships with it:
   (`~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/opencode`, `~/.muse`)
   are mounted read-only at identical paths, so session continuity and
   ai-memory's path-based project scoping survive.
+- **Real image builds** — on launch, the launcher materializes the build
+  context (generated Dockerfile + minimal install config + a cross-compiled
+  linux copy of itself) and runs `docker build`, streaming the daemon
+  output. The installer runs *inside* the image build with its checksum
+  verification intact (nothing is reimplemented in shell); script agents
+  install via their `curl | bash` recipe. A content-hashed image tag means
+  an identical selection reuses the cached image — the build runs once.
+- **MCP config overlays** — config files that reference `localhost` URLs
+  (`~/.claude.json`, opencode config) are copied, rewritten to
+  `host.docker.internal`, and mounted over the originals inside the
+  container. The host file is never modified.
 - **Permission → mount mapping** — `--ssh`, `--gh` and `--docker` reuse the
   existing permission model: ssh and gh mount their config directories
   read-only, docker mounts the control socket (an explicit opt-in; write

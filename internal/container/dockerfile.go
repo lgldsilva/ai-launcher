@@ -52,17 +52,29 @@ func Dockerfile(selection Selection) (string, error) {
 		}
 	}
 
+	// InstallConfigFile is the container path where the build context places
+	// the minimal global config that names the agents to install (see
+	// cmd/ai-launcher: the CLI renders it from the catalog). The Dockerfile
+	// below COPYs it and runs the launcher's own installer against it, so the
+	// checksum verification logic is reused byte for byte — never reimplemented
+	// in shell (design C1).
+	const InstallConfigFile = "/etc/ai-launch/install-config.yaml"
+
 	for _, agent := range selection.Agents {
 		b.WriteString("\n# Agent: ")
 		b.WriteString(agent.Command)
 		b.WriteString("\n")
 		switch agent.Kind {
 		case InstallRelease:
-			// Design C1: the installer runs inside a scratch container with the
-			// launcher binary present; this placeholder is rewritten by the
-			// build step into the actual COPY+run recipe. The comment pins the
-			// version so the layer is honest and rebuildable.
+			// Design C1: the build context ships the launcher binary and a
+			// minimal global config naming this agent; the RUN below invokes
+			// the launcher's own installer, which resolves the pinned release,
+			// verifies its checksum and extracts the binary. The comment pins
+			// the version so the layer is honest and rebuildable.
 			fmt.Fprintf(&b, "# installed from pinned release %s (checksum-verified)\n", agent.Version)
+			b.WriteString("COPY ai-launcher /usr/local/bin/ai-launcher\n")
+			b.WriteString("COPY install-config.yaml " + InstallConfigFile + "\n")
+			b.WriteString("RUN ai-launcher --config " + InstallConfigFile + " --install\n")
 		case InstallScript:
 			if !strings.HasPrefix(agent.Script, "RUN ") {
 				b.WriteString("RUN ")

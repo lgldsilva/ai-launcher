@@ -250,9 +250,10 @@ until the operator passes `--docker-backend` or saves the selection.
 content hash of the selection. Installing `latest` would make the tag lie as
 upstream moves — the same selection would produce different images over
 time. Pinning the release version in the hashed selection keeps the cache
-honest. The checksum-verified installer runs inside the image build
-(scratch container), reusing the host installer's verification logic instead
-of reimplementing checksum validation in shell.
+honest. The checksum-verified installer runs inside the image build itself
+(`RUN ai-launcher --install` against a minimal config copied into the
+build context), reusing the host installer's verification logic instead of
+reimplementing checksum validation in shell.
 
 ## What we are NOT doing (yet)
 

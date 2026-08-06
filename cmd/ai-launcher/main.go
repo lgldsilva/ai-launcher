@@ -1274,6 +1274,10 @@ func launch(req launchRequest) error {
 			return nil
 		}
 		req.rememberRecentAgent()
+		argv, err = req.prepareDockerIfNeeded(argv)
+		if err != nil {
+			return err
+		}
 		if err := req.execute(argv); err != nil {
 			if !tuiFlow {
 				return err
@@ -1392,6 +1396,150 @@ func (r *launchRequest) execute(argv []string) error {
 		return fmt.Errorf("failed to start %s: %w\ncommand: %s\n%s", label, execErr, cmdLine, launchFailureHint(execErr.Error()))
 	}
 	return nil
+}
+
+// dockerRunner runs docker argv as a child process with the launcher's own
+// stdin/stdout/stderr wired through, so `docker build` progress streams and
+// interactive containers behave like the CLI the operator expects. It is a
+// container.Runner so EnsureImage can call it.
+func (r *launchRequest) dockerRunner(argv []string) (int, error) {
+	// #nosec G204 -- argv is composed internally by launcher.Build (docker run
+	// from the container backend); it is never raw user input. The image tag
+	// and mount paths come from the selection the operator saved.
+	cmd := exec.CommandContext(context.Background(), argv[0], argv[1:]...)
+	cmd.Stdin = r.in
+	cmd.Stdout = r.out
+	cmd.Stderr = r.errOut
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), nil
+		}
+		return -1, err
+	}
+	return 0, nil
+}
+
+// prepareDockerIfNeeded ensures the tagged image exists (building it when
+// missing) and applies MCP config overlays to the docker run argv. It is a
+// no-op when the docker backend is off, keeping the hot launch path free of
+// the branch. It returns the argv to execute; the original argv is not
+// mutated. A dry-run never reaches here — the image check happens only for a
+// real launch.
+func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, error) {
+	if !r.launchConfig.UseDocker {
+		return argv, nil
+	}
+	sel := r.launchConfig.Docker.Selection
+	if sel.Validate() != nil {
+		return argv, errors.New("docker backend has an invalid image selection")
+	}
+
+	// The image needs the launcher binary only when a release-recipe agent is
+	// selected (design C1); script and host-binary agents build without it.
+	needLauncher := false
+	for _, agent := range sel.Agents {
+		if agent.Kind == container.InstallRelease {
+			needLauncher = true
+			break
+		}
+	}
+	var launcherLinux string
+	if needLauncher {
+		var err error
+		launcherLinux, err = buildLauncherLinux(r.out, r.errOut)
+		if err != nil {
+			return argv, err
+		}
+	}
+
+	installConfigYAML, err := container.InstallConfig(r.global, sel.Agents)
+	if err != nil {
+		return argv, fmt.Errorf("docker backend: %w", err)
+	}
+	tag, cleanup, err := container.EnsureImage(sel, installConfigYAML, launcherLinux, r.dockerRunner)
+	if err != nil {
+		return argv, err
+	}
+	// The image build context is a temp dir; once the image is built it can go.
+	cleanup()
+
+	// Apply MCP config overlays: rewrite loopback URLs in known config files
+	// into temp copies mounted over the originals (R7 item 31). The argv built
+	// by launcher.Build mounts the original paths; appending the overlay mount
+	// after it makes the rewritten copy win inside the container.
+	overlayDir, err := os.MkdirTemp("", "ai-launcher-overlay-")
+	if err != nil {
+		return argv, err
+	}
+	// Keep the overlay dir alive until the process exits; a leaked temp dir on
+	// a failed launch is the acceptable trade for a mount that must exist
+	// before docker run.
+	_ = overlayDir
+	for _, mount := range overlayCandidates(r.launchConfig.HomeDir) {
+		overlay := container.PlanOverlay(mount, overlayDir, container.RewriteLocalhost, false)
+		if overlay == nil {
+			continue
+		}
+		argv = append(argv, "-v", overlay.OverlayMountSpec())
+	}
+	_ = tag
+	return argv, nil
+}
+
+// overlayCandidates returns the known config files worth scanning for
+// loopback URLs. The agent config dirs are bind-mounted by the launcher; the
+// loose files that store MCP server URLs get per-file overlays.
+func overlayCandidates(home string) []string {
+	if strings.TrimSpace(home) == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(home, ".claude.json"),
+		filepath.Join(home, ".codex", "config.toml"),
+		filepath.Join(home, ".config", "opencode", "opencode.json"),
+	}
+}
+
+// buildLauncherLinux cross-compiles this binary for linux/amd64 into a temp
+// file and returns its path. The image build runs the launcher's installer
+// inside the container, so the binary must be a linux executable.
+func buildLauncherLinux(out, errOut io.Writer) (string, error) {
+	src := os.Getenv("GO_SRC_PATH")
+	if src == "" {
+		// The launcher was built from this module; resolve the module root
+		// from the executable's own package by walking up to go.mod.
+		wd, err := os.Getwd()
+		if err == nil {
+			for dir := wd; ; dir = filepath.Dir(dir) {
+				if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+					src = dir
+					break
+				}
+				if filepath.Dir(dir) == dir {
+					break
+				}
+			}
+		}
+	}
+	if src == "" {
+		return "", errors.New("cannot locate the ai-launcher module to cross-compile; set GO_SRC_PATH")
+	}
+	tmp, err := os.CreateTemp("", "ai-launcher-linux-")
+	if err != nil {
+		return "", err
+	}
+	path := tmp.Name()
+	_ = tmp.Close()
+	cmd := exec.Command("go", "build", "-o", path, filepath.Join(src, "cmd", "ai-launcher")) // #nosec G204 G702 -- fixed argv, no shell, module root from the filesystem or GO_SRC_PATH
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64")
+	cmd.Stdout = out
+	cmd.Stderr = errOut
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("cross-compile launcher for the image: %w", err)
+	}
+	return path, nil
 }
 
 // isWorkstreamConflict reports whether a launch error is ai-memory's

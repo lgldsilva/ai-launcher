@@ -154,12 +154,18 @@ ai-launcher --agent claude --docker-backend --stack go --stack python --dry-run
 ```
 
 The image is built from the selection (stacks + agent) and tagged by a
-content hash, so an identical selection reuses the cached image. The project
-is mounted read-write at its own path and the agent credential/history
+content hash, so an identical selection reuses the cached image — the build
+runs only once. On the first launch the launcher cross-compiles a linux copy
+of itself, materializes the build context, and runs `docker build` (the
+installer runs inside the build with its checksum verification intact;
+script agents install via their `curl | bash` recipe). The project is
+mounted read-write at its own path and the agent credential/history
 directories are shared read-only — log in on the host once and the container
 sees the same session. Services listening on the host (the ai-memory server,
-MCP servers) stay reachable via `host.docker.internal`; set
-`AI_LAUNCHER_NO_REWRITE=1` to disable the localhost rewrite.
+MCP servers) stay reachable via `host.docker.internal`; config files that
+store MCP URLs are copied, rewritten, and mounted over the originals so the
+host files are never modified. Set `AI_LAUNCHER_NO_REWRITE=1` to disable the
+localhost rewrite.
 
 In the TUI, toggle `Container (docker)` in Options to switch the backend
 from the jail (they are mutually exclusive), then pick stacks in the new
