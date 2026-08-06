@@ -19,16 +19,17 @@ canonical chain is `ai-jail [jail flags] ai-memory run [wrapper flags]
 | `make lint` / `make lint-full` | `go vet` / golangci-lint |
 | `make lint-dist` | ShellCheck + shfmt on `install.sh`, `goreleaser check` |
 
-**Coverage gate**: measures only `internal/config`, `internal/catalog`, and
-`internal/launcher` (excluding `executor.go` and `replace_*.go`); the minimum
-is 90% (`COVERAGE_MIN`). Everything else stays **out of the denominator** —
-`cmd/`, `internal/tui`, `internal/installer`, `internal/selfupdate`,
-`internal/cmd`, `test/`, and the PTY executor — and is covered by
-`go test -race -shuffle=on ./...` (race-only). The `COVERAGE_EXCLUDE` regex is
-authoritative; this list only describes it. The commit hooks read the same boundary from
-the `COVERAGE_EXCLUDE` regex in `.ai-standards.env`, and SonarCloud from
-`sonar.coverage.exclusions`; change the three together. Do not move
-UI/execution packages into the gate.
+**Coverage gate**: measures only `internal/config`, `internal/catalog`,
+`internal/launcher`, and `internal/container` (excluding `executor.go` and
+`replace_*.go`); the minimum is 90% (`COVERAGE_MIN`). Everything else stays
+**out of the denominator** — `cmd/`, `internal/tui`, `internal/installer`,
+`internal/selfupdate`, `internal/cmd`, `test/`, and the PTY executor — and is
+covered by `go test -race -shuffle=on ./...` (race-only). The
+`COVERAGE_EXCLUDE` regex is authoritative; this list only describes it. The
+commit hooks read the same boundary from the `COVERAGE_EXCLUDE` regex in
+`.ai-standards.env`, SonarCloud from `sonar.coverage.exclusions`, and the CI
+coverage job duplicates the `-coverpkg` list; change the four together. Do
+not move UI/execution packages into the gate.
 
 ## Git and hooks (ai-standards)
 

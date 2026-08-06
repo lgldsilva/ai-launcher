@@ -126,9 +126,9 @@ instead of suggesting sudo.
 ## 90% coverage gate only on the pure-logic packages
 
 **Decision.** The 90% gate measures only `internal/config`,
-`internal/catalog`, and `internal/launcher` (excluding the PTY executor and
-the `replace_*.go` files). `internal/tui` and `internal/installer` stay out
-of the denominator.
+`internal/catalog`, `internal/launcher`, and `internal/container` (excluding
+the PTY executor and the `replace_*.go` files). `internal/tui` and
+`internal/installer` stay out of the denominator.
 
 **Why.** Line coverage in code coupled to an interactive terminal and to
 spawned processes measures theater, not safety — forcing 90% there would

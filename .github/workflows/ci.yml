@@ -164,8 +164,8 @@ jobs:
         if: ${{ env.SONAR_TOKEN != '' }}
         run: |
           go test -covermode=atomic \
-            -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher \
-            -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher
+            -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container \
+            -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher ./internal/container
       # Official SonarSource action pinned by SHA (an npx install trips the
       # githubactions:S6505 supply-chain rule and fails the new-security gate).
       - name: SonarCloud analysis (waits for the quality gate)

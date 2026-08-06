@@ -1,6 +1,6 @@
 GO ?= go
 COVERAGE_FILE ?= coverage.out
-COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher
+COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher ./internal/container
 COVERAGE_MIN ?= 90
 DIST_DIR ?= dist
 # Build metadata injected into cmd/ai-launcher's version/commit/date vars.
@@ -89,7 +89,7 @@ sec-vuln:
 	$(GOVULNCHECK) ./...
 
 test-unit:
-	$(GO) test ./internal/config ./internal/catalog ./internal/launcher
+	$(GO) test ./internal/config ./internal/catalog ./internal/launcher ./internal/container
 
 test-property:
 	$(GO) test ./internal/config ./internal/catalog -run '^TestProperty' -count=1
@@ -101,7 +101,7 @@ test-race:
 	$(GO) test -race -shuffle=on ./...
 
 test-coverage:
-	$(GO) test -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
+	$(GO) test -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
 	@logic_profile=$$(mktemp); \
 	trap 'rm -f "$$logic_profile"' EXIT; \
 	awk 'NR == 1 || $$1 !~ /internal\/launcher\/(executor|replace_.*)\.go:/' $(COVERAGE_FILE) > "$$logic_profile"; \
