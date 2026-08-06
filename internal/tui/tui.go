@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 	"github.com/muesli/termenv"
 )
@@ -76,6 +77,7 @@ type Model struct {
 	agents          []catalog.AgentStatus
 	recentTop       string // command of the most-recently-used agent, if any
 	permissionIDs   []string
+	stackIDs        []string
 	profiles        map[string]config.Profile
 	profileNames    []string
 	section         int
@@ -124,6 +126,7 @@ func NewModel(global config.Global, launch launcher.LaunchConfig) Model {
 		agents:        visibleAgents(c.Agents(), global.RecentAgents, launch),
 		recentTop:     recentTop,
 		permissionIDs: make([]string, 0, len(global.Permissions)),
+		stackIDs:      containerStackIDs(),
 		profiles:      global.Profiles,
 		profileNames:  config.ProfileNames(global),
 		mountMode:     modeReadWriteID,
@@ -262,7 +265,7 @@ func (m Model) handleMainKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleSection(1)
 	case "shift+tab", "ctrl+k":
 		m.cycleSection(-1)
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4", "5", "6":
 		m.jumpToSection(key.String())
 	case keyUp, keyUpLetter:
 		m.moveCursor(-1)
@@ -338,6 +341,8 @@ func (m *Model) handleAddMountKey() {
 //   - Profiles: load
 //   - elsewhere: no-op (use r to run)
 func (m *Model) handleEnterKey() {
+	container := m.containerIndex()
+	profiles := m.profilesIndex()
 	switch m.section {
 	case 0:
 		m.selectHighlightedAgent()
@@ -345,17 +350,44 @@ func (m *Model) handleEnterKey() {
 		if m.cursor >= len(m.optionRows()) {
 			m.startParamInput()
 		}
-	case 4:
+	case container:
+		m.toggleStack()
+	case profiles:
 		if m.cursor < len(m.profileNames) {
 			m.loadProfile(m.profileNames[m.cursor])
 		}
 	}
 }
 
+// containerIndex returns the layout index of the Container section, or -1
+// when the docker backend is off (the section does not exist). It is 4 when
+// present, after Options (3) and before Profiles.
+func (m Model) containerIndex() int {
+	if !m.launch.UseDocker {
+		return -1
+	}
+	return 4
+}
+
+// profilesIndex returns the layout index of the Profiles section, or -1 when
+// no profile exists. It shifts from 4 to 5 when the Container section is
+// present.
+func (m Model) profilesIndex() int {
+	if len(m.profileNames) == 0 {
+		return -1
+	}
+	if m.launch.UseDocker {
+		return 5
+	}
+	return 4
+}
+
 // sectionHint returns the always-visible footer for the active section so the
 // user does not have to guess which keys apply.
 func (m Model) sectionHint() string {
 	base := "[r] RUN · [?] help · [q] quit"
+	container := m.containerIndex()
+	profiles := m.profilesIndex()
 	switch m.section {
 	case 0:
 		return "Agent · ↑/↓ · Space/Enter SELECT · " + base
@@ -365,20 +397,29 @@ func (m Model) sectionHint() string {
 		return "Mounts · a/+// ADD folder · Space ro/rw · Backspace remove · " + base
 	case 3:
 		return "Options · Space toggle · Enter edit value · " + base
-	case 4:
-		return "Profiles · Enter/Space load · " + base
 	default:
+		if m.section == container {
+			return "Container · Space add/remove stack · Tab next · " + base
+		}
+		if m.section == profiles {
+			return "Profiles · Enter/Space load · " + base
+		}
 		return base
 	}
 }
 
-// sectionCount reports how many sections the layout currently has; the
-// profiles section only exists when the global config saves at least one.
+// sectionCount reports how many sections the layout currently has: the
+// container section exists only while the docker backend is active, and the
+// profiles section only when the global config saves at least one.
 func (m Model) sectionCount() int {
-	if len(m.profileNames) > 0 {
-		return 5
+	count := 4
+	if m.launch.UseDocker {
+		count++
 	}
-	return 4
+	if len(m.profileNames) > 0 {
+		count++
+	}
+	return count
 }
 
 // saveLocal persists the current selection to .ai-launch.yaml via the hook.
@@ -418,9 +459,21 @@ type optionRow struct {
 func (m *Model) optionRows() []optionRow {
 	rows := make([]optionRow, 0, 4)
 	if !isWindows() {
-		rows = append(rows, optionRow{name: "Jail / Sandbox", on: m.launch.UseJail, toggle: func(m *Model) { m.launch.UseJail = !m.launch.UseJail }})
+		rows = append(rows, optionRow{name: "Jail / Sandbox", on: m.launch.UseJail && !m.launch.UseDocker, toggle: func(m *Model) { m.launch.UseJail = !m.launch.UseJail }})
 	}
 	rows = append(rows,
+		optionRow{name: "Container (docker)", on: m.launch.UseDocker, toggle: func(m *Model) {
+			// Tri-state backend: the container replaces the jail (design
+			// decision 25), so enabling docker disables the jail and vice
+			// versa — never both. Disabling docker restores the jail default.
+			if m.launch.UseDocker {
+				m.launch.UseDocker = false
+				m.launch.UseJail = true
+			} else {
+				m.launch.UseDocker = true
+				m.launch.UseJail = false
+			}
+		}},
 		optionRow{name: config.AIMemoryCommand, on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},
 		optionRow{name: "New workstream", on: m.launch.NewWorkstream != "", toggle: toggleWorkstreamOption},
 	)
@@ -454,6 +507,9 @@ func (m Model) View() string {
 	m.permissionsView(&b)
 	m.mountsView(&b)
 	m.optionsView(&b)
+	if m.launch.UseDocker {
+		m.containerView(&b)
+	}
 	m.profilesView(&b)
 
 	if m.textInputActive {
@@ -607,6 +663,45 @@ func (m Model) permissionsView(b *strings.Builder) {
 			mark = "[◆]"
 		}
 		fmt.Fprintf(b, "%s%s %-22s\n", pointer, mark, permission.Name)
+	}
+}
+
+// containerStackIDs returns the selectable stack ids in catalog order.
+func containerStackIDs() []string {
+	ids := make([]string, 0, len(container.Stacks))
+	for _, stack := range container.Stacks {
+		ids = append(ids, stack.ID)
+	}
+	return ids
+}
+
+// selectedStacks returns the set of stacks currently in the docker selection,
+// as a map for O(1) lookup during rendering.
+func (m Model) selectedStacks() map[string]bool {
+	selected := make(map[string]bool, len(m.launch.Docker.Selection.Stacks))
+	for _, id := range m.launch.Docker.Selection.Stacks {
+		selected[id] = true
+	}
+	return selected
+}
+
+// containerView renders the docker backend section: the stack checkboxes and
+// a status line about the image. It is only rendered when the docker backend
+// is active; otherwise the section does not exist in the layout.
+func (m Model) containerView(b *strings.Builder) {
+	b.WriteString("\nContainer\n")
+	selected := m.selectedStacks()
+	for i, id := range m.stackIDs {
+		stack, _ := container.StackByID(id)
+		pointer := pointerEmpty
+		if m.section == m.containerIndex() && i == m.cursor {
+			pointer = pointerSelected
+		}
+		mark := "[ ]"
+		if selected[id] {
+			mark = "[✓]"
+		}
+		fmt.Fprintf(b, "%s%s %s\n", pointer, mark, stack.Name)
 	}
 }
 
@@ -778,6 +873,8 @@ func (m Model) profilesView(b *strings.Builder) {
 
 func (m *Model) moveCursor(delta int) {
 	limit := len(m.agents) + 1 // +1 for the "continue last session" row
+	container := m.containerIndex()
+	profiles := m.profilesIndex()
 	switch m.section {
 	case 1:
 		limit = len(m.permissionIDs)
@@ -785,7 +882,9 @@ func (m *Model) moveCursor(delta int) {
 		limit = len(m.launch.Mounts)
 	case 3:
 		limit = len(m.optionRows()) + len(m.launch.Agent.Params)
-	case 4:
+	case container:
+		limit = len(m.stackIDs)
+	case profiles:
 		limit = len(m.profileNames)
 	}
 	if limit == 0 {
@@ -809,6 +908,8 @@ func (m *Model) togglePermission() {
 }
 
 func (m *Model) toggleCurrent() {
+	container := m.containerIndex()
+	profiles := m.profilesIndex()
 	switch m.section {
 	case 1:
 		m.togglePermission()
@@ -823,11 +924,40 @@ func (m *Model) toggleCurrent() {
 		}
 	case 3:
 		m.toggleOption()
-	case 4:
+	case container:
+		m.toggleStack()
+	case profiles:
 		if m.cursor < len(m.profileNames) {
 			m.loadProfile(m.profileNames[m.cursor])
 		}
 	}
+}
+
+// toggleStack adds or removes the stack under the cursor from the docker
+// image selection. The selection is re-normalized so the saved stack list
+// stays canonical (sorted, deduplicated) for the image tag.
+func (m *Model) toggleStack() {
+	if m.section != m.containerIndex() || m.cursor >= len(m.stackIDs) {
+		return
+	}
+	id := m.stackIDs[m.cursor]
+	selected := m.selectedStacks()
+	if selected[id] {
+		delete(selected, id)
+	} else {
+		selected[id] = true
+	}
+	ids := make([]string, 0, len(selected))
+	for stackID := range selected {
+		ids = append(ids, stackID)
+	}
+	normalized, err := container.ValidStackIDs(ids)
+	if err != nil {
+		m.status = "Stack selection invalid: " + err.Error()
+		return
+	}
+	m.launch.Docker.Selection.Stacks = normalized
+	m.status = "Stack toggled"
 }
 
 // toggleOption flips one of the fixed option toggles, or opens the text
@@ -1511,12 +1641,12 @@ func (m Model) helpView() string {
 		"How to launch (5 steps)\n" +
 		"  1. ↑/↓   highlight an agent (e.g. Pi)\n" +
 		"  2. Space or Enter   SELECT it (interface stays open)\n" +
-		"  3. (optional) Tab   Permissions / Mounts / Options\n" +
+		"  3. (optional) Tab   Permissions / Mounts / Options / Container\n" +
 		"  4. r     RUN  (only then the UI closes and the agent starts)\n" +
 		"  5. If RUN fails, errors stay on screen — fix and press r again\n\n" +
 		"Everywhere\n" +
 		"  Tab / Shift+Tab   next / previous section\n" +
-		"  1-5               jump to a section\n" +
+		"  1-6               jump to a section\n" +
 		"  r / Ctrl+Enter    RUN Selected (not the ↑/↓ highlight)\n" +
 		"  d / Ctrl+D        dry-run (preview argv, stay open)\n" +
 		"  ?                 this help\n" +
