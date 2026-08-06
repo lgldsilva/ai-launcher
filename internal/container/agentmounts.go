@@ -88,8 +88,9 @@ func ExpandHome(raw, home string) string {
 }
 
 // ExistsOnHost reports whether path exists; it is the default existence probe
-// for callers that mount before docker runs.
-func ExistsOnHost(path string) bool {
+// for callers that mount before docker runs. It is a variable so tests can
+// stub the filesystem probe without touching the disk.
+var ExistsOnHost = func(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }

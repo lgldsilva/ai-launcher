@@ -108,13 +108,16 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	argv = append(argv, "-v", cfg.ProjectDir+":"+cfg.ProjectDir)
 
 	// Credential/history mounts, read-only by default (R9.2), same-path.
-	for _, mount := range AgentMounts(cfg.HomeDir, cfg.AgentCommands, nil) {
+	// Only paths that exist on the host are mounted — docker refuses a -v
+	// source that does not exist (M5): a fresh machine with no ~/.codex yet
+	// must not fail the run.
+	for _, mount := range AgentMounts(cfg.HomeDir, cfg.AgentCommands, ExistsOnHost) {
 		argv = append(argv, "-v", mountSpec(mount.HostPath, mount.ReadOnly))
 	}
-	if cfg.SSHConfig != "" {
+	if cfg.SSHConfig != "" && ExistsOnHost(cfg.SSHConfig) {
 		argv = append(argv, "-v", cfg.SSHConfig+":"+cfg.SSHConfig+":ro")
 	}
-	if cfg.GHConfig != "" {
+	if cfg.GHConfig != "" && ExistsOnHost(cfg.GHConfig) {
 		argv = append(argv, "-v", cfg.GHConfig+":"+cfg.GHConfig+":ro")
 	}
 	if cfg.MountDockerSocket {

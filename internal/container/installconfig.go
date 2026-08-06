@@ -41,11 +41,17 @@ func InstallConfig(global config.Global, agents []AgentInstall) (string, error) 
 		}
 	}
 	// The ai-memory tool is required by any memory-enabled agent: the wrapper
-	// and its managed runner must exist in the image too.
+	// and its managed runner must exist in the image too. Only emit the tools
+	// block when the catalog actually provides the recipe — an empty block
+	// would render as an empty YAML mapping.
 	if seenMemory {
-		b.WriteString("tools:\n")
+		var rendered bool
 		for _, tool := range global.Tools {
 			if tool.Command == config.AIMemoryCommand {
+				if !rendered {
+					b.WriteString("tools:\n")
+					rendered = true
+				}
 				renderInstallTool(&b, tool)
 			}
 		}
@@ -102,13 +108,14 @@ func renderInstallTool(b *strings.Builder, tool config.Tool) {
 	}
 }
 
-// renderRelease writes a shared GitHub release recipe block.
+// renderRelease writes a shared GitHub release recipe block. Asset keys are
+// iterated in sorted order so the rendered YAML is deterministic run to run.
 func renderRelease(b *strings.Builder, repository string, assets map[string]string, binary, checksumAsset string, allowUnverified bool) {
 	b.WriteString("    release:\n")
 	fmt.Fprintf(b, "      repository: %q\n", repository)
 	b.WriteString("      assets:\n")
-	for key, value := range assets {
-		fmt.Fprintf(b, "        %q: %q\n", key, value)
+	for _, key := range SortedAssetKeys(assets) {
+		fmt.Fprintf(b, "        %q: %q\n", key, assets[key])
 	}
 	fmt.Fprintf(b, "      binary: %q\n", binary)
 	if checksumAsset != "" {

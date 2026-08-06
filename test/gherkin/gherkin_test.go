@@ -146,6 +146,14 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 		// before building, exactly like the CLI dispatch does.
 		launch, _ = launcher.ConstrainToPlatform(launch, spec.GOOS, config.DefaultGlobal().Permissions)
 	}
+	// The docker contract asserts the mount composition, not the host
+	// existence filter (that has its own unit test): stub the probe so the
+	// /home/tester fixture mounts survive.
+	if spec.Docker {
+		origExists := container.ExistsOnHost
+		container.ExistsOnHost = func(string) bool { return true }
+		defer func() { container.ExistsOnHost = origExists }()
+	}
 	argv, err := launcher.Build(launch)
 	if failure, expected := scenario.failureExpectation(); expected {
 		if err == nil || !strings.Contains(err.Error(), failure) {

@@ -22,6 +22,7 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 	"github.com/lgldsilva/ai-launcher/internal/selfupdate"
 	"github.com/lgldsilva/ai-launcher/internal/tui"
+	"golang.org/x/term"
 )
 
 // Build metadata injected via -ldflags "-X main.version=..." at build time
@@ -256,16 +257,36 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 // entry is stale/wrong and names a run_harness that ai-memory does not accept
 // (for example cursor-agent). Unresolved agents are left alone.
 //
+// interactiveLaunch reports whether stdin and stdout are both terminals, the
+// condition under which the docker backend allocates a pseudo-TTY (-it). A
+// non-interactive invocation (scripts, CI, piped output) stays with -i so the
+// container does not try to draw a terminal that is not there.
+func interactiveLaunch(opts cliOptions) bool {
+	if opts.dryRun {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
 // dockerRunConfigFromOptions derives the docker run inputs from the saved
-// selection: the image selection normalizes the requested stacks plus the
-// selected agent, pinned to a placeholder version — the catalog pins the real
-// release version when the installer runs (design C1/C2). Home is forwarded
-// so credential mounts resolve; the caller keeps the launch config pure.
-func dockerRunConfigFromOptions(agent config.Agent, stacks []string, home string) container.RunConfig {
+// selection. It resolves the REAL installed version of the agent (design C2)
+// from the host install-state so the content-hashed image tag reflects the
+// version the image will actually install — a catalog/agent update then
+// produces a new tag and a fresh build instead of a lying cache hit. The
+// memory integration (server URL + native binary mount), the interactive
+// flag, and the host UID/GID mapping (R9.5) are populated here too.
+func dockerRunConfigFromOptions(agent config.Agent, stacks []string, home, memoryServerURL, memoryAuthToken string, interactive bool) container.RunConfig {
+	version := container.AgentVersion(home, agent.Command, "")
+	if version == "" {
+		// No verified install on this host: keep a stable placeholder so the
+		// tag still reflects the recipe. Installing is not a launch decision;
+		// the tag cache simply falls back to the recipe-only hash.
+		version = "0.0.0-recipe"
+	}
 	selection, err := container.Normalize(stacks, []container.AgentInstall{{
 		Command: agent.Command,
 		Kind:    container.InstallRelease,
-		Version: "0.0.0-pending",
+		Version: version,
 	}}, nil)
 	if err != nil {
 		// An invalid stack selection surfaces as docker-selection-invalid in
@@ -276,10 +297,48 @@ func dockerRunConfigFromOptions(agent config.Agent, stacks []string, home string
 		}
 	}
 	return container.RunConfig{
-		Selection:      selection,
-		HomeDir:        home,
-		AddHostGateway: true,
+		Selection:       selection,
+		HomeDir:         home,
+		AddHostGateway:  true,
+		Interactive:     interactive,
+		UID:             os.Getuid(),
+		GID:             os.Getgid(),
+		MemoryNativeBin: managedNativeRunnerPath(),
+		Env:             memoryEnvEntries(agent, memoryServerURL, memoryAuthToken),
 	}
+}
+
+// managedNativeRunnerPath resolves the launcher-managed ai-memory binary, or
+// empty when it does not exist on this host (the container then skips the
+// read-only mount and the wrapper downloads inside the image instead).
+func managedNativeRunnerPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".local", "share", config.LauncherName, "bin", config.AIMemoryCommand)
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
+// memoryEnvEntries returns the AI_MEMORY_* environment entries the container
+// needs when the memory layer is on: the server URL (rewritten to the host
+// gateway by BuildRunCommand) and the auth token. Without them the in-image
+// ai-memory wrapper cannot reach the host server.
+func memoryEnvEntries(agent config.Agent, memoryServerURL, memoryAuthToken string) []string {
+	if !agent.SupportsMemory {
+		return nil
+	}
+	var env []string
+	if serverURL := strings.TrimSpace(memoryServerURL); serverURL != "" {
+		env = append(env, "AI_MEMORY_SERVER_URL="+serverURL)
+	}
+	if token := strings.TrimSpace(memoryAuthToken); token != "" {
+		env = append(env, "AI_MEMORY_AUTH_TOKEN="+token)
+	}
+	return env
 }
 
 func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool, errOut io.Writer) {
@@ -759,7 +818,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		MemoryAuthToken: inputs.global.MemoryAuthToken,
 		UseJail:         inputs.local.Options.Jail && !inputs.local.Options.Docker,
 		UseDocker:       inputs.local.Options.Docker,
-		Docker:          dockerRunConfigFromOptions(inputs.status.Agent, inputs.local.Options.Stacks, home),
+		Docker:          dockerRunConfigFromOptions(inputs.status.Agent, inputs.local.Options.Stacks, home, inputs.global.MemoryServerURL, inputs.global.MemoryAuthToken, interactiveLaunch(opts)),
 		UseMemory:       inputs.local.Options.Memory,
 		ContinueSession: opts.continueSession,
 		JailExec:        len(args) > 0,
@@ -1274,28 +1333,29 @@ func launch(req launchRequest) error {
 			return nil
 		}
 		req.rememberRecentAgent()
-		argv, err = req.prepareDockerIfNeeded(argv)
+		argv, dockerCleanup, err := req.prepareDockerIfNeeded(argv)
 		if err != nil {
 			return err
 		}
-		if err := req.execute(argv); err != nil {
+		execErr := req.executeWithDockerCleanup(argv, dockerCleanup)
+		if execErr != nil {
 			if !tuiFlow {
-				return err
+				return execErr
 			}
 			// TUI flow: surface the failure and re-open the selection screen.
-			status = launchFailureStatus(err.Error())
+			status = launchFailureStatus(execErr.Error())
 			// A busy workstream (ai-memory 409 "workstream is already active")
 			// is recovered by starting a parallel stream: arm --new so the
 			// next r sidesteps the conflict instead of re-hitting it. The
 			// operator is warned and can still turn it off (or wait ~90s for
 			// the lease to expire). The recovery name is dropped again on a
 			// successful launch so it is not baked into the saved selection.
-			if isWorkstreamConflict(err.Error()) && strings.TrimSpace(req.launchConfig.NewWorkstream) == "" {
+			if isWorkstreamConflict(execErr.Error()) && strings.TrimSpace(req.launchConfig.NewWorkstream) == "" {
 				req.launchConfig.NewWorkstream = fmt.Sprintf("recovery-%d", time.Now().Unix())
 				autoArmedNew = true
 				status = "Workstream busy (409) — armed 'New workstream' (" + req.launchConfig.NewWorkstream +
 					") for the retry so the next r starts a parallel stream.\n" +
-					"Turn it off if you'd rather wait ~90s, or q to quit.\n" + launchFailureHint(err.Error())
+					"Turn it off if you'd rather wait ~90s, or q to quit.\n" + launchFailureHint(execErr.Error())
 			}
 			continue
 		}
@@ -1374,6 +1434,18 @@ func (r *launchRequest) rememberRecentAgent() {
 // the parent (PTY) so a child that exits immediately (ai-memory TLS, jail cwd,
 // etc.) is reported as our error instead of looking like the UI just vanished.
 // CLI non-TUI launches still Replace into the child for a thin process tree.
+// executeWithDockerCleanup runs the composed argv and then invokes the docker
+// overlay cleanup (removing temp copies that may carry tokens) whether the
+// run succeeded or failed. It is a thin wrapper so the launch loop stays
+// readable and the cleanup can never be skipped by an early return.
+func (r *launchRequest) executeWithDockerCleanup(argv []string, dockerCleanup func()) error {
+	err := r.execute(argv)
+	if dockerCleanup != nil {
+		dockerCleanup()
+	}
+	return err
+}
+
 func (r *launchRequest) execute(argv []string) error {
 	label := r.launchConfig.Agent.Command
 	if r.launchConfig.ContinueSession {
@@ -1423,16 +1495,18 @@ func (r *launchRequest) dockerRunner(argv []string) (int, error) {
 // prepareDockerIfNeeded ensures the tagged image exists (building it when
 // missing) and applies MCP config overlays to the docker run argv. It is a
 // no-op when the docker backend is off, keeping the hot launch path free of
-// the branch. It returns the argv to execute; the original argv is not
-// mutated. A dry-run never reaches here — the image check happens only for a
-// real launch.
-func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, error) {
+// the branch. It returns the argv to execute (the original argv is not
+// mutated) plus a cleanup that removes the overlay temp copies after the
+// container exits (R9.6 — they may carry tokens). A dry-run never reaches
+// here — the image check happens only for a real launch.
+func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, func(), error) {
+	noop := func() {}
 	if !r.launchConfig.UseDocker {
-		return argv, nil
+		return argv, noop, nil
 	}
 	sel := r.launchConfig.Docker.Selection
 	if sel.Validate() != nil {
-		return argv, errors.New("docker backend has an invalid image selection")
+		return argv, noop, errors.New("docker backend has an invalid image selection")
 	}
 
 	// The image needs the launcher binary only when a release-recipe agent is
@@ -1449,17 +1523,17 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, error) {
 		var err error
 		launcherLinux, err = buildLauncherLinux(r.out, r.errOut)
 		if err != nil {
-			return argv, err
+			return argv, noop, err
 		}
 	}
 
 	installConfigYAML, err := container.InstallConfig(r.global, sel.Agents)
 	if err != nil {
-		return argv, fmt.Errorf("docker backend: %w", err)
+		return argv, noop, fmt.Errorf("docker backend: %w", err)
 	}
-	tag, cleanup, err := container.EnsureImage(sel, installConfigYAML, launcherLinux, r.dockerRunner)
+	_, cleanup, err := container.EnsureImage(sel, installConfigYAML, launcherLinux, r.dockerRunner)
 	if err != nil {
-		return argv, err
+		return argv, noop, err
 	}
 	// The image build context is a temp dir; once the image is built it can go.
 	cleanup()
@@ -1470,21 +1544,19 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, error) {
 	// after it makes the rewritten copy win inside the container.
 	overlayDir, err := os.MkdirTemp("", "ai-launcher-overlay-")
 	if err != nil {
-		return argv, err
+		return argv, noop, err
 	}
-	// Keep the overlay dir alive until the process exits; a leaked temp dir on
-	// a failed launch is the acceptable trade for a mount that must exist
-	// before docker run.
-	_ = overlayDir
+	disableRewrite := container.RewriteDisabled(os.Environ())
 	for _, mount := range overlayCandidates(r.launchConfig.HomeDir) {
-		overlay := container.PlanOverlay(mount, overlayDir, container.RewriteLocalhost, false)
+		overlay := container.PlanOverlay(mount, overlayDir, container.RewriteLocalhost, disableRewrite)
 		if overlay == nil {
 			continue
 		}
 		argv = append(argv, "-v", overlay.OverlayMountSpec())
 	}
-	_ = tag
-	return argv, nil
+	// The overlay copies may carry tokens (claude.json, MCP configs): remove
+	// the whole temp dir after the container exits, success or failure.
+	return argv, func() { _ = os.RemoveAll(overlayDir) }, nil
 }
 
 // overlayCandidates returns the known config files worth scanning for
@@ -1532,7 +1604,12 @@ func buildLauncherLinux(out, errOut io.Writer) (string, error) {
 	path := tmp.Name()
 	_ = tmp.Close()
 	cmd := exec.Command("go", "build", "-o", path, filepath.Join(src, "cmd", "ai-launcher")) // #nosec G204 G702 -- fixed argv, no shell, module root from the filesystem or GO_SRC_PATH
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64")
+	// Match the image architecture: an arm64 docker daemon (Raspberry Pi,
+	// homelab) pulls an arm64 ubuntu base, so the COPY'd launcher must be
+	// arm64 too — an amd64 binary would fail with "exec format error" (M6).
+	// The host's own GOARCH is the best signal we have before inspecting the
+	// daemon.
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH)
 	cmd.Stdout = out
 	cmd.Stderr = errOut
 	if err := cmd.Run(); err != nil {

@@ -76,11 +76,7 @@ func Dockerfile(selection Selection) (string, error) {
 			b.WriteString("COPY install-config.yaml " + InstallConfigFile + "\n")
 			b.WriteString("RUN ai-launcher --config " + InstallConfigFile + " --install\n")
 		case InstallScript:
-			if !strings.HasPrefix(agent.Script, "RUN ") {
-				b.WriteString("RUN ")
-			}
-			b.WriteString(agent.Script)
-			b.WriteString("\n")
+			b.WriteString(ScriptLine(agent.Script))
 		case InstallHostBinary:
 			fmt.Fprintf(&b, "# bind-mounted from host %s at run time; not installed\n", agent.HostPath)
 		}

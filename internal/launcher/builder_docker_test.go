@@ -12,6 +12,7 @@ import (
 
 func dockerLaunchConfig(t *testing.T) LaunchConfig {
 	t.Helper()
+	stubAllMountSourcesExist(t)
 	selection, err := container.Normalize(
 		[]string{"go"},
 		[]container.AgentInstall{{Command: "claude", Kind: container.InstallRelease, Version: "2.1.0"}},
@@ -29,6 +30,16 @@ func dockerLaunchConfig(t *testing.T) LaunchConfig {
 			Selection: selection,
 		},
 	}
+}
+
+// stubAllMountSourcesExist forces the docker mount existence probe to answer
+// true so tests can assert the credential mounts without touching the real
+// filesystem (the probe is a package variable for exactly this).
+func stubAllMountSourcesExist(t *testing.T) {
+	t.Helper()
+	orig := container.ExistsOnHost
+	container.ExistsOnHost = func(string) bool { return true }
+	t.Cleanup(func() { container.ExistsOnHost = orig })
 }
 
 func TestBuildDockerRunBasic(t *testing.T) {

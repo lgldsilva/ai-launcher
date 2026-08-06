@@ -2,6 +2,7 @@ package container
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,11 @@ func TestBuildRunCommandMinimal(t *testing.T) {
 
 func TestBuildRunCommandFull(t *testing.T) {
 	sel := testSelection(t)
+	// The full fixture mounts paths under a fake home; stub the existence
+	// probe so the mounts survive the M5 filtering.
+	origExists := ExistsOnHost
+	ExistsOnHost = func(string) bool { return true }
+	t.Cleanup(func() { ExistsOnHost = origExists })
 	got, err := BuildRunCommand(RunConfig{
 		Selection:         sel,
 		HomeDir:           "/home/lgldsilva",
@@ -221,4 +227,37 @@ func contains(argv []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// M5: a credential mount whose source does not exist on the host must be
+// skipped, not emitted (docker refuses a -v source that is not there).
+func TestBuildRunCommandSkipsMissingMountSources(t *testing.T) {
+	sel := testSelection(t)
+	origExists := ExistsOnHost
+	ExistsOnHost = func(string) bool { return false } // nothing exists
+	t.Cleanup(func() { ExistsOnHost = origExists })
+
+	got, err := BuildRunCommand(RunConfig{
+		Selection:         sel,
+		HomeDir:           "/home/nobody",
+		ProjectDir:        "/work",
+		AgentCommands:     []string{"claude"},
+		GHConfig:          "/home/nobody/.config/gh",
+		SSHConfig:         "/home/nobody/.ssh",
+		AgentExecutable:   "claude",
+		MountDockerSocket: true, // socket always mounted when requested
+	})
+	if err != nil {
+		t.Fatalf("BuildRunCommand() error = %v", err)
+	}
+	joined := strings.Join(got, " ")
+	for _, absent := range []string{".claude", ".config/gh", ".ssh"} {
+		if strings.Contains(joined, absent) {
+			t.Errorf("argv %q must not mount the missing source %q", joined, absent)
+		}
+	}
+	// The project (rw) and the docker socket are explicit, not existence
+	// filtered.
+	assertArg(t, got, "/work:/work")
+	assertArg(t, got, "/var/run/docker.sock:/var/run/docker.sock")
 }

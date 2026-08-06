@@ -506,3 +506,63 @@ func TestDockerDryRunPrintsImageArgv(t *testing.T) {
 		t.Fatalf("stdout = %q; want the host gateway flag", stdout)
 	}
 }
+
+// memoryEnvEntries forwards the server URL and token only for memory-capable
+// agents, and never leaks them for others.
+func TestMemoryEnvEntries(t *testing.T) {
+	mem := config.Agent{Command: "claude", SupportsMemory: true}
+	plain := config.Agent{Command: "kiro-cli"}
+
+	got := memoryEnvEntries(mem, "http://localhost:9292", "sekret")
+	if len(got) != 2 || !strings.Contains(got[0], "AI_MEMORY_SERVER_URL=") || !strings.Contains(got[1], "AI_MEMORY_AUTH_TOKEN=sekret") {
+		t.Fatalf("memoryEnvEntries(memory agent) = %#v; want server URL + token", got)
+	}
+	if got := memoryEnvEntries(plain, "http://x", "t"); len(got) != 0 {
+		t.Fatalf("memoryEnvEntries(non-memory agent) = %#v; want none", got)
+	}
+	if got := memoryEnvEntries(mem, "  ", ""); len(got) != 0 {
+		t.Fatalf("memoryEnvEntries with empty config = %#v; want none", got)
+	}
+}
+
+// dockerRunConfigFromOptions resolves the real installed version (C2) and
+// wires the memory/interactive/uid fields the launch path needs.
+func TestDockerRunConfigFromOptions(t *testing.T) {
+	home := t.TempDir()
+	// Seed an install-state so the version resolves (not the placeholder).
+	stateDir := filepath.Join(home, ".config", "ai-launch")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := `{"installs": {"/home/u/.local/bin/claude": {"repository": "acme/claude", "tag": "2.1.0", "path": "/home/u/.local/bin/claude"}}}`
+	if err := os.WriteFile(filepath.Join(stateDir, "install-state.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := config.Agent{Command: "claude", SupportsMemory: true}
+	cfg := dockerRunConfigFromOptions(agent, []string{"go"}, home, "http://localhost:9292", "tok", true)
+	if len(cfg.Selection.Agents) != 1 || cfg.Selection.Agents[0].Version != "2.1.0" {
+		t.Fatalf("selection agent = %#v; want pinned 2.1.0", cfg.Selection.Agents)
+	}
+	if !cfg.Interactive {
+		t.Fatal("Interactive should be true when requested")
+	}
+	if cfg.UID <= 0 || cfg.GID <= 0 {
+		t.Fatalf("UID/GID = %d/%d; want the host ids", cfg.UID, cfg.GID)
+	}
+	if len(cfg.Env) != 2 {
+		t.Fatalf("Env = %#v; want server URL + token", cfg.Env)
+	}
+	// Without an install-state entry the version falls back to the recipe
+	// placeholder but the launch wiring stays intact.
+	cfg2 := dockerRunConfigFromOptions(agent, []string{"go"}, t.TempDir(), "", "", false)
+	if cfg2.Selection.Agents[0].Version == "" {
+		t.Fatal("version must never be empty (recipe placeholder)")
+	}
+	if cfg2.Interactive {
+		t.Fatal("Interactive should be false when not requested")
+	}
+	if len(cfg2.Env) != 0 {
+		t.Fatalf("Env without memory config = %#v; want none", cfg2.Env)
+	}
+}
