@@ -68,13 +68,14 @@ func Dockerfile(selection Selection) (string, error) {
 		case InstallRelease:
 			// Design C1: the build context ships the launcher binary and a
 			// minimal global config naming this agent; the RUN below invokes
-			// the launcher's own installer, which resolves the pinned release,
-			// verifies its checksum and extracts the binary. The comment pins
-			// the version so the layer is honest and rebuildable.
+			// the launcher's own installer with an explicit --agent, which
+			// resolves the pinned release, verifies its checksum and extracts
+			// the binary. The comment pins the version so the layer is honest
+			// and rebuildable.
 			fmt.Fprintf(&b, "# installed from pinned release %s (checksum-verified)\n", agent.Version)
 			b.WriteString("COPY ai-launcher /usr/local/bin/ai-launcher\n")
 			b.WriteString("COPY install-config.yaml " + InstallConfigFile + "\n")
-			b.WriteString("RUN ai-launcher --config " + InstallConfigFile + " --install\n")
+			fmt.Fprintf(&b, "RUN ai-launcher --config %s --install --agent %s\n", InstallConfigFile, agent.Command)
 		case InstallScript:
 			b.WriteString(ScriptLine(agent.Script))
 		case InstallHostBinary:

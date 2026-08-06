@@ -44,7 +44,7 @@ func TestPrepareBuildContext(t *testing.T) {
 	for _, want := range []string{
 		"COPY ai-launcher /usr/local/bin/ai-launcher",
 		"COPY install-config.yaml /etc/ai-launch/install-config.yaml",
-		"RUN ai-launcher --config /etc/ai-launch/install-config.yaml --install",
+		"RUN ai-launcher --config /etc/ai-launch/install-config.yaml --install --agent kilo",
 	} {
 		if !strings.Contains(string(df), want) {
 			t.Errorf("Dockerfile missing %q", want)

@@ -42,7 +42,7 @@ func TestDockerfile(t *testing.T) {
 		"pinned release 2.1.0 (checksum-verified)",
 		"COPY ai-launcher /usr/local/bin/ai-launcher",
 		"COPY install-config.yaml /etc/ai-launch/install-config.yaml",
-		"RUN ai-launcher --config /etc/ai-launch/install-config.yaml --install",
+		"RUN ai-launcher --config /etc/ai-launch/install-config.yaml --install --agent claude",
 		"# Agent: kiro-cli",
 		"bind-mounted from host /opt/kiro/bin",
 		"curl -fsSL https://dev.meta.ai/install.sh | bash",

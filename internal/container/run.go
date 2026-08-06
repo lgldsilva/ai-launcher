@@ -54,6 +54,10 @@ type RunConfig struct {
 	// installed binary name ("claude") or the resolved path for host-mounted
 	// agents (InstallHostBinary).
 	AgentExecutable string
+	// HostBinaryMounts are the directories holding host binaries that have no
+	// install recipe (InstallHostBinary agents). They are mounted read-only at
+	// the same path so the in-container executable resolves (R3 item 13).
+	HostBinaryMounts []string
 	// AgentArgs are the harness's native arguments appended after the
 	// executable.
 	AgentArgs []string
@@ -129,6 +133,21 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	}
 	if cfg.MemoryNativeBin != "" {
 		argv = append(argv, "-v", cfg.MemoryNativeBin+":"+cfg.MemoryNativeBin+":ro")
+	}
+	// Host binaries with no install recipe are bind-mounted read-only at the
+	// same path (R3 item 13). Each unique directory is mounted once; the
+	// executable path inside the container resolves to the mounted binary.
+	seenBin := make(map[string]struct{}, len(cfg.HostBinaryMounts))
+	for _, dir := range cfg.HostBinaryMounts {
+		dir = strings.TrimSpace(dir)
+		if dir == "" || !ExistsOnHost(dir) {
+			continue
+		}
+		if _, dup := seenBin[dir]; dup {
+			continue
+		}
+		seenBin[dir] = struct{}{}
+		argv = append(argv, "-v", dir+":"+dir+":ro")
 	}
 
 	// Environment: rewrite loopback URLs to the host gateway (R5/R7).

@@ -266,6 +266,11 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 	run.GHConfig = permissionHomeMount(cfg, config.PermissionGitHub, ".config/gh")
 	run.SSHConfig = permissionHomeMount(cfg, config.PermissionSSH, ".ssh")
 	run.MountDockerSocket = cfg.Permissions[config.PermissionDocker]
+	// Host-mounted agents (InstallHostBinary, no recipe) need their binary
+	// directory bind-mounted read-only so the executable resolves inside the
+	// container (R3 item 13). Derived from the selection, not the host path
+	// discovery, so dry-run and the contract agree with a real launch.
+	run.HostBinaryMounts = hostBinaryDirs(run.Selection)
 	// MemoryNativeBin is deliberately NOT resolved here: deciding whether the
 	// managed binary exists is I/O, which Build must stay free of. The caller
 	// (CLI/TUI) sets it on cfg.Docker when the binary exists, mirroring how
@@ -279,6 +284,31 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 		return nil, err
 	}
 	return container.BuildRunCommand(run)
+}
+
+// firstNonEmpty returns the first non-empty string; used to pick the docker
+// hostBinaryDirs returns the unique directories of host-mounted agents
+// (InstallHostBinary) in the selection, so the docker run bind-mounts them
+// read-only. Paths are deduplicated and the executable path is included via
+// its parent directory.
+func hostBinaryDirs(selection container.Selection) []string {
+	seen := make(map[string]struct{}, len(selection.Agents))
+	var dirs []string
+	for _, agent := range selection.Agents {
+		if agent.Kind != container.InstallHostBinary {
+			continue
+		}
+		dir := filepath.Dir(strings.TrimSpace(agent.HostPath))
+		if dir == "." || dir == string(filepath.Separator) {
+			continue
+		}
+		if _, dup := seen[dir]; dup {
+			continue
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+	return dirs
 }
 
 // firstNonEmpty returns the first non-empty string; used to pick the docker
