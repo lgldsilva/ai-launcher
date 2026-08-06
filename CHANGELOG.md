@@ -26,6 +26,16 @@ again, or the installer learns to skip release series without the platform
 asset. No action is required to use the launcher; this only affects
 installing the kilo agent.
 
+### Known limitation — agents without an official installer
+
+Twelve catalog agents (mimo, crush, zero, oc, gemini, qwen, aider, goose,
+kiro-cli, openclaw, hermes, cline) have no official curl|bash or release
+recipe, so in the docker backend they fall back to a read-only bind-mount of
+the host binary (works for static linux binaries; a macOS host binary does
+not execute in the linux container). The remaining 10 mainstream agents
+install inside the image from their official vendor scripts, and kilo from
+the (currently drifting) release recipe.
+
 ### Added — docker container backend with stack selection
 
 The launcher can now run the agent inside a docker container instead of
