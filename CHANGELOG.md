@@ -13,6 +13,58 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — docker container backend with stack selection
+
+The launcher can now run the agent inside a docker container instead of
+ai-jail: `options.docker: true` in the selection (or `--docker-backend` on the
+command line) switches the sandbox from the jail to a container built from the
+selected toolchain stacks. The image is tagged by a content hash of the
+selection (stacks + pinned agent versions), so an identical selection reuses
+the cached image without rebuilding.
+
+```
+# .ai-launch.yaml
+options:
+  docker: true
+  stacks: [go, python]
+```
+
+or, from the CLI:
+
+```
+ai-launcher --docker-backend --stack go --stack python --dry-run
+```
+
+What ships with it:
+
+- **Same-path mounts** — the project is mounted read-write at its own path
+  (`-v $PWD:$PWD`), and the agent credential/history directories
+  (`~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/opencode`, `~/.muse`)
+  are mounted read-only at identical paths, so session continuity and
+  ai-memory's path-based project scoping survive.
+- **Permission → mount mapping** — `--ssh`, `--gh` and `--docker` reuse the
+  existing permission model: ssh and gh mount their config directories
+  read-only, docker mounts the control socket (an explicit opt-in; write
+  access there is root on the host).
+- **Host reachability** — URLs pointing at `localhost`/`127.0.0.1` in
+  `AI_MEMORY_SERVER_URL` and MCP configs are rewritten to
+  `host.docker.internal` (with `--add-host` on Linux) so services on the host
+  stay reachable from inside the container.
+- **New CLIs without a rebuild** — agents with a GitHub release recipe are
+  installed inside the image from a pinned version; script-only recipes
+  require `allow_unverified`; agents with no recipe fall back to a read-only
+  bind-mount of the host binary.
+- **TUI** — a Container section with stack checkboxes appears when the docker
+  backend is active; the Options section toggles between jail and container
+  (they are mutually exclusive).
+- **Trust boundary** — an unsaved workspace-local `.ai-launch.yaml` cannot
+  switch the sandbox to docker; `--docker-backend` or a saved selection is
+  required, mirroring the existing `jail: false` gate.
+
+**What you need to do:** nothing. This is additive; existing configurations
+are unaffected and keep the ai-jail default. Note that a `.ai-launch.yaml`
+with `docker: true` is refused until saved or run with `--docker-backend`.
+
 ### Fixed — `--workstream-search` sends the workstream id upstream requires
 
 `ai-memory workstream-search` declares `--workstream-id` as a required

@@ -215,6 +215,45 @@ every launch answers it without taking the catalog's extensibility away. The
 built-in catalog declares no boolean params, so the warning only fires for
 operator-added declarations.
 
+## The docker container backend replaces the jail, never composes with it
+
+**Decision.** `options.docker: true` switches the sandbox from ai-jail to a
+docker container built from the selected toolchain stacks. The two backends
+are mutually exclusive: enabling docker disables the jail, and the TUI toggle
+enforces the same rule. Docker is a *substitute* sandbox, not a layer on top
+of the jail.
+
+**Why.** A container already provides the isolation ai-jail exists for
+(process, filesystem, network namespace); running the jail inside it would
+add a second sandbox over a sandbox, doubling the failure surface without
+adding isolation the container does not already have. Keeping them
+exclusive also keeps the argv contract simple: one chain, one backend,
+locked by the Gherkin suite.
+
+**Why same-path mounts.** The project is mounted read-write at its own path
+(`-v $PWD:$PWD`) rather than at a fixed `/workspace`: ai-memory scopes
+projects by absolute path, and agent configs record absolute paths. A
+container-internal path that differs from the host path would break session
+continuity and memory scoping.
+
+**Why credentials are read-only.** ai-jail rebuilds `$HOME` as a tmpfs, so a
+compromised sandbox process cannot persist host credentials. Docker shares
+the real host paths, so the credential mounts (`~/.claude`, `~/.codex`, ...)
+are read-only by default — the same isolation property, without the tmpfs.
+
+**Why the trust gate treats docker as a sandbox change.** A workspace-local
+`.ai-launch.yaml` switching the sandbox to docker is a security-relevant
+change made by the repository, exactly like `jail: false`; it is refused
+until the operator passes `--docker-backend` or saves the selection.
+
+**Why installs pin versions (and never `latest`).** The image tag is a
+content hash of the selection. Installing `latest` would make the tag lie as
+upstream moves — the same selection would produce different images over
+time. Pinning the release version in the hashed selection keeps the cache
+honest. The checksum-verified installer runs inside the image build
+(scratch container), reusing the host installer's verification logic instead
+of reimplementing checksum validation in shell.
+
 ## What we are NOT doing (yet)
 
 - **Native sandbox on Windows.** Depends on upstream (ai-jail "probably
@@ -267,5 +306,8 @@ operator-added declarations.
 - [ ] Do not put `internal/tui` or the PTY executor in the coverage gate denominator.
 - [ ] Do not write tokens to logs, argv, or local configs — token only via the child process env.
 - [ ] Do not change the canonical `ai-jail → ai-memory run → harness` order — if it changes, the contract suite must fail first.
+- [ ] Do not let the docker backend and the jail compose — they are mutually exclusive; enabling one must disable the other.
+- [ ] Do not install `latest` inside the image — the content-hashed tag would lie; pin the release version in the selection.
+- [ ] Do not mount agent credentials read-write in the container — same-path mounts of `~/.claude` etc. must stay `ro`.
 - [ ] Do not turn the TUI back into a command generator — dry-run is the explicit print-only path.
 - [ ] Do not treat the Windows jail warning as an error — degradation with a warning is the correct behavior.

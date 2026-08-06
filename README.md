@@ -137,6 +137,33 @@ ai-launcher --agent claude --no-jail --dry-run
 ai-launcher --agent claude --ssh --gh --dry-run
 # ai-jail --exec --no-docker --ssh --rw-map …/.config/gh --map ~/.local/bin ai-memory run claude --executable ~/.local/bin/claude
 ```
+
+### Docker container backend
+
+Instead of ai-jail, the agent can run inside a docker container built from
+the selected toolchain stacks. Enable it with `--docker-backend` plus one or
+more `--stack` flags (Go, Python, Rust, Java, Maven, Gradle, Node, C/C++):
+
+```bash
+ai-launcher --agent claude --docker-backend --stack go --stack python --dry-run
+# docker run --rm -i -w /path/to/project \
+#   -v /path/to/project:/path/to/project \
+#   -v ~/.claude:~/.claude:ro -v ~/.claude.json:~/.claude.json:ro \
+#   --add-host=host.docker.internal:host-gateway \
+#   ai-launcher-box:<sha12> claude
+```
+
+The image is built from the selection (stacks + agent) and tagged by a
+content hash, so an identical selection reuses the cached image. The project
+is mounted read-write at its own path and the agent credential/history
+directories are shared read-only — log in on the host once and the container
+sees the same session. Services listening on the host (the ai-memory server,
+MCP servers) stay reachable via `host.docker.internal`; set
+`AI_LAUNCHER_NO_REWRITE=1` to disable the localhost rewrite.
+
+In the TUI, toggle `Container (docker)` in Options to switch the backend
+from the jail (they are mutually exclusive), then pick stacks in the new
+Container section.
 ## Installation
 
 ### Curl installer (recommended)

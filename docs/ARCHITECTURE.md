@@ -75,14 +75,16 @@ All config saves are atomic (temporary file + `rename`) with 0600 permission.
 ## Cross-cutting invariants
 
 1. **Canonical chain order**: `ai-jail [jail flags] ai-memory run [wrapper
-   flags] <harness> [native args]`. No code path builds a different order;
-   the Gherkin suite locks regressions out.
+   flags] <harness> [native args]`, or `docker run [flags] <image> <harness>
+   [native args]` when the docker backend replaces the jail. No code path
+   builds a different order; the Gherkin suite locks regressions out.
 2. **Selection precedence**: built-in defaults < local `.ai-launch.yaml` <
    profile < explicit flags. Profiles only replace the blocks they define.
 2b. **The local config is untrusted input**: `.ai-launch.yaml` ships with the
    repository, so `enforceLocalConfigTrust` refuses one that selects an
    unresolvable agent, disables the sandbox while the global catalog defaults
-   it on, or declares a relative mount or a filesystem root. Global config,
+   it on, switches the sandbox to the docker backend without consent, or
+   declares a relative mount or a filesystem root. Global config,
    profiles and command-line flags are trusted; the boundary is around the
    workspace file. The exception is provenance: when the launcher saves the
    file itself (Ctrl+S / `--save`), it records the file's canonical path and
@@ -197,7 +199,38 @@ Global config (`~/.config/ai-launch/config.yaml`):
 Local config (`.ai-launch.yaml`): `agent`, `permissions{}`, `mounts[]`
 (`path`/`mode`), and `options`: `jail`, `memory`, `yolo`, `fresh`,
 `new_workstream`, `workstream`, `workspace`, `project`, `jail_flags`,
-`extra_args`, `param_values`.
+`extra_args`, `param_values`, and the docker backend keys `docker` and
+`stacks`.
+
+### Docker container backend
+
+`options.docker: true` (or `--docker-backend`) replaces the ai-jail prefix
+with `docker run ... <image> <harness> [native args]`. The image is built
+from the selected toolchain stacks plus the agent, and its tag is a content
+hash of the canonical selection (`ai-launcher-box:<sha12>`), so an identical
+selection reuses the cached image. See `internal/container` for the pure
+logic (Dockerfile generation, tag hashing, argv composition) — it is
+measured by the same 90% coverage gate as the other logic packages.
+
+The container substitutes the jail, never composes with it: enabling docker
+disables the jail (the TUI toggle and the CLI both enforce this). The
+canonical chain therefore becomes `docker run [flags] <image> <harness>
+[native args]` in docker mode.
+
+Mounts are same-path: the project is mounted read-write at its own path, and
+the agent credential/history directories (`~/.claude`, `~/.claude.json`,
+`~/.codex`, `~/.config/opencode`, `~/.local/share/opencode`, `~/.muse`) are
+mounted read-only at identical paths — a config that stores absolute paths
+keeps working, and ai-memory's path-based project scoping survives. The
+permission→mount mapping from the jail is reused: `--ssh` and `--gh` mount
+their config dirs read-only, `--docker` mounts the control socket (explicit
+opt-in; write access there is root on the host, and the launcher's
+`DeniedMount` gate refuses the socket from untrusted configs).
+
+URLs pointing at `localhost`/`127.0.0.1` (the ai-memory server URL and MCP
+server configs) are rewritten to `host.docker.internal`, with
+`--add-host=host.docker.internal:host-gateway` emitted on Linux so the host
+stays reachable; `AI_LAUNCHER_NO_REWRITE=1` disables the rewrite.
 
 ### Permission → jail argv (implementation)
 
@@ -293,10 +326,12 @@ For a new contributor, in this sequence:
 3. `internal/config/config.go` — schema, defaults, and persistence.
 4. `internal/launcher/builder.go` — the pure argv composition (the heart).
 5. `internal/catalog/catalog.go` — agent and permission resolution.
-6. `internal/tui/tui.go` — how the TUI reuses the same `LaunchConfig`.
-7. `internal/cmd/install.go` + `internal/installer/installer.go` — the
+6. `internal/container/` — the docker backend: Dockerfile generation,
+   content-hashed image tags, and the docker run argv builder.
+7. `internal/tui/tui.go` — how the TUI reuses the same `LaunchConfig`.
+8. `internal/cmd/install.go` + `internal/installer/installer.go` — the
    install flow and checksum verification.
-8. `internal/selfupdate/selfupdate.go` — the self-update flow and the atomic
+9. `internal/selfupdate/selfupdate.go` — the self-update flow and the atomic
    executable replace.
-9. `test/features/launcher.feature` — the executable end-to-end contract.
-10. `docs/design-decisions.md` — why it is this way.
+10. `test/features/launcher.feature` — the executable end-to-end contract.
+11. `docs/design-decisions.md` — why it is this way.
