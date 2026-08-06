@@ -20,6 +20,10 @@ const (
 	InstallRelease InstallKind = "release"
 	// InstallScript is the curl|bash source_url path, gated by allow_unverified.
 	InstallScript InstallKind = "script"
+	// InstallNpm is a global npm package install (`npm install -g <pkg>`),
+	// used by agents distributed on npm (gemini, qwen, crush, openclaw...).
+	// Requires Node/npm in the image, which the DevProfile provides via nvm.
+	InstallNpm InstallKind = "npm"
 	// InstallHostBinary marks agents that are bind-mounted, never built in.
 	InstallHostBinary InstallKind = "host"
 )
@@ -35,6 +39,8 @@ type AgentInstall struct {
 	// Script is the full RUN line for InstallScript kinds (e.g.
 	// "RUN curl -fsSL https://example.com/install.sh | bash").
 	Script string
+	// NpmPackage is the npm package name for InstallNpm installs.
+	NpmPackage string
 	// AllowSetupFailure marks installers whose post-install step opens an
 	// interactive login (devin's `setup`). The binary is installed before that
 	// step; appending `|| true` keeps the docker build from failing on the
@@ -63,6 +69,10 @@ func (a AgentInstall) Validate() error {
 	case InstallScript:
 		if strings.TrimSpace(a.Script) == "" {
 			return fmt.Errorf("agent %q: script installs require a RUN script", a.Command)
+		}
+	case InstallNpm:
+		if strings.TrimSpace(a.NpmPackage) == "" {
+			return fmt.Errorf("agent %q: npm installs require an npm package name", a.Command)
 		}
 	case InstallHostBinary:
 		if strings.TrimSpace(a.HostPath) == "" {

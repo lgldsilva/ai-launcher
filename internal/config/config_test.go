@@ -1141,3 +1141,29 @@ func TestMergePermissionsUserListLongerThanDefaults(t *testing.T) {
 		t.Fatalf("mergePermissions() = %#v; want the override plus 3 customs", got)
 	}
 }
+
+// A user config saved before the recipe fields existed must not lose them on
+// merge: NpmPackage, SourceURL, AllowUnverified and SetupInteractive are
+// inherited from the built-in default when the override omits them.
+func TestMergeAgentInheritsNewRecipeFields(t *testing.T) {
+	base := Agent{Command: "gemini", NpmPackage: "@google/gemini-cli", AllowUnverified: true}
+	// Simulate an old user entry: no recipe fields at all.
+	override := Agent{Command: "gemini", Description: "custom"}
+	merged := mergeAgent(base, override)
+	if merged.NpmPackage != "@google/gemini-cli" {
+		t.Fatalf("NpmPackage = %q; want inherited from default", merged.NpmPackage)
+	}
+	if !merged.AllowUnverified {
+		t.Fatal("AllowUnverified lost; want inherited from default")
+	}
+	if merged.Description != "custom" {
+		t.Fatalf("Description = %q; want the override preserved", merged.Description)
+	}
+
+	// An override that explicitly sets its own package wins.
+	override2 := Agent{Command: "gemini", NpmPackage: "@custom/gemini"}
+	merged2 := mergeAgent(base, override2)
+	if merged2.NpmPackage != "@custom/gemini" {
+		t.Fatalf("NpmPackage = %q; want the override value", merged2.NpmPackage)
+	}
+}

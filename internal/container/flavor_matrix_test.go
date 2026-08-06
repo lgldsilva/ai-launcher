@@ -18,9 +18,10 @@ func TestFlavorMatrix(t *testing.T) {
 		t.Skip("set AI_LAUNCHER_DOCKER_TESTS=1 to run the flavor matrix")
 	}
 	global := config.DefaultGlobal()
+	// Both script (curl|bash) and npm-distributed agents get a real build.
 	var scriptAgents []config.Agent
 	for _, agent := range global.Agents {
-		if agent.SourceURL != "" {
+		if agent.SourceURL != "" || agent.NpmPackage != "" {
 			scriptAgents = append(scriptAgents, agent)
 		}
 	}

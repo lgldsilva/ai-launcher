@@ -155,6 +155,11 @@ type Agent struct {
 	Aliases   []string `yaml:"aliases,omitempty"`
 	Path      string   `yaml:"path,omitempty"`
 	SourceURL string   `yaml:"source_url,omitempty"`
+	// NpmPackage names a global npm package that installs this agent's CLI
+	// (e.g. "@google/gemini-cli"). The docker backend installs it with
+	// `npm install -g` inside the image build (the base carries Node LTS via
+	// nvm). Mutually exclusive with SourceURL.
+	NpmPackage string `yaml:"npm_package,omitempty"`
 	// AllowUnverified permits the checksum-less source_url install path.
 	// Without it a source_url recipe is refused (ARCHITECTURE invariant 4).
 	AllowUnverified bool `yaml:"allow_unverified,omitempty"`
@@ -634,7 +639,7 @@ func DefaultGlobal() Global {
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI", YoloFlag: "--dangerously-skip-permissions"},
 			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: true, SupportsYolo: true, Description: "Antigravity CLI", YoloFlag: "--dangerously-skip-permissions", SourceURL: officialAntigravityInstall, AllowUnverified: true, Memory: memoryForHarness("antigravity")},
 			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", SourceURL: officialPiInstall, AllowUnverified: true, Memory: hooksOnlyMemoryIntegration("pi")},
-			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: true, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
+			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: true, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo", NpmPackage: "@charmland/crush"},
 			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", SourceURL: officialOmpInstall, AllowUnverified: true, Memory: memoryFor("omp")},
 			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: true, Description: "Cursor Agent CLI", YoloFlag: "--yolo", SourceURL: officialCursorInstall, AllowUnverified: true, Memory: memoryFor("cursor")},
 			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: true, Description: "Grok CLI", YoloFlag: "--always-approve", SourceURL: officialGrokInstall, AllowUnverified: true, Memory: memoryFor("grok")},
@@ -643,14 +648,14 @@ func DefaultGlobal() Global {
 			// oc is a local preset TUI that ends up launching opencode; ai-memory
 			// only knows the harness name "opencode", so RunHarness remaps it.
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: memoryForHarness("opencode")},
-			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: true, Description: "Google Gemini CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: memoryFor(geminiCLIID)},
-			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Alibaba Qwen Code CLI", YoloFlag: "--yolo"},
+			{Name: "Gemini CLI", Command: "gemini", Aliases: []string{geminiCLIID}, SupportsMemory: false, SupportsYolo: true, Description: "Google Gemini CLI", YoloFlag: "--yolo", NpmPackage: "@google/gemini-cli", Params: []Param{modelParam("for example gemini-2.5-pro")}, Memory: memoryFor(geminiCLIID)},
+			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Alibaba Qwen Code CLI", YoloFlag: "--yolo", NpmPackage: "@qwen-code/qwen-code"},
 			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI", YoloFlag: "--yes-always"},
 			{Name: "Goose", Command: "goose", SupportsMemory: false, SupportsYolo: false, Description: "Block Goose CLI"},
 			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: false, SupportsYolo: false, Description: "Kiro CLI"},
-			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: false, SupportsYolo: false, Description: "OpenClaw CLI", Memory: mcpOnlyMemoryIntegration("openclaw")},
+			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: false, SupportsYolo: false, Description: "OpenClaw CLI", NpmPackage: "openclaw", Memory: mcpOnlyMemoryIntegration("openclaw")},
 			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: false, SupportsYolo: true, Description: "Hermes Agent CLI", YoloFlag: "--yolo"},
-			{Name: "Cline", Command: "cline", SupportsMemory: false, SupportsYolo: true, Description: "Cline CLI", YoloFlag: "--yolo"},
+			{Name: "Cline", Command: "cline", SupportsMemory: false, SupportsYolo: true, Description: "Cline CLI", YoloFlag: "--yolo", NpmPackage: "cline"},
 		},
 		Tools: []Tool{
 			{
@@ -1282,6 +1287,15 @@ func mergeAgent(base, override Agent) Agent {
 	}
 	if merged.SourceURL == "" {
 		merged.SourceURL = base.SourceURL
+	}
+	if merged.NpmPackage == "" {
+		merged.NpmPackage = base.NpmPackage
+	}
+	if !merged.AllowUnverified {
+		merged.AllowUnverified = base.AllowUnverified
+	}
+	if !merged.SetupInteractive {
+		merged.SetupInteractive = base.SetupInteractive
 	}
 	if merged.Description == "" {
 		merged.Description = base.Description

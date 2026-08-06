@@ -91,6 +91,13 @@ func PlanInstall(agent config.Agent, version, hostPath string) AgentInstall {
 			AllowSetupFailure: agent.SetupInteractive,
 		}
 	}
+	if strings.TrimSpace(agent.NpmPackage) != "" {
+		return AgentInstall{
+			Command:    agent.Command,
+			Kind:       InstallNpm,
+			NpmPackage: agent.NpmPackage,
+		}
+	}
 	return AgentInstall{Command: agent.Command, Kind: InstallHostBinary, HostPath: strings.TrimSpace(hostPath)}
 }
 

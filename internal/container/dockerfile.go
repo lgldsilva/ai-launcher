@@ -78,6 +78,11 @@ func Dockerfile(selection Selection) (string, error) {
 			fmt.Fprintf(&b, "RUN ai-launcher --config %s --install --agent %s\n", InstallConfigFile, agent.Command)
 		case InstallScript:
 			b.WriteString(ScriptLine(agent))
+		case InstallNpm:
+			// npm-distributed agents install globally; the DevProfile already
+			// put the nvm node bin dir on PATH, so the CLI lands runnable.
+			fmt.Fprintf(&b, "# npm package %s\n", agent.NpmPackage)
+			fmt.Fprintf(&b, "RUN npm install -g %s\n", agent.NpmPackage)
 		case InstallHostBinary:
 			fmt.Fprintf(&b, "# bind-mounted from host %s at run time; not installed\n", agent.HostPath)
 		}

@@ -887,6 +887,12 @@ func agentIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Issu
 	if cfg.ContinueSession {
 		return nil
 	}
+	// In docker mode the agent runs inside the image (installed by the build
+	// from its recipe), so it does not need to exist on the host PATH — a
+	// fresh machine with no local gemini still launches it in a container.
+	if cfg.UseDocker {
+		return nil
+	}
 	agentPath := cfg.Agent.Command
 	if cfg.Executable != "" {
 		agentPath = cfg.Executable

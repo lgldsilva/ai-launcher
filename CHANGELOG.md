@@ -28,13 +28,15 @@ installing the kilo agent.
 
 ### Known limitation — agents without an official installer
 
-Twelve catalog agents (mimo, crush, zero, oc, gemini, qwen, aider, goose,
-kiro-cli, openclaw, hermes, cline) have no official curl|bash or release
-recipe, so in the docker backend they fall back to a read-only bind-mount of
-the host binary (works for static linux binaries; a macOS host binary does
-not execute in the linux container). The remaining 10 mainstream agents
-install inside the image from their official vendor scripts, and kilo from
-the (currently drifting) release recipe.
+Four catalog agents (mimo, zero, oc, aider, goose, kiro-cli, hermes) have no
+official curl|bash, npm or release recipe, so in the docker backend they fall
+back to a read-only bind-mount of the host binary (works for static linux
+binaries; a macOS host binary does not execute in the linux container). The
+remaining 15 agents install inside the image: 10 from their official vendor
+scripts (claude, codex, opencode, kimi, agy, pi, omp, cursor-agent, grok,
+devin) and 5 from npm (gemini, qwen, crush, openclaw, cline) — validated by
+real docker builds in the flavor matrix. kilo installs from its (currently
+drifting) release recipe.
 
 ### Added — docker container backend with stack selection
 
