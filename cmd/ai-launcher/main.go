@@ -283,11 +283,9 @@ func dockerRunConfigFromOptions(agent config.Agent, stacks []string, home, memor
 		// the tag cache simply falls back to the recipe-only hash.
 		version = "0.0.0-recipe"
 	}
-	selection, err := container.Normalize(stacks, []container.AgentInstall{{
-		Command: agent.Command,
-		Kind:    container.InstallRelease,
-		Version: version,
-	}}, nil)
+	selection, err := container.Normalize(stacks, []container.AgentInstall{
+		container.PlanInstall(agent, version, agent.Path),
+	}, nil)
 	if err != nil {
 		// An invalid stack selection surfaces as docker-selection-invalid in
 		// preflight; here we keep the raw stacks so the error is attributable.

@@ -97,12 +97,31 @@ const (
 	MountReadOnlyLabel   = "read-only"
 	PlatformWindows      = "windows"
 
-	PermissionJail      = "jail"
-	PermissionSSH       = "ssh"
-	PermissionGitHub    = "gh"
-	PermissionDocker    = "docker"
-	PermissionGPU       = "gpu"
-	PermissionDisplay   = "display"
+	PermissionJail    = "jail"
+	PermissionSSH     = "ssh"
+	PermissionGitHub  = "gh"
+	PermissionDocker  = "docker"
+	PermissionGPU     = "gpu"
+	PermissionDisplay = "display"
+
+	// Official installer scripts for the mainstream coding agents. Each CLI's
+	// vendor ships a curl|bash installer as its canonical installation method
+	// (there is no checksum-verifiable release alternative for these), so the
+	// built-in catalog records it with allow_unverified: true — the operator
+	// already accepts this exact trust model when installing on the host. The
+	// URLs are pinned to the vendor domains (never a third-party mirror).
+	officialClaudeInstall      = "https://claude.ai/install.sh"
+	officialCodexInstall       = "https://github.com/openai/codex/raw/main/scripts/install/install.sh"
+	officialOpenCodeInstall    = "https://opencode.ai/install"
+	officialKimiInstall        = "https://code.kimi.com/install.sh"
+	officialMuseInstall        = "https://dev.meta.ai/install.sh"
+	officialPiInstall          = "https://pi.dev/install.sh"
+	officialAntigravityInstall = "https://antigravity.google/cli/install.sh"
+	officialGrokInstall        = "https://x.ai/cli/install.sh"
+	officialCursorInstall      = "https://cursor.com/install"
+	officialDevinInstall       = "https://cli.devin.ai/install.sh"
+	officialOmpInstall         = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.sh"
+
 	PermissionPictures  = "pictures"
 	PermissionTailscale = "tailscale"
 	PermissionSystemd   = "systemd-user"
@@ -138,14 +157,19 @@ type Agent struct {
 	SourceURL string   `yaml:"source_url,omitempty"`
 	// AllowUnverified permits the checksum-less source_url install path.
 	// Without it a source_url recipe is refused (ARCHITECTURE invariant 4).
-	AllowUnverified bool               `yaml:"allow_unverified,omitempty"`
-	SupportsMemory  bool               `yaml:"supports_memory"`
-	SupportsYolo    bool               `yaml:"supports_yolo"`
-	Description     string             `yaml:"description,omitempty"`
-	YoloFlag        string             `yaml:"yolo_flag,omitempty"`
-	Params          []Param            `yaml:"params,omitempty"`
-	Release         *GitHubRelease     `yaml:"release,omitempty"`
-	Memory          *MemoryIntegration `yaml:"memory,omitempty"`
+	AllowUnverified bool `yaml:"allow_unverified,omitempty"`
+	// SetupInteractive marks installers whose post-install step opens an
+	// interactive login (devin's `setup`). The binary is installed before that
+	// step, so the docker build appends `|| true` to keep the non-interactive
+	// build from failing on the prompt.
+	SetupInteractive bool               `yaml:"setup_interactive,omitempty"`
+	SupportsMemory   bool               `yaml:"supports_memory"`
+	SupportsYolo     bool               `yaml:"supports_yolo"`
+	Description      string             `yaml:"description,omitempty"`
+	YoloFlag         string             `yaml:"yolo_flag,omitempty"`
+	Params           []Param            `yaml:"params,omitempty"`
+	Release          *GitHubRelease     `yaml:"release,omitempty"`
+	Memory           *MemoryIntegration `yaml:"memory,omitempty"`
 	// CatalogCommand preserves the canonical command from the catalog before
 	// resolution overwrites Command with the alias actually found on PATH.
 	// It is used by launcher internals that need the original catalog identity
@@ -593,10 +617,10 @@ func DefaultGlobal() Global {
 		Version:         CurrentVersion,
 		MemoryServerURL: DefaultMemoryServerURL,
 		Agents: []Agent{
-			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", Params: []Param{modelParam("for example sonnet or opus")}, Memory: memoryFor("claude-code")},
-			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: true, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", Params: []Param{modelParam("for example gpt-5")}, Memory: memoryFor("codex")},
-			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", Memory: memoryFor("opencode")},
-			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: true, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: memoryFor(kimiCodeID)},
+			{Name: "Claude Code", Command: "claude", SupportsMemory: true, SupportsYolo: true, Description: "Anthropic's Claude Code", YoloFlag: "--dangerously-skip-permissions", SourceURL: officialClaudeInstall, AllowUnverified: true, Params: []Param{modelParam("for example sonnet or opus")}, Memory: memoryFor("claude-code")},
+			{Name: "Codex", Command: "codex", SupportsMemory: true, SupportsYolo: true, Description: "OpenAI Codex CLI", YoloFlag: "--dangerously-bypass-approvals-and-sandbox", SourceURL: officialCodexInstall, AllowUnverified: true, Params: []Param{modelParam("for example gpt-5")}, Memory: memoryFor("codex")},
+			{Name: "OpenCode", Command: "opencode", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode CLI", YoloFlag: "--auto", SourceURL: officialOpenCodeInstall, AllowUnverified: true, Memory: memoryFor("opencode")},
+			{Name: "Kimi Code", Command: "kimi", Aliases: []string{"kimi-cli", kimiCodeID}, SupportsMemory: true, SupportsYolo: true, Description: "Moonshot Kimi Code CLI", YoloFlag: "--yolo", SourceURL: officialKimiInstall, AllowUnverified: true, Params: []Param{modelParam("for example k2"), {Name: "query", Flag: "--query", Description: "Initial query sent to Kimi", TakesValue: true}}, Memory: memoryFor(kimiCodeID)},
 			{Name: "Kilo Code", Command: "kilo", Aliases: []string{"kilocode", "kilo-code"}, SupportsMemory: false, SupportsYolo: false, Description: "Kilo Code CLI", Release: &GitHubRelease{
 				Repository: "Kilo-Org/kilocode",
 				Assets: map[string]string{
@@ -608,14 +632,14 @@ func DefaultGlobal() Global {
 				Binary: "kilo",
 			}},
 			{Name: "MiMo Code", Command: "mimo", Aliases: []string{"mimocode", "mimo-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Xiaomi MiMo Code CLI", YoloFlag: "--dangerously-skip-permissions"},
-			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: true, SupportsYolo: true, Description: "Antigravity CLI", YoloFlag: "--dangerously-skip-permissions", Memory: memoryForHarness("antigravity")},
-			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", Memory: hooksOnlyMemoryIntegration("pi")},
+			{Name: "Antigravity", Command: "agy", Aliases: []string{"antigravity", antigravID}, SupportsMemory: true, SupportsYolo: true, Description: "Antigravity CLI", YoloFlag: "--dangerously-skip-permissions", SourceURL: officialAntigravityInstall, AllowUnverified: true, Memory: memoryForHarness("antigravity")},
+			{Name: "Pi", Command: "pi", Aliases: []string{"pi-coding-agent"}, SupportsMemory: true, SupportsYolo: true, Description: "Pi coding agent", YoloFlag: "--approve", SourceURL: officialPiInstall, AllowUnverified: true, Memory: hooksOnlyMemoryIntegration("pi")},
 			{Name: "Crush", Command: "crush", SupportsMemory: true, SupportsYolo: true, Description: "Charmbracelet Crush (ai-memory managed run only)", YoloFlag: "--yolo"},
-			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", Memory: memoryFor("omp")},
-			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: true, Description: "Cursor Agent CLI", YoloFlag: "--yolo", Memory: memoryFor("cursor")},
-			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: true, Description: "Grok CLI", YoloFlag: "--always-approve", Memory: memoryFor("grok")},
+			{Name: "Oh My Pi", Command: "omp", Aliases: []string{"oh-my-pi"}, SupportsMemory: true, SupportsYolo: true, Description: "Oh My Pi", SourceURL: officialOmpInstall, AllowUnverified: true, Memory: memoryFor("omp")},
+			{Name: "Cursor Agent", Command: "cursor-agent", Aliases: []string{"cursor"}, SupportsMemory: false, SupportsYolo: true, Description: "Cursor Agent CLI", YoloFlag: "--yolo", SourceURL: officialCursorInstall, AllowUnverified: true, Memory: memoryFor("cursor")},
+			{Name: "Grok", Command: "grok", SupportsMemory: true, SupportsYolo: true, Description: "Grok CLI", YoloFlag: "--always-approve", SourceURL: officialGrokInstall, AllowUnverified: true, Memory: memoryFor("grok")},
 			{Name: "Zero", Command: "zero", SupportsMemory: false, SupportsYolo: false, Description: "Zero agent CLI", Memory: memoryFor("zero")},
-			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: true, Description: "Devin CLI", YoloFlag: "--permission-mode dangerous", Memory: memoryFor("devin")},
+			{Name: "Devin", Command: "devin", SupportsMemory: false, SupportsYolo: true, Description: "Devin CLI", YoloFlag: "--permission-mode dangerous", SourceURL: officialDevinInstall, AllowUnverified: true, SetupInteractive: true, Memory: memoryFor("devin")},
 			// oc is a local preset TUI that ends up launching opencode; ai-memory
 			// only knows the harness name "opencode", so RunHarness remaps it.
 			{Name: "OpenCode Presets", Command: "oc", SupportsMemory: true, SupportsYolo: true, Description: "OpenCode preset selector", YoloFlag: "--auto", Memory: memoryForHarness("opencode")},

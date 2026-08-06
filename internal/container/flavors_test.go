@@ -98,7 +98,7 @@ func dockerfileForFlavor(selection Selection) string {
 	b.WriteString(DevProfile + "\n")
 	for _, agent := range selection.Agents {
 		if agent.Kind == InstallScript {
-			b.WriteString(ScriptLine(agent.Script))
+			b.WriteString(ScriptLine(agent))
 		}
 	}
 	return b.String()

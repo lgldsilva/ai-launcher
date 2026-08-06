@@ -55,13 +55,21 @@ What ships with it:
   (`~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/opencode`, `~/.muse`)
   are mounted read-only at identical paths, so session continuity and
   ai-memory's path-based project scoping survive.
+- **Shared toolchain caches** — each stack shares its host toolchain/cache
+  directories with the container read-write (nvm, sdkman, cargo, rustup,
+  go-build, npm, m2, gradle, pip), so downloads on either side are reused
+  and disk stays lean.
+- **Node LTS and JDK 21 via managers** — the base image carries nvm with the
+  Node LTS line and the Java stack installs the JDK 21 LTS through SDKMAN,
+  so agents that require a recent Node (pi, devin) or a specific JDK install
+  out of the box.
 - **Real image builds** — on launch, the launcher materializes the build
   context (generated Dockerfile + minimal install config + a cross-compiled
   linux copy of itself) and runs `docker build`, streaming the daemon
   output. The installer runs *inside* the image build with its checksum
   verification intact (nothing is reimplemented in shell); script agents
-  install via their `curl | bash` recipe. A content-hashed image tag means
-  an identical selection reuses the cached image — the build runs once.
+  install via their official `curl | bash` recipe. A content-hashed image tag
+  means an identical selection reuses the cached image — the build runs once.
 - **MCP config overlays** — config files that reference `localhost` URLs
   (`~/.claude.json`, opencode config) are copied, rewritten to
   `host.docker.internal`, and mounted over the originals inside the

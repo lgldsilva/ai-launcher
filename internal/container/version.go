@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 // installState is the on-disk record of what the launcher's installer has
@@ -70,6 +72,26 @@ func AgentVersion(home, command string, statePath string) string {
 		}
 	}
 	return best
+}
+
+// PlanInstall derives the AgentInstall for a catalog agent: a release recipe
+// wins, then an official source_url script (with the operator's explicit
+// allow_unverified already on the catalog entry), else a host-binary mount.
+// Version is resolved by the caller (from the host install-state) for release
+// installs; hostPath is the resolved host binary for recipe-less agents.
+func PlanInstall(agent config.Agent, version, hostPath string) AgentInstall {
+	if agent.Release != nil {
+		return AgentInstall{Command: agent.Command, Kind: InstallRelease, Version: version}
+	}
+	if strings.TrimSpace(agent.SourceURL) != "" {
+		return AgentInstall{
+			Command:           agent.Command,
+			Kind:              InstallScript,
+			Script:            "curl -fsSL " + agent.SourceURL + " | bash",
+			AllowSetupFailure: agent.SetupInteractive,
+		}
+	}
+	return AgentInstall{Command: agent.Command, Kind: InstallHostBinary, HostPath: strings.TrimSpace(hostPath)}
 }
 
 // SortedAssetKeys returns the asset map keys in stable order, so rendered

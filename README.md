@@ -158,14 +158,18 @@ content hash, so an identical selection reuses the cached image — the build
 runs only once. On the first launch the launcher cross-compiles a linux copy
 of itself, materializes the build context, and runs `docker build` (the
 installer runs inside the build with its checksum verification intact;
-script agents install via their `curl | bash` recipe). The project is
-mounted read-write at its own path and the agent credential/history
-directories are shared read-only — log in on the host once and the container
-sees the same session. Services listening on the host (the ai-memory server,
-MCP servers) stay reachable via `host.docker.internal`; config files that
-store MCP URLs are copied, rewritten, and mounted over the originals so the
-host files are never modified. Set `AI_LAUNCHER_NO_REWRITE=1` to disable the
-localhost rewrite.
+script agents install via their official `curl | bash` recipe). The base
+image carries Node LTS via nvm and the Java stack installs JDK 21 via
+SDKMAN, so npm-based agents (pi, devin) and Java tooling work out of the
+box. Each stack shares its host toolchain/cache directories (nvm, sdkman,
+cargo, go-build, m2...) read-write with the container, so downloads are
+reused on both sides. The project is mounted read-write at its own path and
+the agent credential/history directories are shared read-only — log in on
+the host once and the container sees the same session. Services listening on
+the host (the ai-memory server, MCP servers) stay reachable via
+`host.docker.internal`; config files that store MCP URLs are copied,
+rewritten, and mounted over the originals so the host files are never
+modified. Set `AI_LAUNCHER_NO_REWRITE=1` to disable the localhost rewrite.
 
 In the TUI, toggle `Container (docker)` in Options to switch the backend
 from the jail (they are mutually exclusive), then pick stacks in the new

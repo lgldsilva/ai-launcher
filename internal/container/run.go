@@ -42,6 +42,11 @@ type RunConfig struct {
 	// MemoryNativeBin is the managed ai-memory binary to mount read-only and
 	// export as AI_MEMORY_NATIVE_BIN (R5 item 20).
 	MemoryNativeBin string
+	// StackCacheMounts are the host toolchain/cache directories shared
+	// read-write with the container for the selected stacks (nvm, sdkman,
+	// cargo, go-build, npm, m2...). Same-path mounts so downloads are reused
+	// on both sides. Resolved by the caller from the selection + home.
+	StackCacheMounts []string
 	// Env are extra KEY=VALUE entries passed via -e (memory server URL,
 	// auth token, ...). Loopback URLs are rewritten to host.docker.internal
 	// unless the value already references it (R5 item 21, R7 item 33).
@@ -137,18 +142,11 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	// Host binaries with no install recipe are bind-mounted read-only at the
 	// same path (R3 item 13). Each unique directory is mounted once; the
 	// executable path inside the container resolves to the mounted binary.
-	seenBin := make(map[string]struct{}, len(cfg.HostBinaryMounts))
-	for _, dir := range cfg.HostBinaryMounts {
-		dir = strings.TrimSpace(dir)
-		if dir == "" || !ExistsOnHost(dir) {
-			continue
-		}
-		if _, dup := seenBin[dir]; dup {
-			continue
-		}
-		seenBin[dir] = struct{}{}
-		argv = append(argv, "-v", dir+":"+dir+":ro")
-	}
+	argv = append(argv, hostBinaryMountSpecs(cfg.HostBinaryMounts)...)
+	// Toolchain/cache dirs for the selected stacks are shared read-write at
+	// the same path: nvm/sdkman/cargo installs and package caches persist to
+	// the host, and the image reuses what the host already downloaded.
+	argv = append(argv, stackCacheMountSpecs(cfg.StackCacheMounts)...)
 
 	// Environment: rewrite loopback URLs to the host gateway (R5/R7).
 	for _, entry := range cfg.Env {
@@ -180,4 +178,43 @@ func mountSpec(hostPath string, readOnly bool) string {
 		return hostPath + ":" + hostPath + ":ro"
 	}
 	return hostPath + ":" + hostPath
+}
+
+// hostBinaryMountSpecs renders the -v pair for each unique, existing host
+// binary directory: read-only at the same path (R3 item 13).
+func hostBinaryMountSpecs(dirs []string) []string {
+	var specs []string
+	seen := make(map[string]struct{}, len(dirs))
+	for _, dir := range dirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" || !ExistsOnHost(dir) {
+			continue
+		}
+		if _, dup := seen[dir]; dup {
+			continue
+		}
+		seen[dir] = struct{}{}
+		specs = append(specs, "-v", dir+":"+dir+":ro")
+	}
+	return specs
+}
+
+// stackCacheMountSpecs renders the -v pair for each unique, existing toolchain
+// cache dir: read-write at the same path so downloads are shared with the
+// host (nvm, sdkman, cargo, go-build, m2, gradle, pip...).
+func stackCacheMountSpecs(dirs []string) []string {
+	var specs []string
+	seen := make(map[string]struct{}, len(dirs))
+	for _, dir := range dirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" || !ExistsOnHost(dir) {
+			continue
+		}
+		if _, dup := seen[dir]; dup {
+			continue
+		}
+		seen[dir] = struct{}{}
+		specs = append(specs, "-v", dir+":"+dir)
+	}
+	return specs
 }

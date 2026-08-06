@@ -951,6 +951,14 @@ Feature: Launcher command contract
       /home/tester/.claude:/home/tester/.claude:ro
       -v
       /home/tester/.claude.json:/home/tester/.claude.json:ro
+      -v
+      /home/tester/go:/home/tester/go
+      -v
+      /home/tester/.cache/go-build:/home/tester/.cache/go-build
+      -v
+      /home/tester/.cache/pip:/home/tester/.cache/pip
+      -v
+      /home/tester/.local/lib/python3.12:/home/tester/.local/lib/python3.12
       --add-host=host.docker.internal:host-gateway
       ai-launcher-box:000000000000
       claude
@@ -988,6 +996,10 @@ Feature: Launcher command contract
       /home/tester/.config/gh:/home/tester/.config/gh:ro
       -v
       /var/run/docker.sock:/var/run/docker.sock
+      -v
+      /home/tester/.cargo:/home/tester/.cargo
+      -v
+      /home/tester/.rustup:/home/tester/.rustup
       --add-host=host.docker.internal:host-gateway
       ai-launcher-box:000000000000
       codex

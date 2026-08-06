@@ -112,11 +112,42 @@ func TestBuildDockerRunWithExtraArgs(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 	joined := strings.Join(got, " ")
-	if !strings.Contains(joined, "/usr/local/bin/claude") {
-		t.Errorf("Build() missing executable %s", joined)
+	// The selection agent is InstallRelease, so the in-container executable is
+	// the command name (installed on PATH), NOT the host path (a macOS binary
+	// that does not exist in the linux container).
+	if strings.Contains(joined, "/usr/local/bin/claude") {
+		t.Errorf("Build() used the host path for an image-installed agent: %s", joined)
 	}
-	if !strings.Contains(joined, "--model sonnet") {
-		t.Errorf("Build() missing extra args %s", joined)
+	if !strings.Contains(joined, "claude --model sonnet") {
+		t.Errorf("Build() missing command + extra args %s", joined)
+	}
+}
+
+// A host-mounted agent (InstallHostBinary) runs by its resolved host path,
+// which is bind-mounted at the same location inside the container.
+func TestBuildDockerRunHostBinaryUsesHostPath(t *testing.T) {
+	selection, err := container.Normalize(
+		[]string{"go"},
+		[]container.AgentInstall{{Command: "kiro-cli", Kind: container.InstallHostBinary, HostPath: "/opt/kiro/bin/kiro"}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	cfg := dockerLaunchConfig(t)
+	cfg.Agent = config.Agent{Command: "kiro-cli"}
+	cfg.Executable = "/opt/kiro/bin/kiro"
+	cfg.Docker.Selection = selection
+	got, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "/opt/kiro/bin/kiro") {
+		t.Errorf("Build() missing host-binary executable %s", joined)
+	}
+	if !strings.Contains(joined, "/opt/kiro/bin:/opt/kiro/bin:ro") {
+		t.Errorf("Build() missing host-binary dir mount %s", joined)
 	}
 }
 

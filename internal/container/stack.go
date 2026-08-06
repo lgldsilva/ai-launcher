@@ -23,11 +23,19 @@ import (
 // optional second RUN block installing the CLI helpers the coding agents
 // depend on (linters, language servers). Both are emitted verbatim in image
 // order, so they must be deterministic text.
+//
+// CacheDirs lists the host directories (relative to $HOME) shared with the
+// container when the stack is selected: toolchain managers (nvm, sdkman),
+// package caches (npm, cargo, go-build, m2) and SDK installs. They are
+// mounted read-write at the same path, so downloads on one side are reused
+// by the other and disk stays lean — the image does not re-download what the
+// host already has (and vice versa).
 type Stack struct {
-	ID      string
-	Name    string
-	Layer   string
-	Helpers string
+	ID        string
+	Name      string
+	Layer     string
+	Helpers   string
+	CacheDirs []string
 }
 
 // Stacks is the built-in toolchain catalog. Order matters: it is the display
@@ -47,6 +55,7 @@ var Stacks = []Stack{
 			" && rm -rf /var/lib/apt/lists/*",
 		Helpers: "RUN go install golang.org/x/tools/gopls@latest \\\n" +
 			" && go install golang.org/x/tools/cmd/goimports@latest",
+		CacheDirs: []string{"go", ".cache/go-build"},
 	},
 	{
 		ID:   "python",
@@ -54,7 +63,8 @@ var Stacks = []Stack{
 		Layer: "RUN apt-get update && apt-get install -y --no-install-recommends \\\n" +
 			"    python3 python3-pip python3-venv \\\n" +
 			" && rm -rf /var/lib/apt/lists/*",
-		Helpers: "RUN pip3 install --break-system-packages ruff pipx",
+		Helpers:   "RUN pip3 install --break-system-packages ruff pipx",
+		CacheDirs: []string{".cache/pip", ".local/lib/python3.12"},
 	},
 	{
 		ID:   "rust",
@@ -62,14 +72,25 @@ var Stacks = []Stack{
 		Layer: "RUN apt-get update && apt-get install -y --no-install-recommends \\\n" +
 			"    rustc cargo \\\n" +
 			" && rm -rf /var/lib/apt/lists/*",
-		Helpers: "RUN cargo install cargo-binstall --locked || true",
+		Helpers:   "RUN cargo install cargo-binstall --locked || true",
+		CacheDirs: []string{".cargo", ".rustup"},
 	},
 	{
 		ID:   "java",
 		Name: "Java",
-		Layer: "RUN apt-get update && apt-get install -y --no-install-recommends \\\n" +
-			"    openjdk-21-jdk-headless \\\n" +
-			" && rm -rf /var/lib/apt/lists/*",
+		// JDK via SDKMAN (like nvm for Node): agents and build tools may need
+		// specific JDK versions, and sdkman manages them instead of pinning
+		// whatever Ubuntu ships. The LTS (21) is installed and java/javac are
+		// symlinked into /usr/local/bin so non-login shells find them. SDKMAN
+		// is bash-only (source, [[ ]]), so the layer runs under /bin/bash.
+		Layer: "RUN /bin/bash -c 'curl -fsSL \"https://get.sdkman.io\" | bash && \\\n" +
+			" export SDKMAN_DIR=\"$HOME/.sdkman\" && . \"$SDKMAN_DIR/bin/sdkman-init.sh\" && \\\n" +
+			" sdk install java 21-tem < /dev/null && \\\n" +
+			" java_bin=\"$(ls -d $HOME/.sdkman/candidates/java/21* | head -1)/bin\" && \\\n" +
+			" ln -sf \"$java_bin/java\" /usr/local/bin/java && \\\n" +
+			" ln -sf \"$java_bin/javac\" /usr/local/bin/javac && \\\n" +
+			" java -version'",
+		CacheDirs: []string{".sdkman", ".m2"},
 	},
 	{
 		ID:   "maven",
@@ -77,6 +98,7 @@ var Stacks = []Stack{
 		Layer: "RUN apt-get update && apt-get install -y --no-install-recommends \\\n" +
 			"    maven \\\n" +
 			" && rm -rf /var/lib/apt/lists/*",
+		CacheDirs: []string{".m2"},
 	},
 	{
 		ID:   "gradle",
@@ -84,6 +106,7 @@ var Stacks = []Stack{
 		Layer: "RUN apt-get update && apt-get install -y --no-install-recommends \\\n" +
 			"    gradle \\\n" +
 			" && rm -rf /var/lib/apt/lists/*",
+		CacheDirs: []string{".gradle"},
 	},
 	{
 		ID:   "node",
@@ -91,7 +114,8 @@ var Stacks = []Stack{
 		Layer: "RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \\\n" +
 			" && apt-get install -y --no-install-recommends nodejs \\\n" +
 			" && rm -rf /var/lib/apt/lists/*",
-		Helpers: "RUN npm install -g typescript typescript-language-server",
+		Helpers:   "RUN npm install -g typescript typescript-language-server",
+		CacheDirs: []string{".nvm", ".npm", ".cache/node"},
 	},
 	{
 		ID:   "cpp",
@@ -99,6 +123,7 @@ var Stacks = []Stack{
 		Layer: "RUN apt-get update && apt-get install -y --no-install-recommends \\\n" +
 			"    build-essential cmake clang gdb \\\n" +
 			" && rm -rf /var/lib/apt/lists/*",
+		CacheDirs: []string{".cache/ccache"},
 	},
 }
 
@@ -144,6 +169,11 @@ const BaseImage = "ubuntu:24.04"
 // "more complete" base the user asked for (git, ssh client, build toolchain,
 // jq, ripgrep, fd, unzip, less, vim) plus the PATH for the official agent
 // installers, which all drop binaries into ~/.local/bin.
+//
+// Node LTS arrives via nvm (not the distro package): several agent installers
+// (pi, devin) hard-require a recent Node, and nvm pins the LTS line rather
+// than whatever Ubuntu happens to ship. node/npm/npx are symlinked into
+// /usr/local/bin so non-login shells find them.
 const DevProfile = `# Runtime essentials: all official agent installers need
 # bash + curl; agents and their tooling need git, ssh, unzip, jq, ripgrep.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -154,7 +184,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && ln -s /usr/bin/fdfind /usr/bin/fd \
  && rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/root/.local/bin:${PATH}"`
+# Node LTS via nvm (agent installers require a recent Node; distro Node is
+# too old). nvm is shell-only, so symlink node/npm/npx into /usr/local/bin;
+# the npm global bin dir (where pi/devin/other npm CLIs land) joins PATH.
+RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash \
+ && export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" \
+ && nvm install --lts \
+ && node_bin="$(nvm which default)" \
+ && ln -sf "$node_bin" /usr/local/bin/node \
+ && ln -sf "$(dirname "$node_bin")/npm" /usr/local/bin/npm \
+ && ln -sf "$(dirname "$node_bin")/npx" /usr/local/bin/npx \
+ && node --version && npm --version
+
+ENV PATH="/root/.local/bin:$(ls -d /root/.nvm/versions/node/*/bin | head -1):${PATH}"`
 
 // ErrNoStacks is returned when the Dockerfile is requested with an empty
 // stack selection: an agent box with no toolchain is a footgun, not a build.

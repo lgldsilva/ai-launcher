@@ -82,3 +82,45 @@ func TestExistsOnHost(t *testing.T) {
 		t.Fatal("ExistsOnHost on a missing path = true; want false")
 	}
 }
+
+func TestStackCacheMounts(t *testing.T) {
+	home := t.TempDir()
+	// Create the host dirs that "exist" for the probe.
+	dirs := map[string]bool{
+		home + "/.nvm":    true,
+		home + "/.cargo":  true,
+		home + "/go":      true,
+		home + "/.sdkman": true,
+	}
+	exists := func(path string) bool { return dirs[path] }
+
+	t.Run("node stack", func(t *testing.T) {
+		got := StackCacheMounts(home, []string{"node"}, exists)
+		if len(got) != 1 || got[0] != home+"/.nvm" {
+			t.Fatalf("StackCacheMounts(node) = %v; want [%s/.nvm]", got, home)
+		}
+	})
+	t.Run("java stack", func(t *testing.T) {
+		got := StackCacheMounts(home, []string{"java"}, exists)
+		if len(got) != 1 || got[0] != home+"/.sdkman" {
+			t.Fatalf("StackCacheMounts(java) = %v; want [%s/.sdkman]", got, home)
+		}
+	})
+	t.Run("multiple dedup", func(t *testing.T) {
+		got := StackCacheMounts(home, []string{"go", "node", "go"}, exists)
+		if len(got) != 2 {
+			t.Fatalf("StackCacheMounts(go,node,go) = %v; want 2 deduped", got)
+		}
+	})
+	t.Run("missing dirs skipped", func(t *testing.T) {
+		got := StackCacheMounts(home, []string{"rust"}, func(string) bool { return false })
+		if len(got) != 0 {
+			t.Fatalf("StackCacheMounts with no existing dirs = %v; want none", got)
+		}
+	})
+	t.Run("empty home", func(t *testing.T) {
+		if got := StackCacheMounts("", []string{"node"}, nil); len(got) != 0 {
+			t.Fatalf("StackCacheMounts('') = %v; want none", got)
+		}
+	})
+}

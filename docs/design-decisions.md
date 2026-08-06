@@ -255,6 +255,30 @@ honest. The checksum-verified installer runs inside the image build itself
 build context), reusing the host installer's verification logic instead of
 reimplementing checksum validation in shell.
 
+## Official vendor installers are recorded with allow_unverified
+
+**Decision.** The mainstream coding agents (claude, codex, opencode, kimi,
+agy, pi, omp, cursor, grok, devin) ship a `curl | bash` installer as their
+canonical installation method; there is no checksum-verifiable release
+alternative for them. The built-in catalog now records those official
+installer URLs (`source_url`) with `allow_unverified: true`.
+
+**Why this is not the invariant-4 weakening the project forbids.** The rule
+"do not weaken with allow_unverified in the default catalog" exists to stop
+silently accepting unverifiable downloads where a verified alternative
+exists. For these CLIs the vendor installer *is* the only distribution
+channel — the operator already accepts this exact trust model when
+installing on the host (the README's `curl | bash`). The URLs are pinned to
+vendor domains, never third-party mirrors, so the trust anchor is the vendor's
+TLS + their own script. Any agent without an official installer stays
+recipe-less and falls back to the host-binary mount.
+
+**Why the base image carries nvm and the Java stack uses SDKMAN.** Several
+installers (pi, devin) hard-require a recent Node, and SDKMAN is the only
+portable way to pin a JDK LTS across distros. Both are shell-only, so the
+Dockerfile symlinks node/npm/npx and java/javac into /usr/local/bin and adds
+the nvm node bin dir to PATH.
+
 ## What we are NOT doing (yet)
 
 - **Native sandbox on Windows.** Depends on upstream (ai-jail "probably

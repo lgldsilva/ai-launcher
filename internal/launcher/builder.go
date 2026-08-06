@@ -266,6 +266,9 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 	run.GHConfig = permissionHomeMount(cfg, config.PermissionGitHub, ".config/gh")
 	run.SSHConfig = permissionHomeMount(cfg, config.PermissionSSH, ".ssh")
 	run.MountDockerSocket = cfg.Permissions[config.PermissionDocker]
+	// Toolchain/cache dirs of the selected stacks are shared with the
+	// container (nvm, sdkman, cargo...): same-path rw mounts reuse downloads.
+	run.StackCacheMounts = container.StackCacheMounts(cfg.HomeDir, run.Selection.Stacks, container.ExistsOnHost)
 	// Host-mounted agents (InstallHostBinary, no recipe) need their binary
 	// directory bind-mounted read-only so the executable resolves inside the
 	// container (R3 item 13). Derived from the selection, not the host path
@@ -275,7 +278,15 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 	// managed binary exists is I/O, which Build must stay free of. The caller
 	// (CLI/TUI) sets it on cfg.Docker when the binary exists, mirroring how
 	// Environment() stats it before exporting AI_MEMORY_NATIVE_BIN.
-	run.AgentExecutable = cfg.Executable
+	// The in-container executable depends on the install kind: agents installed
+	// in the image (release/script) run by their command name (the installer
+	// puts the binary on PATH); host-mounted agents (InstallHostBinary) run by
+	// their resolved host path, which is bind-mounted at the same location.
+	// Using the host path for an image-installed agent would point at a macOS
+	// binary that does not exist inside the linux container.
+	if selectionHasHostBinary(run.Selection) {
+		run.AgentExecutable = cfg.Executable
+	}
 	if run.AgentExecutable == "" {
 		run.AgentExecutable = cfg.Agent.Command
 	}
@@ -309,6 +320,16 @@ func hostBinaryDirs(selection container.Selection) []string {
 		dirs = append(dirs, dir)
 	}
 	return dirs
+}
+
+// selectionHasHostBinary reports whether the selection's single agent is a
+// host-mounted binary (InstallHostBinary), in which case the docker run
+// executes the resolved host path (bind-mounted at the same location).
+func selectionHasHostBinary(selection container.Selection) bool {
+	if len(selection.Agents) != 1 {
+		return false
+	}
+	return selection.Agents[0].Kind == container.InstallHostBinary
 }
 
 // firstNonEmpty returns the first non-empty string; used to pick the docker

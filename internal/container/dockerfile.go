@@ -77,7 +77,7 @@ func Dockerfile(selection Selection) (string, error) {
 			b.WriteString("COPY install-config.yaml " + InstallConfigFile + "\n")
 			fmt.Fprintf(&b, "RUN ai-launcher --config %s --install --agent %s\n", InstallConfigFile, agent.Command)
 		case InstallScript:
-			b.WriteString(ScriptLine(agent.Script))
+			b.WriteString(ScriptLine(agent))
 		case InstallHostBinary:
 			fmt.Fprintf(&b, "# bind-mounted from host %s at run time; not installed\n", agent.HostPath)
 		}
@@ -88,9 +88,14 @@ func Dockerfile(selection Selection) (string, error) {
 
 // ScriptLine normalizes an install script into a RUN line: it ensures the
 // "RUN " prefix and strips a leading newline so the emitted layer is a single
-// valid instruction.
-func ScriptLine(script string) string {
-	script = strings.TrimSpace(script)
+// valid instruction. When the install's post-install step opens an interactive
+// login (AllowSetupFailure), a trailing `|| true` keeps the build from
+// failing on the prompt.
+func ScriptLine(agent AgentInstall) string {
+	script := strings.TrimSpace(agent.Script)
 	script = strings.TrimPrefix(script, "RUN ")
+	if agent.AllowSetupFailure {
+		script += " || true"
+	}
 	return "RUN " + script + "\n"
 }

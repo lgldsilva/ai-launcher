@@ -73,6 +73,9 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
     command: custom-cli
     supports_memory: true
     supports_yolo: true
+    # A recipe so docker-mode tests have an install path (script agent).
+    source_url: https://example.com/custom-cli.sh
+    allow_unverified: true
     yolo_flag: --custom-yolo
     # custom-cli is a wrapper: ai-memory run only accepts its fixed harness
     # list, so the catalog declares which of those it maps onto.

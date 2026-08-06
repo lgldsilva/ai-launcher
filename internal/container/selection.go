@@ -35,6 +35,11 @@ type AgentInstall struct {
 	// Script is the full RUN line for InstallScript kinds (e.g.
 	// "RUN curl -fsSL https://example.com/install.sh | bash").
 	Script string
+	// AllowSetupFailure marks installers whose post-install step opens an
+	// interactive login (devin's `setup`). The binary is installed before that
+	// step; appending `|| true` keeps the docker build from failing on the
+	// login prompt in a non-interactive build.
+	AllowSetupFailure bool
 	// HostPath is the resolved host binary directory for InstallHostBinary.
 	HostPath string
 }

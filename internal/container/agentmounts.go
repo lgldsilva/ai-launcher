@@ -71,8 +71,10 @@ func AgentMounts(home string, commands []string, existingFiles func(string) bool
 	return result
 }
 
-// ExpandHome expands a leading ~/ (or bare ~) to home. Returns "" for empty
-// input. Paths are cleaned so the generated -v flags are stable.
+// ExpandHome expands a leading ~/ (or bare ~) to home, and resolves relative
+// paths under home so cache dirs like ".nvm" or ".cargo" land in the host
+// home. Returns "" for empty input. Paths are cleaned so the generated -v
+// flags are stable.
 func ExpandHome(raw, home string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || home == "" {
@@ -84,7 +86,11 @@ func ExpandHome(raw, home string) string {
 	if strings.HasPrefix(raw, "~/") {
 		return filepath.Clean(filepath.Join(home, raw[2:]))
 	}
-	return filepath.Clean(raw)
+	if strings.HasPrefix(raw, "/") {
+		return filepath.Clean(raw)
+	}
+	// Relative path (a cache dir under $HOME).
+	return filepath.Clean(filepath.Join(home, raw))
 }
 
 // ExistsOnHost reports whether path exists; it is the default existence probe
@@ -93,4 +99,40 @@ func ExpandHome(raw, home string) string {
 var ExistsOnHost = func(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// StackCacheMounts returns the host directories shared read-write with the
+// container for the selected stacks: toolchain manager dirs (nvm, sdkman,
+// cargo, rustup) and package caches (npm, go-build, m2, gradle, pip). Each is
+// resolved under home and mounted at the identical path (same-path design), so
+// downloads on either side are reused — the image does not re-download what
+// the host has, and SDKs installed inside persist to the host. Only paths that
+// exist on the host are included (docker refuses a missing -v source).
+func StackCacheMounts(home string, stackIDs []string, exists func(string) bool) []string {
+	if strings.TrimSpace(home) == "" {
+		return nil
+	}
+	if exists == nil {
+		exists = ExistsOnHost
+	}
+	seen := make(map[string]struct{}, 4)
+	var mounts []string
+	for _, id := range stackIDs {
+		stack, ok := StackByID(id)
+		if !ok {
+			continue
+		}
+		for _, raw := range stack.CacheDirs {
+			hostPath := ExpandHome(raw, home)
+			if hostPath == "" || !exists(hostPath) {
+				continue
+			}
+			if _, dup := seen[hostPath]; dup {
+				continue
+			}
+			seen[hostPath] = struct{}{}
+			mounts = append(mounts, hostPath)
+		}
+	}
+	return mounts
 }

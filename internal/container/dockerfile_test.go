@@ -46,7 +46,7 @@ func TestDockerfile(t *testing.T) {
 		"# Agent: kiro-cli",
 		"bind-mounted from host /opt/kiro/bin",
 		"curl -fsSL https://dev.meta.ai/install.sh | bash",
-		"ENV PATH=\"/root/.local/bin:${PATH}\"",
+		"ENV PATH=\"/root/.local/bin:$(ls -d /root/.nvm/versions/node/*/bin | head -1):${PATH}\"",
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("Dockerfile missing %q\n---\n%s", want, df)
@@ -116,16 +116,17 @@ func TestDockerfileNoDevProfile(t *testing.T) {
 
 func TestScriptLine(t *testing.T) {
 	tests := []struct {
-		in   string
-		want string
+		agent AgentInstall
+		want  string
 	}{
-		{"curl x | bash", "RUN curl x | bash\n"},
-		{"RUN curl x | bash", "RUN curl x | bash\n"},
-		{"  curl x | bash\n", "RUN curl x | bash\n"},
+		{AgentInstall{Script: "curl x | bash"}, "RUN curl x | bash\n"},
+		{AgentInstall{Script: "RUN curl x | bash"}, "RUN curl x | bash\n"},
+		{AgentInstall{Script: "  curl x | bash\n"}, "RUN curl x | bash\n"},
+		{AgentInstall{Script: "curl x | bash", AllowSetupFailure: true}, "RUN curl x | bash || true\n"},
 	}
 	for _, tt := range tests {
-		if got := ScriptLine(tt.in); got != tt.want {
-			t.Errorf("ScriptLine(%q) = %q; want %q", tt.in, got, tt.want)
+		if got := ScriptLine(tt.agent); got != tt.want {
+			t.Errorf("ScriptLine(%#v) = %q; want %q", tt.agent, got, tt.want)
 		}
 	}
 }

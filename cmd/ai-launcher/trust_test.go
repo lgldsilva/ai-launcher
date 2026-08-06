@@ -539,7 +539,11 @@ func TestDockerRunConfigFromOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agent := config.Agent{Command: "claude", SupportsMemory: true}
+	agent := config.Agent{
+		Command:        "claude",
+		SupportsMemory: true,
+		Release:        &config.GitHubRelease{Repository: "acme/claude", Assets: map[string]string{"linux-amd64": "claude.tar.gz"}, Binary: "claude"},
+	}
 	cfg := dockerRunConfigFromOptions(agent, []string{"go"}, home, "http://localhost:9292", "tok", true)
 	if len(cfg.Selection.Agents) != 1 || cfg.Selection.Agents[0].Version != "2.1.0" {
 		t.Fatalf("selection agent = %#v; want pinned 2.1.0", cfg.Selection.Agents)
