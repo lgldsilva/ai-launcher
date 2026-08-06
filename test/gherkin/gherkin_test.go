@@ -14,6 +14,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
@@ -34,6 +35,8 @@ type launchSpec struct {
 	ClearHome     bool              `yaml:"clear_home"`
 	GOOS          string            `yaml:"goos"`
 	Jail          bool              `yaml:"jail"`
+	Docker        bool              `yaml:"docker"`
+	Stacks        []string          `yaml:"stacks"`
 	JailExec      bool              `yaml:"jail_exec"`
 	JailFlags     config.JailFlags  `yaml:"jail_flags"`
 	Memory        bool              `yaml:"memory"`
@@ -158,10 +161,35 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 		t.Fatal("launch scenario must define an expected command")
 	}
 	want := nonEmptyLines(expected.doc)
+	// Docker scenarios pin a placeholder tag (ai-launcher-box:000000000000)
+	// because the real tag is the content hash of the normalized selection.
+	// Resolve it here so the contract asserts the structure without encoding
+	// a hash that would change when the pinned test version changes.
+	if launch.UseDocker {
+		want = resolveDockerImageTag(want, launch.Docker.Selection)
+	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 	return true
+}
+
+// resolveDockerImageTag substitutes the real content-hashed tag for the
+// placeholder in docker contract scenarios.
+func resolveDockerImageTag(lines []string, selection container.Selection) []string {
+	tag, err := container.ImageTag(selection)
+	if err != nil {
+		return lines
+	}
+	resolved := make([]string, len(lines))
+	for i, line := range lines {
+		if strings.HasPrefix(line, "ai-launcher-box:") {
+			resolved[i] = tag
+		} else {
+			resolved[i] = line
+		}
+	}
+	return resolved
 }
 
 // runLocalConfigScenario handles "Given a local configuration" scenarios and
@@ -209,6 +237,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		Executable:      spec.Executable,
 		HomeDir:         spec.Home,
 		UseJail:         spec.Jail,
+		UseDocker:       spec.Docker,
 		JailExec:        spec.JailExec,
 		JailFlags:       spec.JailFlags,
 		UseMemory:       spec.Memory,
@@ -223,6 +252,32 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		Yolo:            spec.Yolo,
 		ExtraArgs:       spec.Args,
 		ParamValues:     spec.ParamValues,
+		Docker:          dockerRunConfig(spec),
+	}
+}
+
+// dockerRunConfig derives the container run inputs from a docker-enabled spec.
+// The selection is deliberately NOT normalized here: a scenario that declares
+// an unknown stack (validation contract) must flow through to the validator
+// as an invalid selection rather than panicking at parse time. The agent is
+// pinned to a placeholder version so the image tag stays deterministic; the
+// catalog pins real versions at launch time. The workspace doubles as the
+// same-path project mount.
+func dockerRunConfig(spec launchSpec) container.RunConfig {
+	if !spec.Docker {
+		return container.RunConfig{}
+	}
+	return container.RunConfig{
+		Selection: container.Selection{
+			Stacks: spec.Stacks,
+			Agents: []container.AgentInstall{{
+				Command: spec.Agent,
+				Kind:    container.InstallRelease,
+				Version: "0.0.0-test",
+			}},
+		},
+		Interactive:    true,
+		AddHostGateway: true,
 	}
 }
 

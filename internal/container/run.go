@@ -111,11 +111,11 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	for _, mount := range AgentMounts(cfg.HomeDir, cfg.AgentCommands, nil) {
 		argv = append(argv, "-v", mountSpec(mount.HostPath, mount.ReadOnly))
 	}
-	if cfg.GHConfig != "" {
-		argv = append(argv, "-v", cfg.GHConfig+":"+cfg.GHConfig+":ro")
-	}
 	if cfg.SSHConfig != "" {
 		argv = append(argv, "-v", cfg.SSHConfig+":"+cfg.SSHConfig+":ro")
+	}
+	if cfg.GHConfig != "" {
+		argv = append(argv, "-v", cfg.GHConfig+":"+cfg.GHConfig+":ro")
 	}
 	if cfg.MountDockerSocket {
 		socket := cfg.DockerSocketPath

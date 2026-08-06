@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 )
 
 // aiMemoryCommand is the upstream memory CLI invoked as the wrapper layer of
@@ -155,6 +156,18 @@ type LaunchConfig struct {
 	MemoryServerURL string
 	MemoryAuthToken string
 	UseJail         bool
+	// UseDocker selects the docker container backend: when true, Build emits
+	// `docker run ...` instead of `ai-jail ...`. UseDocker and UseJail are
+	// mutually exclusive — the container replaces the jail (design decision 25).
+	// The docker backend needs no host-side ai-jail binary, so a container
+	// launch works on every platform that has a docker daemon, including
+	// Windows.
+	UseDocker bool
+	// Docker holds the inputs the docker argv builder needs: the image
+	// selection (stacks + pinned agents), the mounts to share, and the launch
+	// environment. Zero value means the docker backend was enabled without a
+	// selection; Validate reports it.
+	Docker          container.RunConfig
 	UseMemory       bool
 	ContinueSession bool
 	JailExec        bool
@@ -184,6 +197,9 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	command := make([]string, 0, 12+len(cfg.Mounts)+len(cfg.ExtraArgs))
 	if strings.TrimSpace(cfg.Agent.Command) == "" {
 		return nil, errors.New("agent command is required")
+	}
+	if cfg.UseDocker {
+		return buildDockerRun(cfg)
 	}
 	if cfg.UseJail {
 		command = appendJailArgs(command, cfg)
@@ -226,6 +242,88 @@ func memoryRunHarness(agent config.Agent) string {
 		}
 	}
 	return agent.Command
+}
+
+// buildDockerRun translates a docker-mode LaunchConfig into the docker run
+// argv. The container replaces the jail (design decision 25): the composed
+// command is `docker run ... <image> <harness> [native args]`, where the
+// image is built from the pinned stack/agent selection and the harness runs
+// inside it. ai-memory, when enabled, runs inside the container too — the
+// managed native binary is mounted read-only (R5 item 20) and its server URL
+// is rewritten to reach the host (R7 item 33).
+//
+// Memory scope and workstream flags do not apply in container mode: ai-memory
+// run's --scope/--workstream are wrapper flags consumed by the host-side
+// launcher, not by the in-container binary.
+func buildDockerRun(cfg LaunchConfig) ([]string, error) {
+	run := cfg.Docker
+	run.HomeDir = cfg.HomeDir
+	run.ProjectDir = firstNonEmpty(cfg.Workspace, cfg.Project)
+	if run.ProjectDir == "" {
+		return nil, errors.New("docker backend requires a workspace directory")
+	}
+	run.AgentCommands = agentDockerCommands(cfg)
+	run.GHConfig = permissionHomeMount(cfg, config.PermissionGitHub, ".config/gh")
+	run.SSHConfig = permissionHomeMount(cfg, config.PermissionSSH, ".ssh")
+	run.MountDockerSocket = cfg.Permissions[config.PermissionDocker]
+	// MemoryNativeBin is deliberately NOT resolved here: deciding whether the
+	// managed binary exists is I/O, which Build must stay free of. The caller
+	// (CLI/TUI) sets it on cfg.Docker when the binary exists, mirroring how
+	// Environment() stats it before exporting AI_MEMORY_NATIVE_BIN.
+	run.AgentExecutable = cfg.Executable
+	if run.AgentExecutable == "" {
+		run.AgentExecutable = cfg.Agent.Command
+	}
+	run.AgentArgs = append([]string(nil), cfg.ExtraArgs...)
+	if err := run.Selection.Validate(); err != nil {
+		return nil, err
+	}
+	return container.BuildRunCommand(run)
+}
+
+// firstNonEmpty returns the first non-empty string; used to pick the docker
+// workspace from the launch inputs.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// agentDockerCommands returns the agent commands whose credential/history
+// directories are shared with the container, deduplicated in catalog order.
+func agentDockerCommands(cfg LaunchConfig) []string {
+	result := make([]string, 0, 1)
+	seen := make(map[string]struct{}, 1)
+	add := func(command string) {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			return
+		}
+		if _, dup := seen[command]; dup {
+			return
+		}
+		seen[command] = struct{}{}
+		result = append(result, command)
+	}
+	add(cfg.Agent.Command)
+	return result
+}
+
+// permissionHomeMount resolves the home-directory mount for a permission
+// (mirroring jailPermissions' mountHome), returning "" when the permission is
+// off or no home is known. It is the docker equivalent of the jail's
+// permission→mount chain, extracted so both backends share the mapping (C3).
+func permissionHomeMount(cfg LaunchConfig, permissionID, subPath string) string {
+	if !cfg.Permissions[permissionID] {
+		return ""
+	}
+	if strings.TrimSpace(cfg.HomeDir) == "" {
+		return ""
+	}
+	return filepath.Join(cfg.HomeDir, subPath)
 }
 
 // buildContinue composes "ai-memory run" without a harness, which auto-resumes
@@ -695,7 +793,11 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	onWindows := goos == config.PlatformWindows
 	issues = append(issues, agentIssues(cfg, lookPath)...)
-	issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
+	if cfg.UseDocker {
+		issues = append(issues, dockerIssues(cfg, lookPath)...)
+	} else {
+		issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
+	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
 	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
 	if v.Getwd != nil {
@@ -781,6 +883,24 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindo
 	// option had been configured at all.
 	if !cfg.JailFlags.IsZero() {
 		return []Issue{{Code: "jail-options-without-jail", Message: "jail options are set but the jail is disabled; they will be ignored", Warning: true}}
+	}
+	return nil
+}
+
+// dockerIssues checks the docker backend prerequisites: the docker CLI must be
+// on PATH (the daemon reachability check happens at run time, in the executor,
+// because it requires talking to the daemon). An empty image selection is a
+// configuration error, not a warning: the backend was enabled but nobody said
+// what to build.
+func dockerIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Issue {
+	if _, err := lookPath("docker"); err != nil {
+		return []Issue{{Code: "docker-not-found", Message: "docker is required when the container backend is enabled"}}
+	}
+	if cfg.Docker.Selection.Validate() != nil {
+		return []Issue{{Code: "docker-selection-invalid", Message: "docker backend is enabled but the image selection is invalid; choose stacks and agents"}}
+	}
+	if strings.TrimSpace(cfg.Docker.Selection.AgentExecutable()) == "" {
+		return []Issue{{Code: "docker-no-agent", Message: "docker backend is enabled but no agent is selected for the image"}}
 	}
 	return nil
 }
@@ -929,11 +1049,12 @@ func mountIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Iss
 
 // permissionIssues checks the cross-permission dependencies (every helper
 // permission needs the jail) and warns about enabled permissions that the host
-// platform does not support.
+// platform does not support. In docker mode the jail-requiring permissions map
+// to container mounts instead (C3), so the jail requirement is lifted.
 func permissionIssues(cfg LaunchConfig, goos string, catalog []config.Permission) []Issue {
 	issues := make([]Issue, 0)
 	if cfg.Permissions[config.PermissionSSH] || cfg.Permissions[config.PermissionGitHub] || cfg.Permissions[config.PermissionDocker] || cfg.Permissions[config.PermissionGPU] {
-		if !cfg.UseJail {
+		if !cfg.UseJail && !cfg.UseDocker {
 			issue := Issue{Code: "permission-without-jail", Message: "ssh, gh, docker, and gpu permissions require ai-jail"}
 			if goos == config.PlatformWindows {
 				issue.Message = "ssh, gh, docker, and gpu permissions require ai-jail, which is unavailable on Windows; they will be ignored"

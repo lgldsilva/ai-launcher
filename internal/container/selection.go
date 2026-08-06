@@ -134,3 +134,17 @@ func (s Selection) Validate() error {
 	}
 	return nil
 }
+
+// AgentExecutable returns the argv[0] the container should invoke for this
+// selection: the single installed agent's command name, or the host path for
+// a host-mounted agent. An empty result means the selection has no agents.
+func (s Selection) AgentExecutable() string {
+	if len(s.Agents) == 0 {
+		return ""
+	}
+	agent := s.Agents[0]
+	if agent.Kind == InstallHostBinary {
+		return agent.HostPath
+	}
+	return agent.Command
+}

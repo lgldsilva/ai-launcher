@@ -18,6 +18,7 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	launchcmd "github.com/lgldsilva/ai-launcher/internal/cmd"
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 	"github.com/lgldsilva/ai-launcher/internal/selfupdate"
 	"github.com/lgldsilva/ai-launcher/internal/tui"
@@ -79,7 +80,7 @@ func warnf(errOut io.Writer, format string, args ...any) {
 // readable and the flag-to-config mapping can be applied as a unit.
 type cliOptions struct {
 	mounts, rwMounts               stringList
-	params                         stringList
+	params, stacks                 stringList
 	agent, extraArgs               string
 	globalPath, localPath          string
 	addName, addPath               string
@@ -97,6 +98,7 @@ type cliOptions struct {
 	tailscale, systemdUser         bool
 	mise, worktree                 bool
 	noJail, sandbox                bool
+	dockerBackend                  bool
 	memory, noMemory               bool
 	yolo, noYolo                   bool
 	fresh                          bool
@@ -122,6 +124,8 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.worktree, "worktree", false, "enable Git worktree passthrough in the jail")
 	flags.BoolVar(&o.noJail, flagNoJail, false, "run without ai-jail")
 	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
+	flags.BoolVar(&o.dockerBackend, "docker-backend", false, "run the agent inside a docker container instead of ai-jail")
+	flags.Var(&o.stacks, "stack", "toolchain stack for the docker image (go, python, rust, java, maven, gradle, node, cpp; repeatable)")
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
 	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
 	flags.BoolVar(&o.yolo, "yolo", false, "pass the dangerous-mode flag to the agent")
@@ -197,6 +201,8 @@ func (o *cliOptions) applyOptionFlags(flags *flag.FlagSet, local *config.Local) 
 	}{
 		{flagNoJail, func() { local.Options.Jail = !o.noJail }},
 		{"sandbox", func() { local.Options.Jail = o.sandbox }},
+		{"docker-backend", func() { local.Options.Docker = o.dockerBackend }},
+		{"stack", func() { local.Options.Stacks = o.stacks }},
 		{"memory", func() { local.Options.Memory = o.memory }},
 		{"no-memory", func() { local.Options.Memory = !o.noMemory }},
 		{"fresh", func() { local.Options.Fresh = o.fresh }},
@@ -249,6 +255,33 @@ func (o *cliOptions) applyParamFlags(local *config.Local) error {
 // both agents that declare supports_memory: false and agents whose catalog
 // entry is stale/wrong and names a run_harness that ai-memory does not accept
 // (for example cursor-agent). Unresolved agents are left alone.
+//
+// dockerRunConfigFromOptions derives the docker run inputs from the saved
+// selection: the image selection normalizes the requested stacks plus the
+// selected agent, pinned to a placeholder version — the catalog pins the real
+// release version when the installer runs (design C1/C2). Home is forwarded
+// so credential mounts resolve; the caller keeps the launch config pure.
+func dockerRunConfigFromOptions(agent config.Agent, stacks []string, home string) container.RunConfig {
+	selection, err := container.Normalize(stacks, []container.AgentInstall{{
+		Command: agent.Command,
+		Kind:    container.InstallRelease,
+		Version: "0.0.0-pending",
+	}}, nil)
+	if err != nil {
+		// An invalid stack selection surfaces as docker-selection-invalid in
+		// preflight; here we keep the raw stacks so the error is attributable.
+		return container.RunConfig{
+			Selection: container.Selection{Stacks: stacks},
+			HomeDir:   home,
+		}
+	}
+	return container.RunConfig{
+		Selection:      selection,
+		HomeDir:        home,
+		AddHostGateway: true,
+	}
+}
+
 func disableMemoryIfUnsupported(agent config.Agent, resolved bool, memory *bool, errOut io.Writer) {
 	if !resolved || !*memory {
 		return
@@ -334,8 +367,10 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 	// jail defaults to true so an overridden block never reads as "the file
 	// turned the sandbox off"; the profile's own value is trusted on its own.
 	trust.jail = true
+	trust.docker = false
 	if trust.optionsRaw {
 		trust.jail = raw.Options.Jail
+		trust.docker = raw.Options.Docker
 		trust.yolo = raw.Options.Yolo
 		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
 		trust.jailFlags = raw.Options.JailFlags
@@ -390,6 +425,7 @@ type localTrust struct {
 	agentKnown     bool
 	fromFile       bool // false once --agent was given: the operator's own choice.
 	jail           bool
+	docker         bool // container backend requested by the file
 	mounts         []config.Mount
 	rawPermissions map[string]bool   // permissions from file (profile may overwrite)
 	yolo           bool              // file value when profile does not own options
@@ -429,24 +465,21 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 		return errors.New("local config disables the sandbox (options.jail: false) " +
 			"while the global catalog defaults it on; pass --no-jail to accept that explicitly")
 	}
+	// F-docker — the container backend is a sandbox change, not just a toggle:
+	// it replaces ai-jail with a docker container. A workspace-local file
+	// turning it on without operator consent swaps the sandbox under the
+	// checkout, so it needs the same explicit opt-in as jail: false. Saving
+	// the selection records the file as operator-written; profiles are trusted
+	// global input.
+	if err := enforceDockerBackendConsent(flags, trust); err != nil {
+		return err
+	}
 
 	// F2 — sensitive mounts: each file-supplied mount must not expose a denied
 	// tree or a container-control socket. CLI --mount/--rw-map and launcher-saved
 	// files skip this check (the operator's own explicit choice).
-	for _, mount := range trust.mounts {
-		path := strings.TrimSpace(mount.Path)
-		if path == "" {
-			continue
-		}
-		if !filepath.IsAbs(path) {
-			return fmt.Errorf("local config mount %q is not an absolute path", path)
-		}
-		if filepath.Clean(path) == string(filepath.Separator) {
-			return fmt.Errorf("local config mount %q would expose the filesystem root", path)
-		}
-		if reason := launcher.DeniedMount(path); reason != nil {
-			return fmt.Errorf("local config mount %q is refused — %s; save the selection or use --mount to accept explicitly", path, reason.Reason)
-		}
+	if err := enforceMountConsent(trust); err != nil {
+		return err
 	}
 
 	// F1 — permissions: unsaved-local-file permissions must match explicit CLI flags.
@@ -498,6 +531,40 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 		return err
 	}
 
+	return nil
+}
+
+// enforceDockerBackendConsent refuses an unsaved local config that enables
+// the docker container backend. Docker replaces ai-jail as the sandbox, so a
+// repository file must not switch it without the operator repeating the choice
+// on the command line (mirrors the jail: false consent gate).
+func enforceDockerBackendConsent(flags *flag.FlagSet, trust localTrust) error {
+	if trust.optionsRaw && trust.docker && !flagsWasSet(flags, "docker-backend") {
+		return errors.New("local config enables the docker container backend (options.docker: true) " +
+			"without operator consent; pass --docker-backend to accept explicitly, or save the selection")
+	}
+	return nil
+}
+
+// enforceMountConsent refuses file-supplied mounts that expose a denied tree,
+// the filesystem root, or a non-absolute path. These are the same rules the
+// jail applies to operator mounts; the docker backend inherits them.
+func enforceMountConsent(trust localTrust) error {
+	for _, mount := range trust.mounts {
+		path := strings.TrimSpace(mount.Path)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("local config mount %q is not an absolute path", path)
+		}
+		if filepath.Clean(path) == string(filepath.Separator) {
+			return fmt.Errorf("local config mount %q would expose the filesystem root", path)
+		}
+		if reason := launcher.DeniedMount(path); reason != nil {
+			return fmt.Errorf("local config mount %q is refused — %s; save the selection or use --mount to accept explicitly", path, reason.Reason)
+		}
+	}
 	return nil
 }
 
@@ -690,7 +757,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		HomeDir:         home,
 		MemoryServerURL: inputs.global.MemoryServerURL,
 		MemoryAuthToken: inputs.global.MemoryAuthToken,
-		UseJail:         inputs.local.Options.Jail,
+		UseJail:         inputs.local.Options.Jail && !inputs.local.Options.Docker,
+		UseDocker:       inputs.local.Options.Docker,
+		Docker:          dockerRunConfigFromOptions(inputs.status.Agent, inputs.local.Options.Stacks, home),
 		UseMemory:       inputs.local.Options.Memory,
 		ContinueSession: opts.continueSession,
 		JailExec:        len(args) > 0,
@@ -1120,6 +1189,8 @@ func profileFromLaunch(launch launcher.LaunchConfig) config.Profile {
 		Mounts:      launch.Mounts,
 		Options: &config.Options{
 			Jail:          launch.UseJail,
+			Docker:        launch.UseDocker,
+			Stacks:        launch.Docker.Selection.Stacks,
 			Memory:        launch.UseMemory,
 			Yolo:          launch.Yolo,
 			Fresh:         launch.Fresh,
@@ -1368,6 +1439,8 @@ func saveIfRequested(save bool, path string, local config.Local, launch launcher
 	local.Permissions = launch.Permissions
 	local.Mounts = launch.Mounts
 	local.Options.Jail = launch.UseJail
+	local.Options.Docker = launch.UseDocker
+	local.Options.Stacks = launch.Docker.Selection.Stacks
 	local.Options.Memory = launch.UseMemory
 	local.Options.Yolo = launch.Yolo
 	local.Options.Fresh = launch.Fresh

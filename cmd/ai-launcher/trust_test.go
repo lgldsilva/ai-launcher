@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
@@ -402,4 +403,66 @@ func TestSavedLocalConfigHonorsMemoryScope(t *testing.T) {
 	if !strings.Contains(stdout, "--workspace acme") || !strings.Contains(stdout, "--project billing") {
 		t.Fatalf("stdout = %q; saved scope was lost", stdout)
 	}
+}
+
+// The docker container backend replaces the sandbox (jail → container), which
+// is a security-relevant change. A repository file must not switch the
+// sandbox silently; the operator's own --docker-backend still works.
+func TestLocalConfigCannotEnableDockerBackendOnItsOwn(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  docker: true\n  stacks: [go]\n")
+	stubToolsOnPath(t, "docker")
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--workspace", "/w", "--dry-run"); err == nil {
+		t.Fatal("run() = nil; a local config enabling the docker backend must be refused")
+	}
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--docker-backend", "--workspace", "/w", "--dry-run"); err != nil {
+		t.Fatalf("run() error = %v; an explicit --docker-backend must still work", err)
+	}
+}
+
+// The same docker choice saved by the operator becomes trusted input, exactly
+// like jail: false is honored after --save.
+func TestSavedLocalConfigHonorsDockerBackend(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	stubToolsOnPath(t, "docker")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	saved := launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseDocker: true,
+		UseMemory: false,
+		Workspace: "/w",
+		Docker: container.RunConfig{
+			Selection: selectionFromTest("go"),
+		},
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--workspace", "/w", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() refused the launcher's own saved docker config: %v", err)
+	}
+	if !strings.Contains(stdout, "docker run") {
+		t.Fatalf("stdout = %q; want the docker run argv", stdout)
+	}
+}
+
+// selectionFromTest builds a minimal valid docker selection for trust tests.
+func selectionFromTest(stacks ...string) container.Selection {
+	selection, err := container.Normalize(stacks, []container.AgentInstall{{
+		Command: "custom-cli",
+		Kind:    container.InstallRelease,
+		Version: "0.0.0-test",
+	}}, nil)
+	if err != nil {
+		panic(err)
+	}
+	return selection
 }

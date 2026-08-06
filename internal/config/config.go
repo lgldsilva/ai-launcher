@@ -306,6 +306,15 @@ type Options struct {
 	Jail   bool `yaml:"jail"`
 	Memory bool `yaml:"memory"`
 	Yolo   bool `yaml:"yolo"`
+	// Docker selects the container backend: when true, the launch runs inside
+	// a docker image built from the stack/agent selection instead of ai-jail.
+	// Docker replaces the jail (design decision 25), so an options block with
+	// docker: true implies the sandbox is the container. The field is additive:
+	// documents that never mention it keep the jail default (invariant 6).
+	Docker bool `yaml:"docker,omitempty"`
+	// Stacks names the toolchains installed in the docker image (go, python,
+	// rust, ...). Only meaningful with docker: true; ignored by the jail path.
+	Stacks []string `yaml:"stacks,omitempty"`
 	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
 	// current workstream instead of resuming or adopting one.
 	Fresh         bool              `yaml:"fresh,omitempty"`
@@ -342,6 +351,7 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		Jail          bool              `yaml:"jail"`
 		Memory        bool              `yaml:"memory"`
 		Yolo          bool              `yaml:"yolo"`
+		Docker        bool              `yaml:"docker,omitempty"`
 		NewWorkstream string            `yaml:"new_workstream,omitempty"`
 		Workstream    string            `yaml:"workstream,omitempty"`
 		Workspace     string            `yaml:"workspace,omitempty"`
@@ -357,6 +367,7 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		Jail:          scalar.Jail,
 		Memory:        scalar.Memory,
 		Yolo:          scalar.Yolo,
+		Docker:        scalar.Docker,
 		NewWorkstream: scalar.NewWorkstream,
 		Workstream:    scalar.Workstream,
 		Workspace:     scalar.Workspace,

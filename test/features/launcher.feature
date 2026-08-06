@@ -926,3 +926,100 @@ Feature: Launcher command contract
       """
       permission-mount-without-home
       """
+
+  Scenario: Runs an agent in a docker container with the same-path project mount
+    Given a launch configuration
+      """
+      agent: claude
+      home: /home/tester
+      docker: true
+      stacks: [go, python]
+      workspace: /home/tester/proj
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      docker
+      run
+      --rm
+      -it
+      -w
+      /home/tester/proj
+      -v
+      /home/tester/proj:/home/tester/proj
+      -v
+      /home/tester/.claude:/home/tester/.claude:ro
+      -v
+      /home/tester/.claude.json:/home/tester/.claude.json:ro
+      --add-host=host.docker.internal:host-gateway
+      ai-launcher-box:000000000000
+      claude
+      """
+
+  Scenario: Maps docker permissions to read-only credential mounts
+    Given a launch configuration
+      """
+      agent: codex
+      home: /home/tester
+      docker: true
+      stacks: [rust]
+      workspace: /w
+      permissions:
+        ssh: true
+        gh: true
+        docker: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      docker
+      run
+      --rm
+      -it
+      -w
+      /w
+      -v
+      /w:/w
+      -v
+      /home/tester/.codex:/home/tester/.codex:ro
+      -v
+      /home/tester/.ssh:/home/tester/.ssh:ro
+      -v
+      /home/tester/.config/gh:/home/tester/.config/gh:ro
+      -v
+      /var/run/docker.sock:/var/run/docker.sock
+      --add-host=host.docker.internal:host-gateway
+      ai-launcher-box:000000000000
+      codex
+      """
+
+  Scenario: Reports a missing docker CLI in preflight
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      docker: true
+      stacks: [go]
+      workspace: /w
+      missing_commands: [docker]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      docker-not-found
+      """
+
+  Scenario: Reports an invalid docker image selection in preflight
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      docker: true
+      stacks: [cobol]
+      workspace: /w
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      docker-selection-invalid
+      """
