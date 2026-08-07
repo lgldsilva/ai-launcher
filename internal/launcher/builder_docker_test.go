@@ -94,8 +94,8 @@ func TestBuildDockerRunIncludesAgentConfigMounts(t *testing.T) {
 	}
 	joined := strings.Join(got, " ")
 	for _, want := range []string{
-		"/home/lgldsilva/.claude:/home/lgldsilva/.claude:ro",
-		"/home/lgldsilva/.claude.json:/home/lgldsilva/.claude.json:ro",
+		"/home/lgldsilva/.claude:/home/lgldsilva/.claude",
+		"/home/lgldsilva/.claude.json:/home/lgldsilva/.claude.json",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("Build() missing %q in %s", want, joined)

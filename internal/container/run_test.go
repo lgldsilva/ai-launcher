@@ -89,8 +89,8 @@ func TestBuildRunCommandFull(t *testing.T) {
 	// Assert the critical pieces individually for readable failures.
 	assertContains(t, got, "--user", "501:20")
 	assertContains(t, got, "-v", "/home/lgldsilva/work:/home/lgldsilva/work")
-	assertContains(t, got, "-v", "/home/lgldsilva/.claude:/home/lgldsilva/.claude:ro")
-	assertContains(t, got, "-v", "/home/lgldsilva/.claude.json:/home/lgldsilva/.claude.json:ro")
+	assertContains(t, got, "-v", "/home/lgldsilva/.claude:/home/lgldsilva/.claude")
+	assertContains(t, got, "-v", "/home/lgldsilva/.claude.json:/home/lgldsilva/.claude.json")
 	assertContains(t, got, "-v", "/home/lgldsilva/.config/gh:/home/lgldsilva/.config/gh:ro")
 	assertContains(t, got, "-v", "/home/lgldsilva/.ssh:/home/lgldsilva/.ssh:ro")
 	assertContains(t, got, "-v", "/var/run/docker.sock:/var/run/docker.sock")

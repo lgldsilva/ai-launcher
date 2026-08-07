@@ -83,11 +83,17 @@ ai-launcher --docker-backend --stack go --stack python --dry-run
 
 What ships with it:
 
-- **Same-path mounts** — the project is mounted read-write at its own path
-  (`-v $PWD:$PWD`), and the agent credential/history directories
-  (`~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/opencode`, `~/.muse`)
-  are mounted read-only at identical paths, so session continuity and
-  ai-memory's path-based project scoping survive.
+- **Shared login (read-write config dirs)** — each agent's config
+  directories are mounted read-write at identical paths, and the agent only
+  sees its own: a login made inside a container persists to the host and to
+  every other container sharing the same host paths (validated end to end:
+  container A writes → host sees → container B reads). The per-agent config
+  map covers the mainstream CLIs (claude, codex, opencode, kimi, agy, pi,
+  crush, omp, cursor, grok, devin, gemini, qwen, openclaw, cline, muse, ...)
+  with platform variants (macOS/Linux/Windows host paths).
+- **TUI Container section** — stack checkboxes plus a "Shared config (rw)"
+  panel listing the selected agent's config dirs, so the mount map is
+  visible before launching.
 - **Shared toolchain caches** — each stack shares its host toolchain/cache
   directories with the container read-write (nvm, sdkman, cargo, rustup,
   go-build, npm, m2, gradle, pip), so downloads on either side are reused

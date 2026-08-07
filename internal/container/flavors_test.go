@@ -251,3 +251,48 @@ func TestFlavorCatalogAudit(t *testing.T) {
 		_ = agent.Command // reachable via host binary; nothing to assert
 	}
 }
+
+// TestFlavorSharedLogin validates the shared-login model end to end: a config
+// written inside container A (same-path rw mount) is visible to the host and
+// to container B. This is the model the docker backend promises — login once,
+// reuse everywhere.
+func TestFlavorSharedLogin(t *testing.T) {
+	if !dockerTestsEnabled(t) {
+		return
+	}
+	// Tiny image: no agent needed, just a shell to write the config.
+	selection, err := Normalize([]string{"go"}, []AgentInstall{{Command: "claude", Kind: InstallScript, Script: "curl -fsSL https://claude.ai/install.sh | bash"}}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	df, err := Dockerfile(selection)
+	if err != nil {
+		t.Fatalf("Dockerfile() error = %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/Dockerfile", []byte(df), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDockerShell([]string{"docker", "build", "--tag", "ai-launcher-box:login", dir}); err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	t.Cleanup(func() { _ = runDockerShell([]string{"docker", "rmi", "ai-launcher-box:login"}) })
+
+	share := t.TempDir()
+	// Container A writes a "login".
+	write := "mkdir -p $HOME/.claude && printf '{\"token\":\"abc\"}' > $HOME/.claude/credentials.json"
+	if err := runDockerShell([]string{"docker", "run", "--rm", "-e", "HOME=" + share, "-v", share + ":" + share, "ai-launcher-box:login", "sh", "-c", write}); err != nil {
+		t.Fatalf("container A failed: %v", err)
+	}
+	// The host sees it.
+	loginFile := filepath.Join(share, ".claude", "credentials.json")
+	hostData, err := os.ReadFile(loginFile) // #nosec G304 -- test fixture path
+	if err != nil || string(hostData) != `{"token":"abc"}` {
+		t.Fatalf("host cannot see container A's login (got %q, err %v)", hostData, err)
+	}
+	// Container B reads it back.
+	read := "cat $HOME/.claude/credentials.json"
+	if err := runDockerShell([]string{"docker", "run", "--rm", "-e", "HOME=" + share, "-v", share + ":" + share, "ai-launcher-box:login", "sh", "-c", read}); err != nil {
+		t.Fatalf("container B failed to read the login: %v", err)
+	}
+}

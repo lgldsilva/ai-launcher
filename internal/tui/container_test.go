@@ -197,3 +197,50 @@ func TestSelectAgentUpdatesDockerSelection(t *testing.T) {
 		t.Fatalf("selection kind = %s; want script (claude has source_url)", got.Kind)
 	}
 }
+
+// The Container section lists the selected agent's shared config dirs (rw),
+// so the mount map is visible: which dirs are shared and that the agent only
+// sees its own.
+func TestSharedConfigViewListsAgentDirs(t *testing.T) {
+	stubWindows(t, false)
+	// The fixture paths do not exist on the host; stub the probe so the panel
+	// renders them.
+	origExists := container.ExistsOnHost
+	container.ExistsOnHost = func(string) bool { return true }
+	t.Cleanup(func() { container.ExistsOnHost = origExists })
+	launch := launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "claude"},
+		HomeDir:     "/home/tester",
+		UseDocker:   true,
+		UseMemory:   true,
+		Permissions: map[string]bool{},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	// containerView writes into the builder; capture it.
+	var b strings.Builder
+	model.containerView(&b)
+	out := b.String()
+	for _, want := range []string{"Shared config (rw)", "/home/tester/.claude", "/home/tester/.claude.json", "/home/tester/.claude/projects"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("containerView missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// No config dirs → the panel says so instead of rendering empty.
+func TestSharedConfigViewEmpty(t *testing.T) {
+	stubWindows(t, false)
+	launch := launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "totally-unknown"},
+		HomeDir:     "/home/tester",
+		UseDocker:   true,
+		UseMemory:   true,
+		Permissions: map[string]bool{},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	var b strings.Builder
+	model.containerView(&b)
+	if !strings.Contains(b.String(), "no shared config dirs") {
+		t.Fatalf("containerView for unknown agent = %q; want the empty note", b.String())
+	}
+}

@@ -950,9 +950,11 @@ Feature: Launcher command contract
       -v
       /home/tester/proj:/home/tester/proj
       -v
-      /home/tester/.claude:/home/tester/.claude:ro
+      /home/tester/.claude:/home/tester/.claude
       -v
-      /home/tester/.claude.json:/home/tester/.claude.json:ro
+      /home/tester/.claude.json:/home/tester/.claude.json
+      -v
+      /home/tester/.claude/projects:/home/tester/.claude/projects
       -v
       /home/tester/go:/home/tester/go
       -v
@@ -993,7 +995,7 @@ Feature: Launcher command contract
       -v
       /w:/w
       -v
-      /home/tester/.codex:/home/tester/.codex:ro
+      /home/tester/.codex:/home/tester/.codex
       -v
       /home/tester/.ssh:/home/tester/.ssh:ro
       -v

@@ -228,14 +228,16 @@ of the selection, so an identical selection reuses the cached image without
 rebuilding.
 
 Mounts are same-path: the project is mounted read-write at its own path, and
-the agent credential/history directories (`~/.claude`, `~/.claude.json`,
-`~/.codex`, `~/.config/opencode`, `~/.local/share/opencode`, `~/.muse`) are
-mounted read-only at identical paths — a config that stores absolute paths
-keeps working, and ai-memory's path-based project scoping survives. The
-permission→mount mapping from the jail is reused: `--ssh` and `--gh` mount
-their config dirs read-only, `--docker` mounts the control socket (explicit
-opt-in; write access there is root on the host, and the launcher's
-`DeniedMount` gate refuses the socket from untrusted configs).
+the agent config directories (per-agent map in `internal/container`,
+platform-aware) are mounted read-write at identical paths — the shared-login
+model. Each agent only sees its own config dirs, so a login made inside a
+container persists to the host and to every other container sharing the same
+host paths; sessions written by the container are visible on the host too.
+The permission→mount mapping from the jail is reused: `--ssh` and `--gh`
+mount their config dirs read-only (host-only credentials, not per-agent),
+`--docker` mounts the control socket (explicit opt-in; write access there is
+root on the host, and the launcher's `DeniedMount` gate refuses the socket
+from untrusted configs).
 
 URLs pointing at `localhost`/`127.0.0.1` (the ai-memory server URL and MCP
 server configs) are rewritten to `host.docker.internal`, with

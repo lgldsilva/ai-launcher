@@ -703,6 +703,27 @@ func (m Model) containerView(b *strings.Builder) {
 		}
 		fmt.Fprintf(b, "%s%s %s\n", pointer, mark, stack.Name)
 	}
+	m.sharedConfigView(b)
+}
+
+// sharedConfigView lists the host config directories the selected agent's
+// login/sessions share with the container (read-write, same-path). It makes
+// the mount map visible: which dirs are shared, and that the agent only sees
+// its own — never another agent's credentials.
+func (m Model) sharedConfigView(b *strings.Builder) {
+	if m.launch.ContinueSession || strings.TrimSpace(m.launch.Agent.Command) == "" {
+		return
+	}
+	mounts := container.AgentMounts(m.launch.HomeDir, []string{m.launch.Agent.Command}, container.ExistsOnHost)
+	if len(mounts) == 0 {
+		b.WriteString(mutedStyle.Render("  no shared config dirs for this agent") + lineBreak)
+		return
+	}
+	b.WriteString(lineBreak + titleStyle.Render("Shared config (rw)") + lineBreak)
+	for _, mount := range mounts {
+		b.WriteString("  " + mount.HostPath + lineBreak)
+	}
+	b.WriteString(mutedStyle.Render("  login/sessions shared host ↔ container") + lineBreak)
 }
 
 func (m Model) mountsView(b *strings.Builder) {

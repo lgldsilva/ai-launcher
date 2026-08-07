@@ -3,6 +3,7 @@ package container
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -16,35 +17,150 @@ type AgentMount struct {
 	Agent string
 	// HostPath is the directory (or file) to mount, resolved from $HOME.
 	HostPath string
-	// ReadOnly is the default for credentials (design R9.2): the jail runs
-	// $HOME as tmpfs, but docker shares the real host path, so write access
-	// would let a compromised container mutate host credentials. Logs/history
-	// that must persist both ways are mounted rw explicitly at the call site.
-	ReadOnly bool
+	// HostPath is mounted read-write: each agent mounts ONLY its own config
+	// dirs, so the container reads/writes its own login and sessions. This is
+	// the shared-login model: a login made inside a container persists to the
+	// host and to every other container sharing the same host paths (and the
+	// host sees sessions the container wrote). The container does not see
+	// other agents' config dirs.
 }
 
+// ConfigDir describes one agent config location. Path is relative to $HOME;
+// Platforms restricts where it applies (empty = every platform). Every dir is
+// mounted read-write: the shared-login model — the agent owns these paths,
+// reads and writes its own login/sessions, and they persist to the host and
+// to other containers sharing the same host paths.
+type ConfigDir struct {
+	Path      string
+	Platforms []string // empty = all platforms
+}
+
+// Platform keys mirror config.Platform* where they exist.
+const (
+	platformLinux   = "linux"
+	platformDarwin  = "darwin"
+	platformWindows = "windows"
+)
+
 // agentConfigDirs maps each known agent command to the credential and history
-// paths the launcher shares with the container. This is the authoritative
-// table for R2 item 7, including the standalone ~/.claude.json file (R9.3:
-// agentStateDirs in the launcher only covers ~/.claude, so the loose file
-// needs its own entry here).
-var agentConfigDirs = map[string][]string{
-	"claude":   {"~/.claude", "~/.claude.json"},
-	"codex":    {"~/.codex"},
-	"opencode": {"~/.config/opencode", "~/.local/share/opencode"},
-	"muse":     {"~/.muse"},
+// paths the launcher shares with the container, per platform. This is the
+// authoritative table for R2 item 7, including the standalone ~/.claude.json
+// file (R9.3: agentStateDirs in the launcher only covers ~/.claude, so the
+// loose file needs its own entry here).
+//
+// Platform coverage: the docker backend runs linux containers, but the host
+// may be macOS, Linux, or Windows (Docker Desktop). The same-path mount uses
+// the HOST path verbatim — a macOS host mounts /Users/me/.claude, a Windows
+// host mounts C:\Users\me\.claude (mounted via the container's path mapping).
+// Paths listed without Platforms apply everywhere; platform-specific entries
+// (e.g. Windows %APPDATA%) let the resolver pick the right location per host.
+var agentConfigDirs = map[string][]ConfigDir{
+	"claude": {
+		{Path: "~/.claude"},
+		{Path: "~/.claude.json"}, // standalone file (R9.3)
+		{Path: "~/.claude/projects", Platforms: []string{platformLinux, platformDarwin}}, // history
+	},
+	"codex": {
+		{Path: "~/.codex"}, // auth.json
+	},
+	"opencode": {
+		{Path: "~/.config/opencode"},      // auth.json
+		{Path: "~/.local/share/opencode"}, // session/history (rw)
+		{Path: "~/.config/opencode", Platforms: []string{platformWindows}},
+		{Path: "~/.local/share/opencode", Platforms: []string{platformWindows}},
+	},
+	"kimi": {
+		{Path: "~/.kimi-code"}, // config.toml + auth
+	},
+	"kilo": {
+		{Path: "~/.kilo"},
+	},
+	"mimo": {
+		{Path: "~/.mimo"},
+	},
+	"agy": {
+		{Path: "~/.config/antigravity"},
+		{Path: "~/.gemini/antigravity", Platforms: []string{platformDarwin, platformLinux}}, // shares Gemini config root
+	},
+	"pi": {
+		{Path: "~/.pi"},
+		{Path: "~/.config/pi", Platforms: []string{platformLinux}},
+	},
+	"crush": {
+		{Path: "~/.config/crush"},
+	},
+	"omp": {
+		{Path: "~/.omp"},
+	},
+	"cursor-agent": {
+		{Path: "~/.cursor"}, // cli-config.json + auth
+	},
+	"grok": {
+		{Path: "~/.grok"}, // auth.json
+	},
+	"zero": {
+		{Path: "~/.config/zero"},
+	},
+	"devin": {
+		{Path: "~/.devin"},
+	},
+	"oc": {
+		{Path: "~/.config/opencode"}, // preset selector reuses opencode
+	},
+	"gemini": {
+		{Path: "~/.gemini"}, // auth + settings
+	},
+	"qwen": {
+		{Path: "~/.qwen"},
+		{Path: "~/.config/qwen", Platforms: []string{platformLinux}},
+	},
+	"aider": {
+		{Path: "~/.aider.conf.yml"},
+		{Path: "~/.aider"}, // history db
+	},
+	"goose": {
+		{Path: "~/.config/goose"},
+	},
+	"kiro-cli": {
+		{Path: "~/.kiro"},
+	},
+	"openclaw": {
+		{Path: "~/.openclaw"}, // openclaw.json
+	},
+	"hermes": {
+		{Path: "~/.hermes"}, // config.yaml + .env
+	},
+	"cline": {
+		{Path: "~/.cline"},
+		{Path: "~/.config/cline", Platforms: []string{platformLinux}},
+	},
+	"muse": {
+		{Path: "~/.muse"},
+	},
 }
 
 // AgentMounts returns the same-path mounts for the given agent commands,
-// resolved against home. Unknown agents contribute nothing (their config
-// locations are not modeled). Only paths that exist on the host are included
-// — docker refuses a -v source that does not exist, and mounting a directory
-// the user never created would silently persist nothing (R2 item 8).
+// resolved against home for the host platform. Unknown agents contribute
+// nothing (their config locations are not modeled). Only paths that exist on
+// the host are included — docker refuses a -v source that does not exist, and
+// mounting a directory the user never created would silently persist nothing
+// (R2 item 8).
 //
+// goos selects the platform-specific entries ("" = the calling host's GOOS).
 // os.Stat is injectable for tests via the existingFiles parameter: nil means
 // "assume every path exists" (used by the docker run builder, which mounts
 // before any existence check), non-nil means "only mount paths in this set".
 func AgentMounts(home string, commands []string, existingFiles func(string) bool) []AgentMount {
+	return AgentMountsFor(home, commands, existingFiles, "")
+}
+
+// AgentMountsFor is AgentMounts with an explicit host platform (goos); the
+// production path passes "" and resolves the running GOOS. Tests pass a fixed
+// platform to cover the Windows/macOS/Linux variants.
+func AgentMountsFor(home string, commands []string, existingFiles func(string) bool, goos string) []AgentMount {
+	if goos == "" {
+		goos = hostGOOS()
+	}
 	var result []AgentMount
 	seen := make(map[string]struct{}, len(commands))
 	for _, command := range commands {
@@ -53,8 +169,11 @@ func AgentMounts(home string, commands []string, existingFiles func(string) bool
 			continue
 		}
 		seen[command] = struct{}{}
-		for _, raw := range agentConfigDirs[command] {
-			hostPath := ExpandHome(raw, home)
+		for _, cfg := range agentConfigDirs[command] {
+			if !platformApplies(cfg.Platforms, goos) {
+				continue
+			}
+			hostPath := ExpandHome(cfg.Path, home)
 			if hostPath == "" {
 				continue
 			}
@@ -64,11 +183,24 @@ func AgentMounts(home string, commands []string, existingFiles func(string) bool
 			result = append(result, AgentMount{
 				Agent:    command,
 				HostPath: hostPath,
-				ReadOnly: true,
 			})
 		}
 	}
 	return result
+}
+
+// platformApplies reports whether a ConfigDir applies to goos (empty Platforms
+// means every platform).
+func platformApplies(platforms []string, goos string) bool {
+	if len(platforms) == 0 {
+		return true
+	}
+	for _, p := range platforms {
+		if p == goos {
+			return true
+		}
+	}
+	return false
 }
 
 // ExpandHome expands a leading ~/ (or bare ~) to home, and resolves relative
@@ -100,6 +232,9 @@ var ExistsOnHost = func(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// hostGOOS mirrors runtime.GOOS so tests can stub the platform.
+var hostGOOS = func() string { return runtime.GOOS }
 
 // StackCacheMounts returns the host directories shared read-write with the
 // container for the selected stacks: toolchain manager dirs (nvm, sdkman,

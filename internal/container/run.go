@@ -134,7 +134,9 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	// source that does not exist (M5): a fresh machine with no ~/.codex yet
 	// must not fail the run.
 	for _, mount := range AgentMounts(cfg.HomeDir, cfg.AgentCommands, ExistsOnHost) {
-		argv = append(argv, "-v", mountSpec(mount.HostPath, mount.ReadOnly))
+		// Shared-login model: every agent config dir is read-write so a login
+		// made inside the container persists to the host and other containers.
+		argv = append(argv, "-v", mountSpec(mount.HostPath, false))
 	}
 	if cfg.SSHConfig != "" && ExistsOnHost(cfg.SSHConfig) {
 		argv = append(argv, "-v", cfg.SSHConfig+":"+cfg.SSHConfig+":ro")

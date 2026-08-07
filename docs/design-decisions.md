@@ -236,10 +236,18 @@ projects by absolute path, and agent configs record absolute paths. A
 container-internal path that differs from the host path would break session
 continuity and memory scoping.
 
-**Why credentials are read-only.** ai-jail rebuilds `$HOME` as a tmpfs, so a
-compromised sandbox process cannot persist host credentials. Docker shares
-the real host paths, so the credential mounts (`~/.claude`, `~/.codex`, ...)
-are read-only by default — the same isolation property, without the tmpfs.
+**Why agent config dirs are read-write (shared login).** ai-jail rebuilds
+`$HOME` as a tmpfs so a compromised sandbox cannot persist host
+credentials — the jail is an isolation boundary. The docker backend is the
+*trusted* mode: each agent mounts only its own config directories
+read-write, so a login made inside a container persists to the host and to
+every other container sharing the same host paths, and the host sees
+sessions the container wrote. The agent never sees another agent's config
+dirs (each map is per-agent), so there is no cross-agent credential leak.
+The risk — a compromised container can mutate its own login — is the same
+risk the operator already accepts by running the agent on their code; it is
+the explicit trade for the shared-login workflow. Host-only credentials
+(`--ssh`, `--gh`) stay read-only.
 
 **Why the trust gate treats docker as a sandbox change.** A workspace-local
 `.ai-launch.yaml` switching the sandbox to docker is a security-relevant
