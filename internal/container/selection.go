@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 // InstallKind tells the Dockerfile generator how an agent is installed inside
@@ -36,6 +38,15 @@ type AgentInstall struct {
 	Command string
 	Version string
 	Kind    InstallKind
+	// NeedsNode marks script installers that require Node/npm at build time.
+	// npm installs imply this automatically; the explicit bit covers vendors
+	// such as Pi whose official shell installer delegates to npm.
+	NeedsNode bool
+	// NeedsMemory means the image must contain the ai-memory wrapper and its
+	// managed native runner. It is part of the selection because the Dockerfile
+	// changes when memory is enabled; leaving it out would make the image tag
+	// lie and could produce a container with a harness but no memory layer.
+	NeedsMemory bool
 	// Script is the full RUN line for InstallScript kinds (e.g.
 	// "RUN curl -fsSL https://example.com/install.sh | bash").
 	Script string
@@ -43,11 +54,39 @@ type AgentInstall struct {
 	NpmPackage string
 	// AllowSetupFailure marks installers whose post-install step opens an
 	// interactive login (devin's `setup`). The binary is installed before that
-	// step; appending `|| true` keeps the docker build from failing on the
-	// login prompt in a non-interactive build.
+	// step; ScriptLine accepts that non-interactive status only when the
+	// executable is present after the installer finishes.
 	AllowSetupFailure bool
 	// HostPath is the resolved host binary directory for InstallHostBinary.
 	HostPath string
+}
+
+// ToolInstall describes an auxiliary CLI installed in the image. Tools are
+// not harnesses: they are placed on PATH for MCP servers and development
+// workflows (for example semidx), while the selected agent remains the
+// container command.
+type ToolInstall struct {
+	Command string
+	Version string
+	Kind    InstallKind
+	Release *config.GitHubRelease
+}
+
+// Validate checks the structural invariants of an auxiliary tool install.
+func (t ToolInstall) Validate() error {
+	if strings.TrimSpace(t.Command) == "" {
+		return fmt.Errorf("tool command is required")
+	}
+	if t.Kind != InstallRelease {
+		return fmt.Errorf("tool %q: only release installs are supported", t.Command)
+	}
+	if strings.TrimSpace(t.Version) == "" || strings.EqualFold(t.Version, "latest") {
+		return fmt.Errorf("tool %q: release installs require a pinned version", t.Command)
+	}
+	if t.Release == nil {
+		return fmt.Errorf("tool %q: release recipe is required", t.Command)
+	}
+	return nil
 }
 
 // Validate checks the structural invariants of one agent install: non-empty
@@ -95,6 +134,8 @@ type Selection struct {
 	Stacks []string
 	// Agents is the validated, sorted-by-command list of agents to install.
 	Agents []AgentInstall
+	// Tools are auxiliary CLIs installed on PATH for the selected image.
+	Tools []ToolInstall
 	// IncludeDevProfile controls the shared tool layer (git, ssh, jq, ...).
 	// Defaults to true; tests and the "empty box" path can disable it.
 	IncludeDevProfile bool
@@ -147,6 +188,16 @@ func (s Selection) Validate() error {
 			return err
 		}
 	}
+	seenTools := make(map[string]struct{}, len(s.Tools))
+	for _, tool := range s.Tools {
+		if err := tool.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seenTools[tool.Command]; duplicate {
+			return fmt.Errorf("tool %q listed more than once", tool.Command)
+		}
+		seenTools[tool.Command] = struct{}{}
+	}
 	return nil
 }
 
@@ -163,3 +214,17 @@ func (s Selection) AgentExecutable() string {
 	}
 	return agent.Command
 }
+
+// SelectionNeedsMemory reports whether the generated image must install
+// ai-memory for one of its selected harnesses.
+func SelectionNeedsMemory(s Selection) bool {
+	for _, agent := range s.Agents {
+		if agent.NeedsMemory {
+			return true
+		}
+	}
+	return false
+}
+
+// SelectionNeedsTools reports whether the image contains auxiliary tools.
+func SelectionNeedsTools(s Selection) bool { return len(s.Tools) > 0 }

@@ -1,16 +1,21 @@
 package container
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
-// BuildContext is a prepared docker build context directory: the generated
+const materializedGitignore = "# build context temp\n.context/\n# image cache\n.image-cache/\n# cross-compiled launcher copied into the local build context\nai-launcher\n# operator decision metadata for generated Compose updates\n.compose-approval.json\n# persistent Compose service data\ndata/\n"
+
+// BuildContext is a prepared container build context directory: the generated
 // Dockerfile, the minimal install config, and the launcher binary the image
 // uses to install agents (design C1). The CLI materializes it and runs
-// `docker build`, streaming the daemon output.
+// selected runtime's build command, streaming the runtime output.
 type BuildContext struct {
 	// Dir is the context directory (os.MkdirTemp).
 	Dir string
@@ -24,6 +29,212 @@ type BuildContext struct {
 	ImageTag string
 }
 
+// MaterializedArtifacts describes the inspectable project-local container
+// artifacts generated from a selection.
+type MaterializedArtifacts struct {
+	Dir                string
+	DockerfilePath     string
+	InstallConfigPath  string
+	GitignorePath      string
+	ComposeFilePath    string
+	LauncherBinaryPath string
+}
+
+// MaterializeArtifacts writes the project-local Dockerfile, install config and
+// temporary-artifact ignore rules. It deliberately does not probe a runtime,
+// build an image or launch an agent. The Dockerfile is derived from the
+// selection and may be edited by the operator until the next generate call.
+func MaterializeArtifacts(projectDir string, selection Selection, global config.Global) (MaterializedArtifacts, error) {
+	return MaterializeArtifactsWithOptions(projectDir, selection, DockerfileOptions{}, global)
+}
+
+// MaterializeArtifactsWithOptions is MaterializeArtifacts with explicit
+// Dockerfile options (for example the docker CLI layer for launches granted
+// the docker permission).
+func MaterializeArtifactsWithOptions(projectDir string, selection Selection, options DockerfileOptions, global config.Global) (MaterializedArtifacts, error) {
+	if err := selection.Validate(); err != nil {
+		return MaterializedArtifacts{}, err
+	}
+	dockerfile, err := DockerfileWithOptions(selection, options)
+	if err != nil {
+		return MaterializedArtifacts{}, err
+	}
+	installConfig, err := InstallConfigWithTools(global, selection.Agents, selection.Tools)
+	if err != nil {
+		return MaterializedArtifacts{}, err
+	}
+	if strings.TrimSpace(projectDir) == "" {
+		projectDir, err = os.Getwd()
+		if err != nil {
+			return MaterializedArtifacts{}, fmt.Errorf("resolve project directory: %w", err)
+		}
+	}
+	dir := filepath.Join(projectDir, containerArtifactDirName)
+	if err := ensureMaterializedDir(dir); err != nil {
+		return MaterializedArtifacts{}, err
+	}
+	paths := MaterializedArtifacts{
+		Dir:                dir,
+		DockerfilePath:     filepath.Join(dir, "Dockerfile"),
+		InstallConfigPath:  filepath.Join(dir, "install-config.yaml"),
+		GitignorePath:      filepath.Join(dir, ".gitignore"),
+		ComposeFilePath:    filepath.Join(dir, "docker-compose.yaml"),
+		LauncherBinaryPath: filepath.Join(dir, launcherBinaryName),
+	}
+	files := []struct {
+		path string
+		data string
+	}{
+		{paths.DockerfilePath, dockerfile},
+		{paths.InstallConfigPath, installConfig},
+		{paths.GitignorePath, materializedGitignore},
+	}
+	for _, file := range files {
+		if err := writeMaterializedArtifact(file.path, []byte(file.data)); err != nil {
+			return MaterializedArtifacts{}, err
+		}
+	}
+	return paths, nil
+}
+
+// MaterializeLauncherBinary copies the Linux launcher used by release-agent
+// Dockerfile layers into the project-local build context. The file is ignored
+// by the generated .gitignore and is replaced atomically like the YAML
+// artifacts, so compose build never relies on the temporary EnsureImage
+// context used by docker run.
+func MaterializeLauncherBinary(projectDir, source string) (string, error) {
+	if strings.TrimSpace(source) == "" {
+		return "", fmt.Errorf("launcher binary source is required")
+	}
+	if strings.TrimSpace(projectDir) == "" {
+		var err error
+		projectDir, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolve project directory: %w", err)
+		}
+	}
+	dir := filepath.Join(projectDir, containerArtifactDirName)
+	if err := ensureMaterializedDir(dir); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(source) // #nosec G304 -- source is the launcher temp artifact created by the CLI.
+	if err != nil {
+		return "", fmt.Errorf("read launcher binary: %w", err)
+	}
+	path := filepath.Join(dir, launcherBinaryName)
+	if err := writeMaterializedArtifact(path, data); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, 0o755); err != nil { // #nosec G302 -- the copied launcher must be executable inside the build context.
+		return "", fmt.Errorf("make launcher binary executable: %w", err)
+	}
+	return path, nil
+}
+
+// MaterializeCompose writes the project-local compose document after the
+// regular container artifacts have been materialized. Compose is intentionally
+// a separate operation so callers without infrastructure services keep the
+// existing Dockerfile-only behavior.
+func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
+	content, err := RenderCompose(file)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(projectDir) == "" {
+		projectDir, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolve project directory: %w", err)
+		}
+	}
+	if err := ensureComposeDataDirectories(projectDir, file); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(projectDir, containerArtifactDirName)
+	if err := ensureMaterializedDir(dir); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "docker-compose.yaml")
+	if err := writeMaterializedArtifact(path, []byte(content)); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ensureComposeDataDirectories creates only the service data directories
+// generated by BuildCompose. Arbitrary user bind mounts are never created as
+// a side effect of materializing Compose.
+func ensureComposeDataDirectories(projectDir string, file ComposeFile) error {
+	dataDir := filepath.Join(projectDir, containerArtifactDirName, "data")
+	found := false
+	for _, service := range file.Services {
+		for _, volume := range service.Volumes {
+			source, _, ok := composeVolumeParts(volume)
+			if !ok || !pathWithin(dataDir, source) {
+				continue
+			}
+			if !found {
+				if err := ensureMaterializedDir(dataDir); err != nil {
+					return err
+				}
+				found = true
+			}
+			if err := ensureMaterializedDir(source); err != nil {
+				return fmt.Errorf("create Compose service data directory %s: %w", source, err)
+			}
+		}
+	}
+	return nil
+}
+
+func ensureMaterializedDir(dir string) error {
+	if info, err := os.Lstat(dir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("container artifact directory %s is a symlink", dir)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("container artifact path %s is not a directory", dir)
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect container artifact directory: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("create container artifact directory: %w", err)
+	}
+	return nil
+}
+
+func writeMaterializedArtifact(path string, data []byte) error {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("container artifact %s is a symlink", path)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect container artifact %s: %w", path, err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-artifact-*")
+	if err != nil {
+		return fmt.Errorf("create temporary container artifact %s: %w", path, err)
+	}
+	temporaryName := temporary.Name()
+	defer func() { _ = os.Remove(temporaryName) }()
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write temporary container artifact %s: %w", path, err)
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("protect container artifact %s: %w", path, err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary container artifact %s: %w", path, err)
+	}
+	if err := os.Rename(temporaryName, path); err != nil {
+		return fmt.Errorf("replace container artifact %s: %w", path, err)
+	}
+	return nil
+}
+
 // PrepareBuildContext materializes the docker build context for a canonical
 // Selection: the Dockerfile (dev profile + stacks + agent install steps), the
 // minimal install config naming the release agents, and a launcher binary
@@ -33,6 +244,13 @@ type BuildContext struct {
 //
 // Returns the context and a cleanup function that removes the temp dir.
 func PrepareBuildContext(selection Selection, globalConfigYAML string, launcherLinuxPath string) (*BuildContext, func(), error) {
+	return PrepareBuildContextWithOptions(selection, DockerfileOptions{}, globalConfigYAML, launcherLinuxPath)
+}
+
+// PrepareBuildContextWithOptions is PrepareBuildContext with explicit
+// Dockerfile options (for example the docker CLI layer for launches granted
+// the docker permission).
+func PrepareBuildContextWithOptions(selection Selection, options DockerfileOptions, globalConfigYAML string, launcherLinuxPath string) (*BuildContext, func(), error) {
 	if err := selection.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -42,12 +260,12 @@ func PrepareBuildContext(selection Selection, globalConfigYAML string, launcherL
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	tag, err := ImageTag(selection)
+	tag, err := ImageTagWithOptions(selection, options)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	dockerfile, err := Dockerfile(selection)
+	dockerfile, err := DockerfileWithOptions(selection, options)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -67,9 +285,10 @@ func PrepareBuildContext(selection Selection, globalConfigYAML string, launcherL
 			return nil, nil, fmt.Errorf("write install config: %w", err)
 		}
 	}
-	// The launcher binary is only needed when the selection installs agents
-	// by release recipe; script and host-binary agents do not COPY it.
-	needLauncher := false
+	// The launcher binary is needed for release agents and for the explicit
+	// in-image ai-memory install. Script/host-only agents without memory do
+	// not COPY it.
+	needLauncher := SelectionNeedsMemory(selection) || SelectionNeedsTools(selection)
 	for _, agent := range selection.Agents {
 		if agent.Kind == InstallRelease {
 			needLauncher = true
@@ -79,9 +298,13 @@ func PrepareBuildContext(selection Selection, globalConfigYAML string, launcherL
 	if needLauncher {
 		if strings.TrimSpace(launcherLinuxPath) == "" {
 			cleanup()
-			return nil, nil, fmt.Errorf("launcher binary is required to install release agents in the image")
+			return nil, nil, fmt.Errorf("launcher binary is required to install release agents, ai-memory, or auxiliary tools in the image")
 		}
-		dest := filepath.Join(dir, "ai-launcher") // #nosec G703 -- dir is os.MkdirTemp, launcherLinuxPath is our own temp binary
+		if strings.TrimSpace(globalConfigYAML) == "" {
+			cleanup()
+			return nil, nil, fmt.Errorf("install config is required to install release agents, ai-memory, or auxiliary tools in the image")
+		}
+		dest := filepath.Join(dir, launcherBinaryName) // #nosec G703 -- dir is os.MkdirTemp, launcherLinuxPath is our own temp binary
 		// #nosec G304 -- launcherLinuxPath is produced by buildLauncherLinux
 		// (an os.CreateTemp path) or by the caller; it is never user input.
 		data, err := os.ReadFile(launcherLinuxPath)
@@ -102,52 +325,91 @@ func PrepareBuildContext(selection Selection, globalConfigYAML string, launcherL
 		Dir:                dir,
 		DockerfilePath:     dfPath,
 		InstallConfigPath:  cfgPath,
-		LauncherBinaryPath: filepath.Join(dir, "ai-launcher"),
+		LauncherBinaryPath: filepath.Join(dir, launcherBinaryName),
 		ImageTag:           tag,
 	}, cleanup, nil
 }
 
-// BuildCommand returns the `docker build` argv for a prepared context,
-// tagging the content-hashed image. The context is passed as the build
-// context path; --pull and the cache are docker defaults.
-func BuildCommand(ctx *BuildContext) []string {
-	return []string{
-		"docker", "build",
+// BuildCommand returns the selected runtime's build argv for a prepared
+// context, tagging the content-hashed image. The context is passed as the
+// build context path; --pull and the cache are runtime defaults.
+func BuildCommand(ctx *BuildContext, runtime Runtime) []string {
+	return BuildCommandWithContext(ctx, runtime, "")
+}
+
+// BuildCommandWithContext returns the selected runtime's build argv with an
+// optional Docker context. The context is placed before the subcommand, as
+// required by the Docker CLI.
+func BuildCommandWithContext(ctx *BuildContext, runtime Runtime, contextName string) []string {
+	runtime = RuntimeOrDefault(runtime)
+	argv := append(CommandPrefix(runtime, contextName), "build",
 		"--tag", ctx.ImageTag,
 		ctx.Dir,
-	}
+	)
+	return argv
 }
 
 // Runner executes a command line and returns its exit code and error. The
-// CLI passes a docker runner (exec + stream); tests pass fakes. Exit code 0
+// CLI passes a runtime runner (exec + stream); tests pass fakes. Exit code 0
 // means the command succeeded.
 type Runner func(argv []string) (int, error)
 
 // EnsureImage checks whether the tagged image exists locally and, when it
-// does not, materializes the build context and runs `docker build` with the
-// runner. It returns the tag and a cleanup that removes the temp context.
-// A missing docker CLI or daemon surfaces as a runner error, not here.
-func EnsureImage(selection Selection, globalConfigYAML, launcherLinuxPath string, runner Runner) (string, func(), error) {
-	tag, err := ImageTag(selection)
+// does not, materializes the build context and runs the selected runtime's
+// build command with the runner. It returns the tag and a cleanup that removes
+// the temp context. A missing runtime CLI or daemon surfaces as a runner
+// error, not here.
+func EnsureImage(runtime Runtime, selection Selection, globalConfigYAML, launcherLinuxPath string, runner Runner) (string, func(), error) {
+	return EnsureImageWithContext(runtime, selection, globalConfigYAML, launcherLinuxPath, "", runner)
+}
+
+// EnsureImageWithOptions is EnsureImage with explicit Dockerfile options (for
+// example the docker CLI layer for launches granted the docker permission).
+func EnsureImageWithOptions(runtime Runtime, selection Selection, options DockerfileOptions, globalConfigYAML, launcherLinuxPath string, runner Runner) (string, func(), error) {
+	return ensureImage(runtime, selection, options, globalConfigYAML, launcherLinuxPath, "", runner)
+}
+
+// EnsureImageWithContext is EnsureImage with an explicit Docker context. The
+// inspect and build are sent to the same context, avoiding a local image
+// cache hit followed by a remote run (or the inverse).
+func EnsureImageWithContext(runtime Runtime, selection Selection, globalConfigYAML, launcherLinuxPath, contextName string, runner Runner) (string, func(), error) {
+	return ensureImage(runtime, selection, DockerfileOptions{}, globalConfigYAML, launcherLinuxPath, contextName, runner)
+}
+
+// EnsureImageWithContextOptions is EnsureImageWithContext with explicit
+// Dockerfile options (for example the docker CLI layer for launches granted
+// the docker permission).
+func EnsureImageWithContextOptions(runtime Runtime, selection Selection, options DockerfileOptions, globalConfigYAML, launcherLinuxPath, contextName string, runner Runner) (string, func(), error) {
+	return ensureImage(runtime, selection, options, globalConfigYAML, launcherLinuxPath, contextName, runner)
+}
+
+func ensureImage(runtime Runtime, selection Selection, options DockerfileOptions, globalConfigYAML, launcherLinuxPath, contextName string, runner Runner) (string, func(), error) {
+	runtime = RuntimeOrDefault(runtime)
+	if err := ValidateContext(runtime, contextName); err != nil {
+		return "", nil, err
+	}
+	tag, err := ImageTagWithOptions(selection, options)
 	if err != nil {
 		return "", nil, err
 	}
-	code, err := runner([]string{"docker", "image", "inspect", tag})
+	code, err := runner(append(CommandPrefix(runtime, contextName), "image", "inspect", tag))
 	if err == nil && code == 0 {
-		return tag, func() {}, nil
+		return tag, func() {
+			// A cached image owns no temporary build context or overlay here.
+		}, nil
 	}
-	ctx, cleanup, err := PrepareBuildContext(selection, globalConfigYAML, launcherLinuxPath)
+	ctx, cleanup, err := PrepareBuildContextWithOptions(selection, options, globalConfigYAML, launcherLinuxPath)
 	if err != nil {
 		return "", nil, err
 	}
-	code, err = runner(BuildCommand(ctx))
+	code, err = runner(BuildCommandWithContext(ctx, runtime, contextName))
 	if err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("docker build failed: %w", err)
+		return "", nil, fmt.Errorf("%s build failed: %w", runtime.Name(), err)
 	}
 	if code != 0 {
 		cleanup()
-		return "", nil, fmt.Errorf("docker build exited with code %d", code)
+		return "", nil, fmt.Errorf("%s build exited with code %d", runtime.Name(), code)
 	}
 	return tag, cleanup, nil
 }

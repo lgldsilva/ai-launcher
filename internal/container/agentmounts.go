@@ -56,86 +56,117 @@ const (
 // (e.g. Windows %APPDATA%) let the resolver pick the right location per host.
 var agentConfigDirs = map[string][]ConfigDir{
 	"claude": {
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.claude.
 		{Path: "~/.claude"},
-		{Path: "~/.claude.json"}, // standalone file (R9.3)
-		{Path: "~/.claude/projects", Platforms: []string{platformLinux, platformDarwin}}, // history
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.claude.json.
+		{Path: "~/.claude.json"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.claude/projects.
+		{Path: "~/.claude/projects", Platforms: []string{platformLinux, platformDarwin}},
 	},
 	"codex": {
-		{Path: "~/.codex"}, // auth.json
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.codex.
+		{Path: "~/.codex"},
 	},
 	"opencode": {
-		{Path: "~/.config/opencode"},      // auth.json
-		{Path: "~/.local/share/opencode"}, // session/history (rw)
-		{Path: "~/.config/opencode", Platforms: []string{platformWindows}},
-		{Path: "~/.local/share/opencode", Platforms: []string{platformWindows}},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.config/opencode.
+		{Path: "~/.config/opencode"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.local/share/opencode.
+		{Path: "~/.local/share/opencode"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.local/state/opencode.
+		{Path: "~/.local/state/opencode"},
 	},
 	"kimi": {
-		{Path: "~/.kimi-code"}, // config.toml + auth
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.kimi.
+		{Path: "~/.kimi"},
 	},
 	"kilo": {
+		// guessed: needs verification for the host-binary fallback.
 		{Path: "~/.kilo"},
 	},
 	"mimo": {
+		// guessed: needs verification for the host-binary fallback.
 		{Path: "~/.mimo"},
 	},
 	"agy": {
-		{Path: "~/.config/antigravity"},
-		{Path: "~/.gemini/antigravity", Platforms: []string{platformDarwin, platformLinux}}, // shares Gemini config root
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.gemini/antigravity-cli.
+		{Path: "~/.gemini/antigravity-cli"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.gemini/config.
+		{Path: "~/.gemini/config"},
 	},
 	"pi": {
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.pi.
 		{Path: "~/.pi"},
-		{Path: "~/.config/pi", Platforms: []string{platformLinux}},
 	},
 	"crush": {
-		{Path: "~/.config/crush"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.local/share/crush.
+		{Path: "~/.local/share/crush"},
 	},
 	"omp": {
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.omp.
 		{Path: "~/.omp"},
 	},
 	"cursor-agent": {
-		{Path: "~/.cursor"}, // cli-config.json + auth
+		// empirically verified: Linux container run on 2026-08-07 writes ~/.cursor.
+		{Path: "~/.cursor"},
 	},
 	"grok": {
-		{Path: "~/.grok"}, // auth.json
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.grok.
+		{Path: "~/.grok"},
 	},
 	"zero": {
+		// guessed: needs verification for the host-binary fallback.
 		{Path: "~/.config/zero"},
 	},
 	"devin": {
-		{Path: "~/.devin"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.config/devin.
+		{Path: "~/.config/devin"},
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.local/share/devin.
+		{Path: "~/.local/share/devin"},
 	},
 	"oc": {
-		{Path: "~/.config/opencode"}, // preset selector reuses opencode
+		// guessed: needs verification for the host-binary preset selector.
+		{Path: "~/.config/opencode"},
 	},
 	"gemini": {
-		{Path: "~/.gemini"}, // auth + settings
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.gemini.
+		{Path: "~/.gemini"},
 	},
 	"qwen": {
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.qwen.
 		{Path: "~/.qwen"},
-		{Path: "~/.config/qwen", Platforms: []string{platformLinux}},
 	},
 	"aider": {
+		// guessed: needs verification for the host-binary fallback.
 		{Path: "~/.aider.conf.yml"},
-		{Path: "~/.aider"}, // history db
+		// guessed: needs verification for the host-binary fallback.
+		{Path: "~/.aider"},
 	},
 	"goose": {
+		// guessed: needs verification for the host-binary fallback.
 		{Path: "~/.config/goose"},
 	},
 	"kiro-cli": {
+		// guessed: needs verification for the host-binary fallback.
 		{Path: "~/.kiro"},
 	},
 	"openclaw": {
-		{Path: "~/.openclaw"}, // openclaw.json
+		// empirically verified: Linux onboard run on 2026-08-06 writes ~/.openclaw.
+		{Path: "~/.openclaw"},
 	},
 	"hermes": {
-		{Path: "~/.hermes"}, // config.yaml + .env
+		// guessed: needs verification for the host-binary fallback.
+		{Path: "~/.hermes"},
 	},
 	"cline": {
+		// empirically verified: Linux container run on 2026-08-06 writes ~/.cline.
 		{Path: "~/.cline"},
-		{Path: "~/.config/cline", Platforms: []string{platformLinux}},
 	},
-	"muse": {
-		{Path: "~/.muse"},
+	"semidx": {
+		// semidx stores its endpoint/token configuration here. Mount only this
+		// tool-owned directory, never the host's complete ~/.config tree.
+		{Path: "~/.config/semidx"},
+		// The optional local index/cache is persisted separately from config.
+		{Path: "~/.cache/semidx"},
 	},
 }
 

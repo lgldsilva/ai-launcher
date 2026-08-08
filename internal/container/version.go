@@ -122,24 +122,40 @@ func parseVersionPart(part string) int {
 // installs; hostPath is the resolved host binary for recipe-less agents.
 func PlanInstall(agent config.Agent, version, hostPath string) AgentInstall {
 	if agent.Release != nil {
-		return AgentInstall{Command: agent.Command, Kind: InstallRelease, Version: version}
+		return AgentInstall{Command: agent.Command, Kind: InstallRelease, Version: version, NeedsMemory: agent.SupportsMemory}
 	}
 	if strings.TrimSpace(agent.SourceURL) != "" {
 		return AgentInstall{
 			Command:           agent.Command,
 			Kind:              InstallScript,
+			NeedsNode:         agent.NeedsNode,
 			Script:            "curl -fsSL " + agent.SourceURL + " | bash",
 			AllowSetupFailure: agent.SetupInteractive,
+			NeedsMemory:       agent.SupportsMemory,
 		}
 	}
 	if strings.TrimSpace(agent.NpmPackage) != "" {
 		return AgentInstall{
-			Command:    agent.Command,
-			Kind:       InstallNpm,
-			NpmPackage: agent.NpmPackage,
+			Command:     agent.Command,
+			Kind:        InstallNpm,
+			NeedsNode:   true,
+			NpmPackage:  agent.NpmPackage,
+			NeedsMemory: agent.SupportsMemory,
 		}
 	}
-	return AgentInstall{Command: agent.Command, Kind: InstallHostBinary, HostPath: strings.TrimSpace(hostPath)}
+	return AgentInstall{Command: agent.Command, Kind: InstallHostBinary, HostPath: strings.TrimSpace(hostPath), NeedsMemory: agent.SupportsMemory}
+}
+
+// PlanTool derives an auxiliary tool install from a catalog recipe. The
+// current Docker backend uses checksum-verified release tools, such as
+// semidx, so the real release tag is part of the image selection hash.
+func PlanTool(tool config.Tool, version string) ToolInstall {
+	return ToolInstall{
+		Command: tool.Command,
+		Version: version,
+		Kind:    InstallRelease,
+		Release: tool.Release,
+	}
 }
 
 // SortedAssetKeys returns the asset map keys in stable order, so rendered

@@ -10,16 +10,28 @@ import (
 //
 // The tag is the sha256 of the *canonical* serialization of the selection:
 // sorted stacks + sorted agents (command + pinned version + install kind) +
-// the dev-profile flag. Because Normalize canonicalized everything, the same
+// auxiliary tools + the dev-profile flag and memory requirement. Because
+// Normalize canonicalized everything, the same
 // selection always hashes to the same tag regardless of the order the user
 // ticked the checkboxes — the cache hit depends only on the selection, which
 // is what makes "identical selection → run without rebuilding" (R1 item 2)
 // hold. Pinned versions (design C2) are part of the hash, so a version bump
 // produces a new tag and a fresh build instead of a lying cache hit.
 func ImageTag(selection Selection) (string, error) {
+	return ImageTagWithOptions(selection, DockerfileOptions{})
+}
+
+// ImageTagWithOptions is ImageTag including the Dockerfile build options in
+// the hash: an option changes the image contents, so it must change the tag
+// or a same-selection image built without the option would be reused for a
+// launch that needs it (a lying cache hit).
+func ImageTagWithOptions(selection Selection, options DockerfileOptions) (string, error) {
 	canonical, err := selectionCanonical(selection)
 	if err != nil {
 		return "", err
+	}
+	if options.DockerCLI {
+		canonical += "|docker-cli"
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return "ai-launcher-box:" + hex.EncodeToString(sum[:])[:12], nil
@@ -65,6 +77,31 @@ func selectionCanonical(selection Selection) (string, error) {
 		}
 		if agent.AllowSetupFailure {
 			b.WriteString(":setup-failure-tolerant")
+		}
+		if agent.NeedsNode {
+			b.WriteString(":node")
+		}
+		if agent.NeedsMemory {
+			b.WriteString(":memory")
+		}
+		b.WriteString(",")
+	}
+	for _, tool := range selection.Tools {
+		b.WriteString("tool:")
+		b.WriteString(tool.Command)
+		b.WriteString("=")
+		b.WriteString(tool.Version)
+		b.WriteString("@")
+		b.WriteString(string(tool.Kind))
+		if tool.Release != nil {
+			b.WriteString(":")
+			b.WriteString(tool.Release.Repository)
+			for _, key := range SortedAssetKeys(tool.Release.Assets) {
+				b.WriteString("|")
+				b.WriteString(key)
+				b.WriteString("=")
+				b.WriteString(tool.Release.Assets[key])
+			}
 		}
 		b.WriteString(",")
 	}
