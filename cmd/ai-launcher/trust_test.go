@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
+	"github.com/lgldsilva/ai-launcher/internal/tui"
 )
 
 // A .ai-launch.yaml travels with the repository, so it is attacker-controlled
@@ -166,6 +168,94 @@ func TestLocalConfigPermissionsRequireExplicitFlags(t *testing.T) {
 			t.Fatal("run() = nil; gpu:true needs --gpu")
 		}
 	})
+}
+
+func TestInteractiveTUIUsesCompleteSelectionAsConsent(t *testing.T) {
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	seccomp := false
+	trust := localTrust{
+		optionsRaw: true,
+		fromFile:   true,
+		agent:      "custom-cli",
+		agentKnown: true,
+		jail:       false,
+		docker:     true,
+		mounts:     []config.Mount{{Path: t.TempDir()}},
+		rawPermissions: map[string]bool{
+			config.PermissionGitHub: true,
+		},
+		yolo:      true,
+		extraArgs: []string{"--unsafe"},
+		jailFlags: config.JailFlags{Seccomp: &seccomp},
+		paramValues: map[string]string{
+			"model": "dangerous-model",
+		},
+		workspace:    "/workspace-from-file",
+		project:      "project-from-file",
+		dependencies: config.DependencySettings{Policy: "none"},
+	}
+	if err := enforceLocalConfigTrust(flags, config.DefaultGlobal(), trust, false, true); err != nil {
+		t.Fatalf("interactive TUI trust = %v; the complete selection must reach the TUI", err)
+	}
+	if err := enforceLocalConfigTrust(flags, config.DefaultGlobal(), trust, false, false); err == nil {
+		t.Fatal("non-interactive trust = nil; CLI runs must still require explicit consent")
+	}
+	if err := enforcePermissionConsent(flags, trust); err == nil {
+		t.Fatal("non-interactive permission consent = nil; CLI runs must still require --gh")
+	}
+}
+
+func TestInteractiveTUIStillRejectsUnknownLocalAgent(t *testing.T) {
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	trust := localTrust{fromFile: true, agent: "repository-controlled", agentKnown: false}
+	if err := enforceLocalConfigTrust(flags, config.DefaultGlobal(), trust, false, true); err == nil {
+		t.Fatal("interactive TUI trust = nil; an unresolved local executable must not be launchable")
+	}
+}
+
+// The real bare invocation must reach the TUI even when the local file turns
+// on a setting that the one-shot CLI would reject. Returning ErrCancelled from
+// the TUI seam makes this an integration check without launching a harness.
+func TestBareTUIReceivesLocalYoloSelection(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("HOME", home)
+	restoreDir := chdir(t, project)
+	defer restoreDir()
+
+	globalSource, localSource, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  yolo: true\n")
+	global, err := config.LoadGlobal(globalSource)
+	if err != nil {
+		t.Fatalf("LoadGlobal() error = %v", err)
+	}
+	globalPath := filepath.Join(home, ".config", "ai-launch", "config.yaml")
+	if err := config.SaveGlobal(globalPath, global); err != nil {
+		t.Fatalf("SaveGlobal() error = %v", err)
+	}
+	local, err := config.LoadLocal(localSource)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if err := config.SaveLocal(config.LocalConfigPath(project), local); err != nil {
+		t.Fatalf("SaveLocal() error = %v", err)
+	}
+
+	previous := runTUI
+	called := false
+	runTUI = func(config.Global, launcher.LaunchConfig, tui.Hooks, string, tui.Options) (launcher.LaunchConfig, error) {
+		called = true
+		return launcher.LaunchConfig{}, tui.ErrCancelled
+	}
+	defer func() { runTUI = previous }()
+
+	var out, errOut strings.Builder
+	if err := run(nil, strings.NewReader(""), &out, &errOut); err != nil {
+		t.Fatalf("bare run() error = %v; TUI cancellation should be quiet", err)
+	}
+	if !called {
+		t.Fatal("runTUI was not called; local options.yolo blocked the TUI before it could ask")
+	}
 }
 
 // Matching CLI flags make enabled permissions through.
@@ -337,6 +427,37 @@ func TestLocalConfigBrokenProjectJailSymlinkRequiresExplicitConsent(t *testing.T
 	}
 }
 
+// A materialized Dockerfile must remain inside the checkout. A symlink could
+// redirect generation or a later build to an operator-unexpected path, so
+// container mode refuses it before probing or invoking the runtime.
+func TestContainerDockerfileSymlinkIsRefused(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	target := filepath.Join(dir, "Dockerfile.outside")
+	if err := os.WriteFile(target, []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(config.LocalConfigDir(dir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(config.LocalConfigDir(dir), "Dockerfile")); err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, dir)
+	defer restore()
+
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
+	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--docker-backend", "--dry-run")
+	if err == nil {
+		t.Fatal("run() = nil; symlinked container Dockerfile must be refused")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(".ai-launcher", "Dockerfile")) ||
+		!strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error = %v; want refusal naming the Dockerfile symlink", err)
+	}
+}
+
 // workspace/project from local config are forwarded verbatim to ai-memory run,
 // so an unsaved file must not redirect an authenticated token to another scope.
 func TestLocalConfigMemoryScopeRequiresExplicitFlags(t *testing.T) {
@@ -421,6 +542,11 @@ func TestLocalConfigCannotEnableDockerBackendOnItsOwn(t *testing.T) {
 		"--docker-backend", "--workspace", "/w", "--dry-run"); err != nil {
 		t.Fatalf("run() error = %v; an explicit --docker-backend must still work", err)
 	}
+	stubToolsOnPath(t, "podman")
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--container-runtime", "podman", "--workspace", "/w", "--dry-run"); err != nil {
+		t.Fatalf("run() error = %v; --container-runtime must count as explicit consent", err)
+	}
 }
 
 // The same docker choice saved by the operator becomes trusted input, exactly
@@ -455,6 +581,78 @@ func TestSavedLocalConfigHonorsDockerBackend(t *testing.T) {
 	}
 }
 
+// container_tmux.additional_paths mounts arbitrary host files read-only into
+// the container, so an unsaved repository file must not widen what the
+// container sees on its own — the same consent rule as container_dependencies.
+func TestLocalConfigTmuxAdditionalPathsRequireConsent(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  docker: true\n  stacks: [go]\n  container_tmux:\n    enabled: true\n    additional_paths:\n      - ~/.tmux/plugins\n")
+	stubToolsOnPath(t, "docker")
+	// --docker-backend consents to the backend itself; the tmux mounts are a
+	// separate repository-supplied widening that only save/profile accepts.
+	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--docker-backend", "--workspace", "/w", "--dry-run")
+	if err == nil {
+		t.Fatal("run() = nil; container_tmux.additional_paths must be refused without save/profile")
+	}
+	if !strings.Contains(err.Error(), "additional_paths") {
+		t.Errorf("error = %v; want it mentioning additional_paths", err)
+	}
+}
+
+// The gate only applies while the container backend is active: the same
+// additional_paths in a jail launch are inert input, not a mount.
+func TestTmuxAdditionalPathsGateRequiresContainerBackend(t *testing.T) {
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	trust := localTrust{optionsRaw: true, jail: true, tmuxAdditionalPaths: []string{"/host/tmux-plugins"}}
+	if err := enforceLocalConfigTrust(flags, config.DefaultGlobal(), trust, false, false); err != nil {
+		t.Fatalf("trust = %v; tmux additional paths without the container backend must not be gated", err)
+	}
+	flags.Bool("docker-backend", false, "")
+	if err := flags.Set("docker-backend", "true"); err != nil {
+		t.Fatalf("flags.Set() error = %v", err)
+	}
+	if err := enforceLocalConfigTrust(flags, config.DefaultGlobal(), trust, false, false); err == nil {
+		t.Fatal("trust = nil; container-mode tmux additional paths must require consent")
+	}
+}
+
+// The same tmux choice saved by the operator becomes trusted input, exactly
+// like the docker backend selection is honored after --save.
+func TestSavedLocalConfigHonorsTmuxAdditionalPaths(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	stubToolsOnPath(t, "docker")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	saved := launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseDocker: true,
+		UseMemory: false,
+		Workspace: "/w",
+		ContainerTmux: config.TmuxSettings{
+			Enabled:         true,
+			AdditionalPaths: []string{"~/.tmux/plugins"},
+		},
+		Docker: container.RunConfig{
+			Selection: selectionFromTest("go"),
+		},
+	}
+	if err := saveLocalSelection(globalPath, true, localPath, local, saved); err != nil {
+		t.Fatalf("saveLocalSelection() error = %v", err)
+	}
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--workspace", "/w", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() refused the launcher's own saved tmux config: %v", err)
+	}
+	if !strings.Contains(stdout, "docker run") {
+		t.Fatalf("stdout = %q; want the docker run argv", stdout)
+	}
+}
+
 // selectionFromTest builds a minimal valid docker selection for trust tests.
 func selectionFromTest(stacks ...string) container.Selection {
 	selection, err := container.Normalize(stacks, []container.AgentInstall{{
@@ -476,6 +674,8 @@ func TestOverlayCandidates(t *testing.T) {
 		"/home/u/.claude.json",
 		"/home/u/.codex/config.toml",
 		"/home/u/.config/opencode/opencode.json",
+		"/home/u/.config/semidx/config.yaml",
+		"/home/u/.config/semidx/semidx.env",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("overlayCandidates() = %#v; want %#v", got, want)
@@ -507,6 +707,22 @@ func TestDockerDryRunPrintsImageArgv(t *testing.T) {
 	}
 }
 
+func TestDockerDryRunPrintsResourceArgv(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  stacks: [go]\n")
+	stubToolsOnPath(t, "docker")
+	stdout, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--memory", "2g", "--publish", "3000:3000", "--workspace", "/w", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	for _, want := range []string{"--memory 2g", "-p 3000:3000"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q; want %q", stdout, want)
+		}
+	}
+}
+
 // memoryEnvEntries forwards the server URL and token only for memory-capable
 // agents, and never leaks them for others.
 func TestMemoryEnvEntries(t *testing.T) {
@@ -528,6 +744,7 @@ func TestMemoryEnvEntries(t *testing.T) {
 // dockerRunConfigFromOptions resolves the real installed version (C2) and
 // wires the memory/interactive/uid fields the launch path needs.
 func TestDockerRunConfigFromOptions(t *testing.T) {
+	stubToolsOnPath(t, "docker")
 	home := t.TempDir()
 	// Seed an install-state so the version resolves (not the placeholder).
 	stateDir := filepath.Join(home, ".config", "ai-launch")
@@ -544,7 +761,10 @@ func TestDockerRunConfigFromOptions(t *testing.T) {
 		SupportsMemory: true,
 		Release:        &config.GitHubRelease{Repository: "acme/claude", Assets: map[string]string{"linux-amd64": "claude.tar.gz"}, Binary: "claude"},
 	}
-	cfg := dockerRunConfigFromOptions(agent, []string{"go"}, home, "http://localhost:9292", "tok", true)
+	cfg, err := dockerRunConfigFromOptions(dockerRunOptions{agent: agent, stacks: []string{"go"}, home: home, memoryServerURL: "http://localhost:9292", memoryAuthToken: "tok", runtimePreference: "docker", interactive: true, memoryEnabled: true})
+	if err != nil {
+		t.Fatalf("dockerRunConfigFromOptions() error = %v", err)
+	}
 	if len(cfg.Selection.Agents) != 1 || cfg.Selection.Agents[0].Version != "2.1.0" {
 		t.Fatalf("selection agent = %#v; want pinned 2.1.0", cfg.Selection.Agents)
 	}
@@ -559,7 +779,10 @@ func TestDockerRunConfigFromOptions(t *testing.T) {
 	}
 	// Without an install-state entry the version falls back to the recipe
 	// placeholder but the launch wiring stays intact.
-	cfg2 := dockerRunConfigFromOptions(agent, []string{"go"}, t.TempDir(), "", "", false)
+	cfg2, err := dockerRunConfigFromOptions(dockerRunOptions{agent: agent, stacks: []string{"go"}, home: t.TempDir(), runtimePreference: "docker", memoryEnabled: true})
+	if err != nil {
+		t.Fatalf("dockerRunConfigFromOptions() second call error = %v", err)
+	}
 	if cfg2.Selection.Agents[0].Version == "" {
 		t.Fatal("version must never be empty (recipe placeholder)")
 	}

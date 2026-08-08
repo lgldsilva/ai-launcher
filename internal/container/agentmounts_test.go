@@ -8,14 +8,13 @@ import (
 
 func TestAgentMounts(t *testing.T) {
 	home := "/home/lgldsilva"
-	commands := []string{"claude", "codex", "opencode", "muse", "unknown-agent", " claude "}
+	commands := []string{"claude", "codex", "opencode", "unknown-agent", " claude "}
 
 	t.Run("all exist", func(t *testing.T) {
 		got := AgentMountsFor(home, commands, func(path string) bool { return true }, "linux")
 		// claude: ~/.claude (credential ro) + ~/.claude.json (credential ro) + ~/.claude/projects (rw history)
 		// codex: ~/.codex ro
-		// opencode: ~/.config/opencode ro + ~/.local/share/opencode rw
-		// muse: ~/.muse ro
+		// opencode: config + data + state under XDG
 		want := []AgentMount{
 			{Agent: "claude", HostPath: "/home/lgldsilva/.claude"},
 			{Agent: "claude", HostPath: "/home/lgldsilva/.claude.json"},
@@ -23,7 +22,7 @@ func TestAgentMounts(t *testing.T) {
 			{Agent: "codex", HostPath: "/home/lgldsilva/.codex"},
 			{Agent: "opencode", HostPath: "/home/lgldsilva/.config/opencode"},
 			{Agent: "opencode", HostPath: "/home/lgldsilva/.local/share/opencode"},
-			{Agent: "muse", HostPath: "/home/lgldsilva/.muse"},
+			{Agent: "opencode", HostPath: "/home/lgldsilva/.local/state/opencode"},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("AgentMounts() = %#v\nwant %#v", got, want)
@@ -46,8 +45,8 @@ func TestAgentMounts(t *testing.T) {
 	})
 
 	t.Run("nil existingFiles mounts everything", func(t *testing.T) {
-		got := AgentMountsFor(home, []string{"muse"}, nil, "linux")
-		if len(got) != 1 || got[0].HostPath != "/home/lgldsilva/.muse" {
+		got := AgentMountsFor(home, []string{"codex"}, nil, "linux")
+		if len(got) != 1 || got[0].HostPath != "/home/lgldsilva/.codex" {
 			t.Fatalf("AgentMounts() with nil probe = %#v", got)
 		}
 	})
@@ -60,24 +59,42 @@ func TestAgentMounts(t *testing.T) {
 	})
 }
 
-// Platform-aware: qwen uses ~/.qwen on macOS but ~/.config/qwen on Linux; the
-// resolver must pick the right one per host GOOS.
+func TestAgentMountsIncludesOnlySemidxOwnedDirectories(t *testing.T) {
+	home := "/home/alice"
+	got := AgentMounts(home, []string{"semidx"}, func(path string) bool {
+		return path == "/home/alice/.config/semidx" || path == "/home/alice/.cache/semidx"
+	})
+	if len(got) != 2 {
+		t.Fatalf("AgentMounts(semidx) = %#v; want two tool-owned directories", got)
+	}
+	for _, mount := range got {
+		if mount.Agent != "semidx" {
+			t.Fatalf("semidx mount has agent %q", mount.Agent)
+		}
+		if mount.HostPath == home || mount.HostPath == "/home/alice/.config" {
+			t.Fatalf("semidx mount exposes too much host state: %#v", mount)
+		}
+	}
+}
+
+// Platform-aware: the resolver must evaluate platform-qualified entries while
+// retaining the same user-home paths for tools that are cross-platform.
 func TestAgentMountsPlatformVariants(t *testing.T) {
 	home := "/home/u"
 	exists := func(string) bool { return true }
 
-	t.Run("linux qwen uses .config", func(t *testing.T) {
+	t.Run("linux qwen uses home root", func(t *testing.T) {
 		got := AgentMountsFor(home, []string{"qwen"}, exists, "linux")
 		found := map[string]bool{}
 		for _, m := range got {
 			found[m.HostPath] = true
 		}
-		if !found[home+"/.config/qwen"] {
-			t.Fatalf("linux qwen missing ~/.config/qwen: %#v", got)
+		if !found[home+"/.qwen"] {
+			t.Fatalf("linux qwen missing ~/.qwen: %#v", got)
 		}
 	})
 
-	t.Run("darwin qwen uses ~/.qwen", func(t *testing.T) {
+	t.Run("darwin qwen uses home root", func(t *testing.T) {
 		got := AgentMountsFor(home, []string{"qwen"}, exists, "darwin")
 		found := map[string]bool{}
 		for _, m := range got {
@@ -194,6 +211,50 @@ func TestStackCacheMounts(t *testing.T) {
 			t.Fatalf("StackCacheMounts('') = %v; want none", got)
 		}
 	})
+	t.Run("unknown stack contributes nothing", func(t *testing.T) {
+		if got := StackCacheMounts(home, []string{"cobol"}, exists); len(got) != 0 {
+			t.Fatalf("StackCacheMounts(cobol) = %v; want none", got)
+		}
+	})
+	// A nil probe falls back to the real filesystem check (ExistsOnHost).
+	t.Run("nil probe uses the filesystem", func(t *testing.T) {
+		if err := os.MkdirAll(home+"/.nvm", 0o700); err != nil {
+			t.Fatal(err)
+		}
+		got := StackCacheMounts(home, []string{"node"}, nil)
+		if len(got) != 1 || got[0] != home+"/.nvm" {
+			t.Fatalf("StackCacheMounts(node, nil probe) = %v; want [%s/.nvm]", got, home)
+		}
+	})
 }
 
 var _ = os.Stat // keep os import for future filesystem tests
+
+// AgentMounts (no explicit platform) resolves platform-qualified entries
+// against the host GOOS: ~/.claude/projects only applies on linux/darwin.
+func TestAgentMountsResolvesHostPlatform(t *testing.T) {
+	original := hostGOOS
+	t.Cleanup(func() { hostGOOS = original })
+	exists := func(string) bool { return true }
+	home := "/home/u"
+
+	hostGOOS = func() string { return "darwin" }
+	got := AgentMounts(home, []string{"claude"}, exists)
+	found := false
+	for _, mount := range got {
+		if mount.HostPath == home+"/.claude/projects" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("darwin claude mounts missing ~/.claude/projects: %#v", got)
+	}
+
+	hostGOOS = func() string { return "windows" }
+	got = AgentMounts(home, []string{"claude"}, exists)
+	for _, mount := range got {
+		if mount.HostPath == home+"/.claude/projects" {
+			t.Fatalf("windows claude must not mount the linux/darwin-only projects dir: %#v", got)
+		}
+	}
+}

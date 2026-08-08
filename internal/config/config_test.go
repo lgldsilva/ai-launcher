@@ -44,6 +44,23 @@ func TestDefaultConfigurationsExposeLauncherContract(t *testing.T) {
 	}
 }
 
+func TestOptionsContainerHostGatewayCanBeDisabledExplicitly(t *testing.T) {
+	var options Options
+	if err := yaml.Unmarshal([]byte("docker: true\ncontainer_host_gateway: false\n"), &options); err != nil {
+		t.Fatalf("decode options: %v", err)
+	}
+	if options.ContainerHostGateway == nil || *options.ContainerHostGateway {
+		t.Fatalf("container host gateway = %#v; want explicit false", options.ContainerHostGateway)
+	}
+	var defaults Options
+	if err := yaml.Unmarshal([]byte("docker: true\n"), &defaults); err != nil {
+		t.Fatalf("decode default options: %v", err)
+	}
+	if defaults.ContainerHostGateway != nil {
+		t.Fatalf("omitted container host gateway = %#v; want compatibility nil", defaults.ContainerHostGateway)
+	}
+}
+
 func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 	global := DefaultGlobal()
 	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "grok", "zero", "devin", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}
@@ -81,6 +98,23 @@ func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 			t.Fatalf("%s memory integration = %#v; want %s", tc.command, got, tc.want)
 		}
 	}
+}
+
+func TestDefaultGlobalIncludesSemidxToolRecipe(t *testing.T) {
+	global := DefaultGlobal()
+	for _, tool := range global.Tools {
+		if tool.Command != SemidxCommand {
+			continue
+		}
+		if tool.Release == nil || tool.Release.Repository != "lgldsilva/semidx" || tool.Release.Binary != SemidxCommand {
+			t.Fatalf("semidx tool recipe = %#v; want checksum-verified release", tool)
+		}
+		if tool.Release.ChecksumAsset != "checksums.txt" || tool.Release.Assets["linux-amd64"] == "" {
+			t.Fatalf("semidx release assets = %#v; want Linux archive and checksums", tool.Release)
+		}
+		return
+	}
+	t.Fatalf("default tools do not include %q", SemidxCommand)
 }
 
 func TestLoadGlobalUsesDefaultsAndMergesOmittedSections(t *testing.T) {
@@ -423,8 +457,8 @@ func TestDefaultGlobalDeclaresHarnessParamsAndYoloFlags(t *testing.T) {
 		}
 	}
 	kimi := agents["kimi"]
-	if len(kimi.Params) != 2 || kimi.Params[1].Name != "query" || kimi.Params[1].Flag != "--query" || !kimi.Params[1].TakesValue {
-		t.Fatalf("kimi params = %#v; want model and query", kimi.Params)
+	if len(kimi.Params) != 2 || kimi.Params[1].Name != "query" || kimi.Params[1].Flag != "--prompt" || !kimi.Params[1].TakesValue {
+		t.Fatalf("kimi params = %#v; want model and prompt-backed query", kimi.Params)
 	}
 	if len(agents["crush"].Params) != 0 {
 		t.Fatalf("crush params = %#v; want none (extra_args pass-through)", agents["crush"].Params)

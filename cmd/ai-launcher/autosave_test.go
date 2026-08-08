@@ -72,6 +72,51 @@ func TestTuiRunAutosavesTheConfirmedSelection(t *testing.T) {
 	}
 }
 
+func TestTuiContainerDefaultsWorkspaceToCurrentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	restoreDir := chdir(t, dir)
+	defer restoreDir()
+	wantWorkspace := mustGetwd()
+
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobal(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreTUI := stubRunTUI(t, launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseDocker: true,
+		UseMemory: false,
+	})
+	defer restoreTUI()
+
+	req := &launchRequest{
+		opts:         cliOptions{globalPath: globalPath, localPath: localPath},
+		global:       global,
+		local:        local,
+		launchConfig: launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}, UseJail: true},
+		errOut:       &bytes.Buffer{},
+	}
+	proceed, err := req.confirmSelection("")
+	if err != nil || !proceed {
+		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
+	}
+	if req.launchConfig.Workspace != wantWorkspace {
+		t.Fatalf("workspace = %q; want current directory %q", req.launchConfig.Workspace, wantWorkspace)
+	}
+	saved, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() after container selection: %v", err)
+	}
+	if saved.Options.Workspace != wantWorkspace {
+		t.Fatalf("saved workspace = %q; want current directory %q", saved.Options.Workspace, wantWorkspace)
+	}
+}
+
 // A failed autosave never blocks a launch: it warns and proceeds.
 func TestTuiRunAutosaveFailureWarnsButProceeds(t *testing.T) {
 	restore := stubRunTUI(t, launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}})

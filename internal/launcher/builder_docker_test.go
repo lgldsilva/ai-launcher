@@ -63,6 +63,45 @@ func TestBuildDockerRunBasic(t *testing.T) {
 	}
 }
 
+func TestBuildDockerRunUsesAiMemoryInsideImage(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Agent = config.Agent{Command: "opencode", SupportsMemory: true, SupportsYolo: true, YoloFlag: "--auto"}
+	cfg.UseMemory = true
+	cfg.Yolo = true
+	cfg.ParamValues = map[string]string{"model": "fixture"}
+	cfg.Agent.Params = []config.Param{{Name: "model", Flag: "--model", TakesValue: true}}
+	got, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	tail := got[len(got)-6:]
+	want := []string{"ai-memory", "run", "opencode", "--model", "fixture", "--yolo"}
+	if !reflect.DeepEqual(tail, want) {
+		t.Fatalf("memory Docker command tail = %#v; want %#v", tail, want)
+	}
+}
+
+func TestBuildDockerRunIncludesExternalWorktreeMounts(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Docker.WorktreeMounts = []string{
+		"/home/lgldsilva/work",
+		"/home/lgldsilva/work/nested",
+		"/Volumes/MSD512/other checkout",
+		"/Volumes/MSD512/other checkout",
+	}
+	got, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	joined := strings.Join(got, " ")
+	if strings.Contains(joined, "/home/lgldsilva/work/nested:/home/lgldsilva/work/nested") {
+		t.Fatalf("Build() duplicated a worktree already covered by the project mount: %s", joined)
+	}
+	if strings.Count(joined, "/Volumes/MSD512/other checkout:/Volumes/MSD512/other checkout") != 1 {
+		t.Fatalf("Build() external worktree mount count = %d; argv = %s", strings.Count(joined, "/Volumes/MSD512/other checkout:/Volumes/MSD512/other checkout"), joined)
+	}
+}
+
 func TestBuildDockerRunMapsPermissionsToMounts(t *testing.T) {
 	cfg := dockerLaunchConfig(t)
 	cfg.Permissions = map[string]bool{
@@ -195,6 +234,22 @@ func TestAgentDockerCommands(t *testing.T) {
 	}
 }
 
+func TestAgentDockerCommandsIncludesSelectedSemidxConfig(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Agent.Command = "pi"
+	cfg.Docker.Selection.Tools = []container.ToolInstall{{
+		Command: config.SemidxCommand,
+		Version: "0.44.9",
+		Kind:    container.InstallRelease,
+		Release: &config.GitHubRelease{Repository: "lgldsilva/semidx"},
+	}}
+	got := agentDockerCommands(cfg)
+	want := []string{"pi", config.SemidxCommand}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentDockerCommands() = %v; want %v", got, want)
+	}
+}
+
 func TestPermissionHomeMount(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -259,10 +314,23 @@ func TestDockerIssues(t *testing.T) {
 	}
 }
 
+func TestDockerIssuesWarnsWhenPodmanSocketIsUnavailable(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Docker.Runtime = container.PodmanRuntime{}
+	cfg.Permissions = map[string]bool{config.PermissionDocker: true}
+	issues := dockerIssues(cfg, func(string) (string, error) { return "/bin/podman", nil })
+	for _, issue := range issues {
+		if issue.Code == "container-socket-unavailable" && issue.Warning {
+			return
+		}
+	}
+	t.Fatalf("dockerIssues() = %#v; want a warning for Podman without a socket path", issues)
+}
+
 var errNotFound = errors.New("not found")
 
-// C3: declared params and the yolo flag must reach the agent in docker mode
-// (the jail path composes them; the docker path used to drop them).
+// C3: declared params and the yolo intent must reach the Docker memory chain
+// (ai-memory receives generic --yolo and translates it for the harness).
 func TestBuildDockerRunIncludesParamsAndYolo(t *testing.T) {
 	cfg := dockerLaunchConfig(t)
 	cfg.Agent = config.Agent{
@@ -272,15 +340,71 @@ func TestBuildDockerRunIncludesParamsAndYolo(t *testing.T) {
 		Params:       []config.Param{{Name: "model", Flag: "--model", TakesValue: true}},
 	}
 	cfg.ParamValues = map[string]string{"model": "sonnet"}
+	cfg.UseMemory = true
 	cfg.Yolo = true
 	got, err := Build(cfg)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	joined := strings.Join(got, " ")
-	for _, want := range []string{"--model", "sonnet", "--dangerously-skip-permissions"} {
+	for _, want := range []string{"--model", "sonnet", "ai-memory", "run", "claude", "--yolo"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("Build() missing %q in %s", want, joined)
 		}
+	}
+}
+
+func TestBuildDockerRunUsesAiMemoryYoloFlagWhenMemoryIsEnabled(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Agent = config.Agent{
+		Command:      "opencode",
+		SupportsYolo: true,
+		YoloFlag:     "--auto",
+	}
+	cfg.UseMemory = true
+	cfg.Yolo = true
+
+	got, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !reflect.DeepEqual(got[len(got)-4:], []string{"ai-memory", "run", "opencode", "--yolo"}) {
+		t.Fatalf("Build() = %#v; docker memory must invoke ai-memory with generic yolo", got)
+	}
+	if strings.Contains(strings.Join(got, "\x00"), "--auto") {
+		t.Fatalf("Build() = %#v; native opencode flag must be translated by ai-memory", got)
+	}
+}
+
+// The docker permission switches the image to the CLI-bearing build, and the
+// image tag is part of the run argv: build and run must reference one tag or
+// the launch dies with "Unable to find image".
+func TestBuildDockerRunTagsImageWithDockerCLIOption(t *testing.T) {
+	plainCfg := dockerLaunchConfig(t)
+	plainArgv, err := Build(plainCfg)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	cliCfg := dockerLaunchConfig(t)
+	cliCfg.Permissions = map[string]bool{config.PermissionDocker: true}
+	cliArgv, err := Build(cliCfg)
+	if err != nil {
+		t.Fatalf("Build() with docker permission error = %v", err)
+	}
+	plainTag, err := container.ImageTag(plainCfg.Docker.Selection)
+	if err != nil {
+		t.Fatalf("ImageTag() error = %v", err)
+	}
+	cliTag, err := container.ImageTagWithOptions(cliCfg.Docker.Selection, container.DockerfileOptions{DockerCLI: true})
+	if err != nil {
+		t.Fatalf("ImageTagWithOptions() error = %v", err)
+	}
+	plainJoined := strings.Join(plainArgv, " ")
+	if !strings.Contains(plainJoined, plainTag) || strings.Contains(plainJoined, cliTag) {
+		t.Errorf("run without the docker permission must reference the minimal tag %s: %s", plainTag, plainJoined)
+	}
+	cliJoined := strings.Join(cliArgv, " ")
+	if !strings.Contains(cliJoined, cliTag) || strings.Contains(cliJoined, plainTag) {
+		t.Errorf("run with the docker permission must reference the CLI tag %s: %s", cliTag, cliJoined)
 	}
 }

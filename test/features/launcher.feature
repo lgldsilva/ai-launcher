@@ -165,7 +165,7 @@ Feature: Launcher command contract
           flag: --model
           takes_value: true
         - name: query
-          flag: --query
+          flag: --prompt
           takes_value: true
       param_values:
         query: explain this
@@ -174,7 +174,7 @@ Feature: Launcher command contract
     Then the command equals
       """
       kimi
-      --query
+      --prompt
       explain this
       """
 
@@ -875,6 +875,36 @@ Feature: Launcher command contract
       --yolo
       """
 
+  Scenario: Exposes registered worktrees outside the current project to Docker
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      memory: false
+      workspace: /work/project
+      stacks: [go]
+      worktree_mounts:
+        - /outside/feature
+        - /work/project/nested
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      docker
+      run
+      --rm
+      -it
+      -w
+      /work/project
+      -v
+      /work/project:/work/project
+      -v
+      /outside/feature:/outside/feature
+      --add-host=host.docker.internal:host-gateway
+      ai-launcher-box:000000000000
+      claude
+      """
+
   Scenario: Produces no issues for a plain --no-jail launch
     Given a validation configuration
       """
@@ -956,13 +986,17 @@ Feature: Launcher command contract
       -v
       /home/tester/.claude/projects:/home/tester/.claude/projects
       -v
-      /home/tester/go:/home/tester/go
+      /home/tester/.cache/go-build:/home/ai-launcher/.cache/go-build:rw
       -v
-      /home/tester/.cache/go-build:/home/tester/.cache/go-build
+      /home/tester/go/pkg/mod:/home/ai-launcher/go/pkg/mod:rw
       -v
-      /home/tester/.cache/pip:/home/tester/.cache/pip
-      -v
-      /home/tester/.local/lib/python3.12:/home/tester/.local/lib/python3.12
+      /home/tester/.cache/pip:/home/ai-launcher/.cache/pip:rw
+      -e
+      GOCACHE=/home/ai-launcher/.cache/go-build
+      -e
+      GOMODCACHE=/home/ai-launcher/go/pkg/mod
+      -e
+      PIP_CACHE_DIR=/home/ai-launcher/.cache/pip
       --add-host=host.docker.internal:host-gateway
       ai-launcher-box:000000000000
       claude
@@ -980,6 +1014,7 @@ Feature: Launcher command contract
         ssh: true
         gh: true
         docker: true
+      docker_socket_group: 20
       """
     When the launch command is built
     Then the command equals
@@ -988,6 +1023,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      --group-add
+      20
       -e
       HOME=/home/tester
       -w
@@ -1003,9 +1040,11 @@ Feature: Launcher command contract
       -v
       /var/run/docker.sock:/var/run/docker.sock
       -v
-      /home/tester/.cargo:/home/tester/.cargo
+      /home/tester/.cargo/git:/home/ai-launcher/.cargo/git:rw
       -v
-      /home/tester/.rustup:/home/tester/.rustup
+      /home/tester/.cargo/registry:/home/ai-launcher/.cargo/registry:rw
+      -e
+      CARGO_HOME=/home/ai-launcher/.cargo
       --add-host=host.docker.internal:host-gateway
       ai-launcher-box:000000000000
       codex
@@ -1040,4 +1079,160 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       docker-selection-invalid
+      """
+
+  Scenario: Runs docker with resource limits, published ports, and a network
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      workspace: /work
+      container_memory: 4g
+      cpus: "2.0"
+      pids: 512
+      ports: [3000:3000]
+      network: bridge
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      docker
+      run
+      --rm
+      -it
+      --memory
+      4g
+      --cpus
+      2.0
+      --pids-limit
+      512
+      -p
+      3000:3000
+      --network
+      bridge
+      -w
+      /work
+      -v
+      /work:/work
+      --add-host=host.docker.internal:host-gateway
+      ai-launcher-box:000000000000
+      claude
+      """
+
+  Scenario: Runs docker with the host network
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      workspace: /work
+      network: host
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      docker
+      run
+      --rm
+      -it
+      --network
+      host
+      -w
+      /work
+      -v
+      /work:/work
+      --add-host=host.docker.internal:host-gateway
+      ai-launcher-box:000000000000
+      claude
+      """
+
+  Scenario: Selects Podman as the configured container runtime
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      runtime: podman
+      stacks: [go]
+      workspace: /work
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      podman
+      run
+      --rm
+      -it
+      -w
+      /work
+      -v
+      /work:/work
+      --add-host=host.containers.internal:host-gateway
+      ai-launcher-box:000000000000
+      claude
+      """
+
+  Scenario: Renders Compose YAML with selected infrastructure services
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      services: [postgres, redis]
+      workspace: /work
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      services:
+      agent:
+      postgres:
+      redis:
+      """
+
+  Scenario: Keeps native harness parameters when Docker also enables memory
+    Given a launch configuration
+      """
+      agent: opencode
+      docker: true
+      memory: true
+      yolo: true
+      yolo_flag: --auto
+      params:
+        - name: model
+          flag: --model
+          takes_value: true
+      param_values:
+        model: qwen-token-plan
+      stacks: [go]
+      services: [redis]
+      workspace: /work
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      command:
+      - ai-memory
+      - run
+      - opencode
+      - --model
+      - qwen-token-plan
+      - --yolo
+      """
+
+  Scenario: Renders Compose YAML with networks and project data mounts
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      services: [postgres]
+      workspace: /work
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      networks:
+      ai-launcher:
+      /work/.ai-launcher/data/postgres:/var/lib/postgresql
       """

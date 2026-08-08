@@ -227,13 +227,13 @@ func TestValidatorWarnsJailMemoryOnExternalVolumeCwd(t *testing.T) {
 func TestBuildAppendsDeclaredParamsInDeclarationOrder(t *testing.T) {
 	kimi := config.Agent{Command: "kimi", Params: []config.Param{
 		{Name: "model", Flag: "--model", TakesValue: true},
-		{Name: "query", Flag: "--query", TakesValue: true},
+		{Name: "query", Flag: "--prompt", TakesValue: true},
 	}}
 	got, err := Build(LaunchConfig{
 		Agent:       kimi,
 		ParamValues: map[string]string{"query": "explain this", "model": "k2"},
 	})
-	want := []string{"kimi", "--model", "k2", "--query", "explain this"}
+	want := []string{"kimi", "--model", "k2", "--prompt", "explain this"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
 	}

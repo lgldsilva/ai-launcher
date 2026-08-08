@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 func TestStackByID(t *testing.T) {
@@ -17,6 +19,9 @@ func TestStackByID(t *testing.T) {
 		}
 		if strings.Contains(stack.Layer, "\n\n") {
 			t.Errorf("stack %q Layer has a double newline", stack.ID)
+		}
+		if strings.Contains(stack.Helpers, "|| true") {
+			t.Errorf("stack %q Helpers masks a failure with unconditional success", stack.ID)
 		}
 	}
 	if _, ok := StackByID("cobol"); ok {
@@ -78,6 +83,14 @@ func TestAgentInstallValidate(t *testing.T) {
 			t.Fatalf("host with path should pass, got %v", err)
 		}
 	})
+	t.Run("npm requires package", func(t *testing.T) {
+		if err := (AgentInstall{Command: "gemini", Kind: InstallNpm}).Validate(); err == nil {
+			t.Fatal("npm without package should error")
+		}
+		if err := (AgentInstall{Command: "gemini", Kind: InstallNpm, NpmPackage: "@google/gemini-cli"}).Validate(); err != nil {
+			t.Fatalf("npm with package should pass, got %v", err)
+		}
+	})
 	t.Run("empty and unknown kinds", func(t *testing.T) {
 		if err := (AgentInstall{Command: "x"}).Validate(); err == nil {
 			t.Fatal("empty kind should error")
@@ -129,6 +142,12 @@ func TestNormalize(t *testing.T) {
 			t.Fatal("unknown stack should error")
 		}
 	})
+	t.Run("invalid agent errors", func(t *testing.T) {
+		_, err := Normalize(nil, []AgentInstall{{Command: "claude", Kind: InstallRelease}}, nil)
+		if err == nil {
+			t.Fatal("agent without a pinned version should error")
+		}
+	})
 	t.Run("profile override", func(t *testing.T) {
 		got, err := Normalize([]string{"go"}, []AgentInstall{{Command: "claude", Kind: InstallRelease, Version: "1.0"}}, boolPtr(false))
 		if err != nil {
@@ -158,4 +177,55 @@ func TestSelectionValidate(t *testing.T) {
 	}
 }
 
+func TestToolInstallValidateAndSelectionRejectsDuplicates(t *testing.T) {
+	release := &config.GitHubRelease{Repository: "lgldsilva/semidx", Binary: "semidx"}
+	valid := ToolInstall{Command: "semidx", Version: "0.44.9", Kind: InstallRelease, Release: release}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid tool = %v", err)
+	}
+	for _, invalid := range []ToolInstall{
+		{Command: "semidx", Version: "latest", Kind: InstallRelease, Release: release},
+		{Command: "semidx", Version: "0.44.9", Kind: InstallScript, Release: release},
+		{Command: "semidx", Version: "0.44.9", Kind: InstallRelease},
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("invalid tool %#v passed validation", invalid)
+		}
+	}
+	sel := Selection{
+		Stacks: []string{"go"},
+		Agents: []AgentInstall{{Command: "claude", Kind: InstallRelease, Version: "1.0"}},
+		Tools:  []ToolInstall{valid, valid},
+	}
+	if err := sel.Validate(); err == nil {
+		t.Fatal("duplicate auxiliary tools should fail selection validation")
+	}
+	invalidTool := Selection{
+		Stacks: []string{"go"},
+		Agents: []AgentInstall{{Command: "claude", Kind: InstallRelease, Version: "1.0"}},
+		Tools:  []ToolInstall{{Command: "semidx", Version: "", Kind: InstallRelease, Release: release}},
+	}
+	if err := invalidTool.Validate(); err == nil {
+		t.Fatal("an unpinned auxiliary tool should fail selection validation")
+	}
+	emptyCommand := ToolInstall{Version: "1.0.0", Kind: InstallRelease, Release: release}
+	if err := emptyCommand.Validate(); err == nil {
+		t.Fatal("a tool without a command should fail validation")
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }
+
+func TestAgentExecutable(t *testing.T) {
+	if got := (Selection{}).AgentExecutable(); got != "" {
+		t.Fatalf("empty selection executable = %q; want empty", got)
+	}
+	release := Selection{Agents: []AgentInstall{{Command: "claude", Kind: InstallRelease, Version: "1.0"}}}
+	if got := release.AgentExecutable(); got != "claude" {
+		t.Fatalf("release executable = %q; want the command name", got)
+	}
+	host := Selection{Agents: []AgentInstall{{Command: "kiro-cli", Kind: InstallHostBinary, HostPath: "/opt/kiro/bin/kiro-cli"}}}
+	if got := host.AgentExecutable(); got != "/opt/kiro/bin/kiro-cli" {
+		t.Fatalf("host-binary executable = %q; want the host path", got)
+	}
+}

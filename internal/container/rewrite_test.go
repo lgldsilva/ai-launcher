@@ -20,7 +20,7 @@ func TestRewriteLocalhost(t *testing.T) {
 		{"http://LOCALHOST:1", "http://host.docker.internal:1", true},
 	}
 	for _, tt := range tests {
-		got, changed := RewriteLocalhost(tt.in)
+		got, changed := RewriteLocalhost(tt.in, "host.docker.internal")
 		if got != tt.want || changed != tt.changed {
 			t.Errorf("RewriteLocalhost(%q) = (%q, %v); want (%q, %v)", tt.in, got, changed, tt.want, tt.changed)
 		}
@@ -74,8 +74,15 @@ func TestRewriteLocalhostRegexStability(t *testing.T) {
 	// The replacement must not mangle URLs that embed paths or query strings.
 	in := "http://localhost:8080/api?x=1"
 	want := "http://host.docker.internal:8080/api?x=1"
-	got, changed := RewriteLocalhost(in)
+	got, changed := RewriteLocalhost(in, "host.docker.internal")
 	if !changed || got != want {
 		t.Fatalf("RewriteLocalhost(%q) = (%q, %v); want (%q, true)", in, got, changed, want)
+	}
+}
+
+func TestRewriteLocalhostUsesRuntimeGateway(t *testing.T) {
+	got, changed := RewriteLocalhost("http://localhost:8080/mcp", "host.containers.internal")
+	if !changed || got != "http://host.containers.internal:8080/mcp" {
+		t.Fatalf("RewriteLocalhost() = (%q, %v); want Podman gateway", got, changed)
 	}
 }

@@ -97,7 +97,7 @@ func TestInstallConfigScriptAgent(t *testing.T) {
 		Memory:         &config.MemoryIntegration{Client: "claude-code", Agent: "claude-code", RunHarness: "claude"},
 	}
 	global.Agents = append(global.Agents, agent)
-	got, err := InstallConfig(global, []AgentInstall{{Command: "claude", Kind: InstallScript, Script: "curl x | bash"}})
+	got, err := InstallConfig(global, []AgentInstall{{Command: "claude", Kind: InstallScript, Script: "curl x | bash", NeedsMemory: true}})
 	if err != nil {
 		t.Fatalf("InstallConfig() error = %v", err)
 	}
@@ -157,11 +157,187 @@ func TestInstallConfigRendersRunHarness(t *testing.T) {
 	if oc.Memory == nil || oc.Memory.RunHarness != "opencode" {
 		t.Skip("oc run_harness not in catalog")
 	}
-	got, err := InstallConfig(global, []AgentInstall{{Command: "oc", Kind: InstallScript, Script: "curl oc | bash"}})
+	got, err := InstallConfig(global, []AgentInstall{{Command: "oc", Kind: InstallScript, Script: "curl oc | bash", NeedsMemory: true}})
 	if err != nil {
 		t.Fatalf("InstallConfig() error = %v", err)
 	}
 	if !strings.Contains(got, "run_harness: \"opencode\"") {
 		t.Fatalf("InstallConfig() missing run_harness:\n%s", got)
+	}
+}
+
+func TestInstallConfigRendersSelectedSemidxTool(t *testing.T) {
+	global := config.DefaultGlobal()
+	var semidx config.Tool
+	for _, tool := range global.Tools {
+		if tool.Command == config.SemidxCommand {
+			semidx = tool
+		}
+	}
+	if semidx.Release == nil {
+		t.Fatal("pre-condition: semidx must have a release recipe")
+	}
+	got, err := InstallConfigWithTools(global,
+		[]AgentInstall{{Command: "kilo", Kind: InstallRelease, Version: "1.0.0"}},
+		[]ToolInstall{{Command: config.SemidxCommand, Version: "0.44.9", Kind: InstallRelease, Release: semidx.Release}},
+	)
+	if err != nil {
+		t.Fatalf("InstallConfigWithTools() error = %v", err)
+	}
+	if !strings.Contains(got, "command: \"semidx\"") || !strings.Contains(got, "repository: \"lgldsilva/semidx\"") {
+		t.Fatalf("install config missing semidx recipe:\n%s", got)
+	}
+}
+
+// With no selected tools and no memory-enabled agent the install config must
+// not render a tools section at all.
+func TestInstallConfigOmitsToolsSectionWhenEmpty(t *testing.T) {
+	global := config.DefaultGlobal()
+	got, err := InstallConfig(global, []AgentInstall{{Command: "kilo", Kind: InstallRelease, Version: "1.0.0"}})
+	if err != nil {
+		t.Fatalf("InstallConfig() error = %v", err)
+	}
+	if strings.Contains(got, "tools:") {
+		t.Fatalf("InstallConfig() rendered an empty tools section:\n%s", got)
+	}
+}
+
+// A selected tool that is not in the catalog cannot be rendered; the error
+// must name the tool instead of silently dropping it from the image.
+func TestInstallConfigWithToolsRejectsUnknownTool(t *testing.T) {
+	global := config.DefaultGlobal()
+	release := &config.GitHubRelease{Repository: "acme/nope", Binary: "nope"}
+	_, err := InstallConfigWithTools(global,
+		[]AgentInstall{{Command: "kilo", Kind: InstallRelease, Version: "1.0.0"}},
+		[]ToolInstall{{Command: "not-in-catalog", Version: "1.0.0", Kind: InstallRelease, Release: release}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "not in the catalog") {
+		t.Fatalf("InstallConfigWithTools() error = %v; want unknown-tool error", err)
+	}
+}
+
+func TestInstallConfigWithToolsRejectsDuplicateTool(t *testing.T) {
+	global := config.DefaultGlobal()
+	var semidx config.Tool
+	for _, tool := range global.Tools {
+		if tool.Command == config.SemidxCommand {
+			semidx = tool
+		}
+	}
+	if semidx.Release == nil {
+		t.Fatal("pre-condition: semidx must have a release recipe")
+	}
+	tool := ToolInstall{Command: config.SemidxCommand, Version: "0.44.9", Kind: InstallRelease, Release: semidx.Release}
+	_, err := InstallConfigWithTools(global,
+		[]AgentInstall{{Command: "kilo", Kind: InstallRelease, Version: "1.0.0"}},
+		[]ToolInstall{tool, tool},
+	)
+	if err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("InstallConfigWithTools() error = %v; want duplicate-tool error", err)
+	}
+}
+
+func TestInstallConfigWithToolsRejectsUnpinnedTool(t *testing.T) {
+	global := config.DefaultGlobal()
+	_, err := InstallConfigWithTools(global,
+		[]AgentInstall{{Command: "kilo", Kind: InstallRelease, Version: "1.0.0"}},
+		[]ToolInstall{{Command: "semidx", Version: "latest", Kind: InstallRelease, Release: &config.GitHubRelease{Repository: "lgldsilva/semidx"}}},
+	)
+	if err == nil {
+		t.Fatal("InstallConfigWithTools() with an unpinned tool should error")
+	}
+}
+
+// Multiple aliases render as one YAML flow list with a separator per alias.
+func TestInstallConfigRendersMultipleAliases(t *testing.T) {
+	global := config.DefaultGlobal()
+	agent := config.Agent{Name: "Y", Command: "y", Aliases: []string{"y-one", "y-two"}, SourceURL: "https://example.com/y.sh"}
+	global.Agents = append(global.Agents, agent)
+	got, err := InstallConfig(global, []AgentInstall{{Command: "y", Kind: InstallScript, Script: "curl y | bash"}})
+	if err != nil {
+		t.Fatalf("InstallConfig() error = %v", err)
+	}
+	if !strings.Contains(got, `aliases: ["y-one", "y-two"]`) {
+		t.Fatalf("InstallConfig() aliases malformed:\n%s", got)
+	}
+}
+
+// A release recipe with a checksum asset renders it; one without must not
+// emit the key at all (the in-image installer treats absence as unsigned).
+func TestInstallConfigRendersChecksumAsset(t *testing.T) {
+	global := config.DefaultGlobal()
+	withSum := config.Agent{
+		Name:    "S",
+		Command: "s",
+		Release: &config.GitHubRelease{
+			Repository:    "acme/s",
+			Assets:        map[string]string{"linux-amd64": "s_linux_amd64.tar.gz"},
+			Binary:        "s",
+			ChecksumAsset: "checksums.txt",
+		},
+	}
+	withoutSum := config.Agent{
+		Name:    "N",
+		Command: "n",
+		Release: &config.GitHubRelease{
+			Repository: "acme/n",
+			Assets:     map[string]string{"linux-amd64": "n_linux_amd64.tar.gz"},
+			Binary:     "n",
+		},
+	}
+	global.Agents = append(global.Agents, withSum, withoutSum)
+	got, err := InstallConfig(global, []AgentInstall{
+		{Command: "s", Kind: InstallRelease, Version: "1.0.0"},
+		{Command: "n", Kind: InstallRelease, Version: "2.0.0"},
+	})
+	if err != nil {
+		t.Fatalf("InstallConfig() error = %v", err)
+	}
+	if !strings.Contains(got, `checksum_asset: "checksums.txt"`) {
+		t.Fatalf("InstallConfig() missing checksum_asset:\n%s", got)
+	}
+	// The checksum-less agent's block must not gain the key.
+	nBlock := got[strings.Index(got, `command: "n"`):]
+	if strings.Contains(nBlock, "checksum_asset") {
+		t.Fatalf("checksum-less agent rendered a checksum_asset:\n%s", nBlock)
+	}
+}
+
+// A release recipe the operator explicitly marked unverified keeps that flag
+// inside the rendered release block for the in-image installer.
+func TestInstallConfigRendersReleaseAllowUnverified(t *testing.T) {
+	global := config.DefaultGlobal()
+	agent := config.Agent{
+		Name:    "V",
+		Command: "v",
+		Release: &config.GitHubRelease{
+			Repository:      "acme/v",
+			Assets:          map[string]string{"linux-amd64": "v_linux_amd64.tar.gz"},
+			Binary:          "v",
+			AllowUnverified: true,
+		},
+	}
+	global.Agents = append(global.Agents, agent)
+	got, err := InstallConfig(global, []AgentInstall{{Command: "v", Kind: InstallRelease, Version: "1.0.0"}})
+	if err != nil {
+		t.Fatalf("InstallConfig() error = %v", err)
+	}
+	if !strings.Contains(got, "      allow_unverified: true") {
+		t.Fatalf("InstallConfig() missing release-level allow_unverified:\n%s", got)
+	}
+}
+
+// An agent without aliases must not render an empty aliases key: the
+// in-image installer would see a malformed entry.
+func TestInstallConfigOmitsAliasesWhenAbsent(t *testing.T) {
+	global := config.DefaultGlobal()
+	agent := config.Agent{Name: "Noalias", Command: "noalias", SourceURL: "https://example.com/noalias.sh"}
+	global.Agents = append(global.Agents, agent)
+	got, err := InstallConfig(global, []AgentInstall{{Command: "noalias", Kind: InstallScript, Script: "curl x | bash"}})
+	if err != nil {
+		t.Fatalf("InstallConfig() error = %v", err)
+	}
+	if strings.Contains(got, "aliases:") {
+		t.Fatalf("InstallConfig() rendered aliases for an agent without any:\n%s", got)
 	}
 }

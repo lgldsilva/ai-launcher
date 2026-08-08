@@ -29,32 +29,41 @@ type featureStep struct {
 }
 
 type launchSpec struct {
-	Agent         string            `yaml:"agent"`
-	Executable    string            `yaml:"executable"`
-	Home          string            `yaml:"home"`
-	ClearHome     bool              `yaml:"clear_home"`
-	GOOS          string            `yaml:"goos"`
-	Jail          bool              `yaml:"jail"`
-	Docker        bool              `yaml:"docker"`
-	Stacks        []string          `yaml:"stacks"`
-	JailExec      bool              `yaml:"jail_exec"`
-	JailFlags     config.JailFlags  `yaml:"jail_flags"`
-	Memory        bool              `yaml:"memory"`
-	Continue      bool              `yaml:"continue"`
-	Fresh         bool              `yaml:"fresh"`
-	RunHarness    string            `yaml:"run_harness"`
-	NewWorkstream string            `yaml:"new_workstream"`
-	Workstream    string            `yaml:"workstream"`
-	Workspace     string            `yaml:"workspace"`
-	Project       string            `yaml:"project"`
-	Permissions   map[string]bool   `yaml:"permissions"`
-	Mounts        []config.Mount    `yaml:"mounts"`
-	Yolo          bool              `yaml:"yolo"`
-	YoloFlag      string            `yaml:"yolo_flag"`
-	Params        []config.Param    `yaml:"params"`
-	ParamValues   map[string]string `yaml:"param_values"`
-	Args          []string          `yaml:"args"`
-	Missing       []string          `yaml:"missing_commands"`
+	Agent             string            `yaml:"agent"`
+	Executable        string            `yaml:"executable"`
+	Home              string            `yaml:"home"`
+	ClearHome         bool              `yaml:"clear_home"`
+	GOOS              string            `yaml:"goos"`
+	Jail              bool              `yaml:"jail"`
+	Docker            bool              `yaml:"docker"`
+	Stacks            []string          `yaml:"stacks"`
+	Services          []string          `yaml:"services"`
+	Runtime           string            `yaml:"runtime"`
+	ContainerMemory   string            `yaml:"container_memory"`
+	CPUs              string            `yaml:"cpus"`
+	PIDs              int64             `yaml:"pids"`
+	Ports             []string          `yaml:"ports"`
+	Network           string            `yaml:"network"`
+	JailExec          bool              `yaml:"jail_exec"`
+	JailFlags         config.JailFlags  `yaml:"jail_flags"`
+	Memory            bool              `yaml:"memory"`
+	Continue          bool              `yaml:"continue"`
+	Fresh             bool              `yaml:"fresh"`
+	RunHarness        string            `yaml:"run_harness"`
+	NewWorkstream     string            `yaml:"new_workstream"`
+	Workstream        string            `yaml:"workstream"`
+	Workspace         string            `yaml:"workspace"`
+	Project           string            `yaml:"project"`
+	Permissions       map[string]bool   `yaml:"permissions"`
+	DockerSocketGroup int               `yaml:"docker_socket_group"`
+	Mounts            []config.Mount    `yaml:"mounts"`
+	WorktreeMounts    []string          `yaml:"worktree_mounts"`
+	Yolo              bool              `yaml:"yolo"`
+	YoloFlag          string            `yaml:"yolo_flag"`
+	Params            []config.Param    `yaml:"params"`
+	ParamValues       map[string]string `yaml:"param_values"`
+	Args              []string          `yaml:"args"`
+	Missing           []string          `yaml:"missing_commands"`
 }
 
 func TestGherkinLauncherContract(t *testing.T) {
@@ -164,6 +173,26 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+	if len(spec.Services) > 0 {
+		expected, ok := scenario.step("Then the Compose YAML contains")
+		if !ok {
+			t.Fatal("Compose scenario must define expected YAML fragments")
+		}
+		compose, err := launcher.BuildCompose(launch)
+		if err != nil {
+			t.Fatalf("BuildCompose() error = %v", err)
+		}
+		rendered, err := container.RenderCompose(compose)
+		if err != nil {
+			t.Fatalf("RenderCompose() error = %v", err)
+		}
+		for _, fragment := range nonEmptyLines(expected.doc) {
+			if !strings.Contains(rendered, fragment) {
+				t.Fatalf("Compose YAML missing %q:\n%s", fragment, rendered)
+			}
+		}
+		return true
+	}
 	expected, ok := scenario.step("Then the command equals")
 	if !ok {
 		t.Fatal("launch scenario must define an expected command")
@@ -174,7 +203,7 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 	// Resolve it here so the contract asserts the structure without encoding
 	// a hash that would change when the pinned test version changes.
 	if launch.UseDocker {
-		want = resolveDockerImageTag(want, launch.Docker.Selection)
+		want = resolveDockerImageTag(want, launch.Docker.Selection, launch.Permissions[config.PermissionDocker])
 	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
@@ -183,9 +212,10 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 }
 
 // resolveDockerImageTag substitutes the real content-hashed tag for the
-// placeholder in docker contract scenarios.
-func resolveDockerImageTag(lines []string, selection container.Selection) []string {
-	tag, err := container.ImageTag(selection)
+// placeholder in docker contract scenarios. The docker permission switches
+// the image to the CLI-bearing build, and the option is part of the hash.
+func resolveDockerImageTag(lines []string, selection container.Selection, dockerCLI bool) []string {
+	tag, err := container.ImageTagWithOptions(selection, container.DockerfileOptions{DockerCLI: dockerCLI})
 	if err != nil {
 		return lines
 	}
@@ -241,26 +271,28 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		agent.Memory = &config.MemoryIntegration{RunHarness: spec.RunHarness}
 	}
 	return launcher.LaunchConfig{
-		Agent:           agent,
-		Executable:      spec.Executable,
-		HomeDir:         spec.Home,
-		UseJail:         spec.Jail,
-		UseDocker:       spec.Docker,
-		JailExec:        spec.JailExec,
-		JailFlags:       spec.JailFlags,
-		UseMemory:       spec.Memory,
-		ContinueSession: spec.Continue,
-		Fresh:           spec.Fresh,
-		NewWorkstream:   spec.NewWorkstream,
-		Workstream:      spec.Workstream,
-		Workspace:       spec.Workspace,
-		Project:         spec.Project,
-		Permissions:     spec.Permissions,
-		Mounts:          spec.Mounts,
-		Yolo:            spec.Yolo,
-		ExtraArgs:       spec.Args,
-		ParamValues:     spec.ParamValues,
-		Docker:          dockerRunConfig(spec),
+		Agent:            agent,
+		Executable:       spec.Executable,
+		HomeDir:          spec.Home,
+		UseJail:          spec.Jail,
+		UseDocker:        spec.Docker,
+		ContainerRuntime: spec.Runtime,
+		Services:         append([]string(nil), spec.Services...),
+		JailExec:         spec.JailExec,
+		JailFlags:        spec.JailFlags,
+		UseMemory:        spec.Memory,
+		ContinueSession:  spec.Continue,
+		Fresh:            spec.Fresh,
+		NewWorkstream:    spec.NewWorkstream,
+		Workstream:       spec.Workstream,
+		Workspace:        spec.Workspace,
+		Project:          spec.Project,
+		Permissions:      spec.Permissions,
+		Mounts:           spec.Mounts,
+		Yolo:             spec.Yolo,
+		ExtraArgs:        spec.Args,
+		ParamValues:      spec.ParamValues,
+		Docker:           dockerRunConfig(spec),
 	}
 }
 
@@ -275,7 +307,10 @@ func dockerRunConfig(spec launchSpec) container.RunConfig {
 	if !spec.Docker {
 		return container.RunConfig{}
 	}
-	return container.RunConfig{
+	ports, _ := container.ParsePortMappings(spec.Ports)
+	run := container.RunConfig{
+		Runtime:  runtimeForSpec(spec.Runtime),
+		HostGOOS: "linux",
 		Selection: container.Selection{
 			Stacks: spec.Stacks,
 			Agents: []container.AgentInstall{{
@@ -284,8 +319,34 @@ func dockerRunConfig(spec launchSpec) container.RunConfig {
 				Version: "0.0.0-test",
 			}},
 		},
-		Interactive:    true,
-		AddHostGateway: true,
+		Interactive:          true,
+		AddHostGateway:       true,
+		ProjectDir:           spec.Workspace,
+		MemoryLimit:          spec.ContainerMemory,
+		CPULimit:             spec.CPUs,
+		PIDsLimit:            spec.PIDs,
+		ExposedPorts:         ports,
+		NetworkName:          spec.Network,
+		WorktreeMounts:       append([]string(nil), spec.WorktreeMounts...),
+		DockerSocketGroupID:  spec.DockerSocketGroup,
+		DockerSocketGroupSet: spec.DockerSocketGroup != 0,
+	}
+	if run.ProjectDir == "" {
+		run.ProjectDir = "/work"
+	}
+	return run
+}
+
+func runtimeForSpec(name string) container.Runtime {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "podman":
+		return container.PodmanRuntime{}
+	case "nerdctl":
+		return container.NerdctlRuntime{}
+	case "docker":
+		return container.DockerRuntime{}
+	default:
+		return nil
 	}
 }
 

@@ -3,6 +3,8 @@ package container
 import (
 	"strings"
 	"testing"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 func TestImageTag(t *testing.T) {
@@ -181,5 +183,135 @@ func TestImageTagChangesWithSetupFailureFlag(t *testing.T) {
 	tagB, _ := ImageTag(selB)
 	if tagA == tagB {
 		t.Fatal("the setup-failure flag must be part of the tag")
+	}
+}
+
+func TestImageTagChangesWithMemoryRequirement(t *testing.T) {
+	plain := AgentInstall{Command: "pi", Kind: InstallScript, Script: "curl -fsSL https://pi.dev/install.sh | bash"}
+	withMemory := plain
+	withMemory.NeedsMemory = true
+	selA, err := Normalize([]string{"go"}, []AgentInstall{plain}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	selB, err := Normalize([]string{"go"}, []AgentInstall{withMemory}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	tagA, _ := ImageTag(selA)
+	tagB, _ := ImageTag(selB)
+	if tagA == tagB {
+		t.Fatal("memory requirement must produce a different image tag")
+	}
+}
+
+// The Node prerequisite changes the Dockerfile (nvm layer), so it must be
+// part of the tag just like the memory requirement.
+func TestImageTagChangesWithNodeRequirement(t *testing.T) {
+	plain := AgentInstall{Command: "pi", Kind: InstallScript, Script: "curl -fsSL https://pi.dev/install.sh | bash"}
+	withNode := plain
+	withNode.NeedsNode = true
+	selA, err := Normalize([]string{"go"}, []AgentInstall{plain}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	selB, err := Normalize([]string{"go"}, []AgentInstall{withNode}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	tagA, _ := ImageTag(selA)
+	tagB, _ := ImageTag(selB)
+	if tagA == tagB {
+		t.Fatal("node requirement must produce a different image tag")
+	}
+}
+
+func TestImageTagChangesWithAuxiliaryTool(t *testing.T) {
+	base, err := Normalize([]string{"go"}, []AgentInstall{{Command: "pi", Kind: InstallScript, Script: "curl pi | bash"}}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	withTool := base
+	withTool.Tools = []ToolInstall{{
+		Command: "semidx",
+		Version: "0.44.9",
+		Kind:    InstallRelease,
+		Release: &config.GitHubRelease{Repository: "lgldsilva/semidx", Assets: map[string]string{"linux-amd64": "semidx_0.44.9_linux_amd64.tar.gz"}},
+	}}
+	baseTag, err := ImageTag(base)
+	if err != nil {
+		t.Fatalf("ImageTag(base) error = %v", err)
+	}
+	toolTag, err := ImageTag(withTool)
+	if err != nil {
+		t.Fatalf("ImageTag(withTool) error = %v", err)
+	}
+	if baseTag == toolTag {
+		t.Fatal("adding an auxiliary tool must change the image tag")
+	}
+}
+
+// A changed auxiliary-tool recipe (repository or asset set) changes the image
+// contents, so it must change the tag — the tool-side of H1.
+func TestImageTagChangesWithToolRecipe(t *testing.T) {
+	base, err := Normalize([]string{"go"}, []AgentInstall{{Command: "pi", Kind: InstallScript, Script: "curl pi | bash"}}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	withTool := func(release *config.GitHubRelease) Selection {
+		sel := base
+		sel.Tools = []ToolInstall{{Command: "semidx", Version: "0.44.9", Kind: InstallRelease, Release: release}}
+		return sel
+	}
+	tagFor := func(sel Selection) string {
+		t.Helper()
+		tag, err := ImageTag(sel)
+		if err != nil {
+			t.Fatalf("ImageTag() error = %v", err)
+		}
+		return tag
+	}
+	repoA := &config.GitHubRelease{Repository: "lgldsilva/semidx", Assets: map[string]string{"linux-amd64": "semidx_a.tar.gz"}}
+	repoB := &config.GitHubRelease{Repository: "fork/semidx", Assets: map[string]string{"linux-amd64": "semidx_a.tar.gz"}}
+	assetsExtra := &config.GitHubRelease{Repository: "lgldsilva/semidx", Assets: map[string]string{"linux-amd64": "semidx_a.tar.gz", "darwin-arm64": "semidx_b.tar.gz"}}
+	if tagFor(withTool(repoA)) == tagFor(withTool(repoB)) {
+		t.Fatal("different tool repositories must produce different tags")
+	}
+	if tagFor(withTool(repoA)) == tagFor(withTool(assetsExtra)) {
+		t.Fatal("different tool asset sets must produce different tags")
+	}
+	// The same recipe content always hashes identically (asset keys are sorted
+	// before hashing, so map iteration order cannot leak into the tag).
+	again := &config.GitHubRelease{Repository: "lgldsilva/semidx", Assets: map[string]string{"linux-amd64": "semidx_a.tar.gz"}}
+	if tagFor(withTool(repoA)) != tagFor(withTool(again)) {
+		t.Fatal("identical tool recipes must produce identical tags")
+	}
+}
+
+// The Dockerfile build options change the image contents, so they must change
+// the tag: a same-selection image built without the docker CLI must not be
+// reused for a launch that was granted the docker permission.
+func TestImageTagWithOptionsChangesTag(t *testing.T) {
+	sel, err := Normalize([]string{"go"}, []AgentInstall{{Command: "claude", Kind: InstallScript, Script: "https://example.test/install.sh"}}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	plain, err := ImageTagWithOptions(sel, DockerfileOptions{})
+	if err != nil {
+		t.Fatalf("ImageTagWithOptions() error = %v", err)
+	}
+	withCLI, err := ImageTagWithOptions(sel, DockerfileOptions{DockerCLI: true})
+	if err != nil {
+		t.Fatalf("ImageTagWithOptions(DockerCLI) error = %v", err)
+	}
+	if plain == withCLI {
+		t.Fatal("the docker CLI option must change the image tag")
+	}
+	legacy, err := ImageTag(sel)
+	if err != nil {
+		t.Fatalf("ImageTag() error = %v", err)
+	}
+	if legacy != plain {
+		t.Fatal("ImageTag must delegate to the zero options")
 	}
 }
