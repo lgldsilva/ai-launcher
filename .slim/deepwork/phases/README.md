@@ -33,14 +33,14 @@ base:     origin/main
 | # | Fase | Arquivo | Pré-requisitos | Status |
 |---|---|---|---|---|
 | 0 | Docker backend base | `docker-container-mode.md` | — | ✅ Entregue (13 commits) |
-| 1 | Validação empírica config dirs | `phase-1-config-dirs.md` | Phase 0 | ⬜ Pendente |
-| 2 | Runtime abstraction | `phase-2-runtime.md` | Phase 1 | ⬜ Pendente |
-| 3 | `.ai-launcher/` diretório | `phase-3-dot-launcher.md` | Phase 1, 2 | ⬜ Pendente |
-| 4 | Catálogo de serviços | `phase-4-services.md` | Phase 1 | ⬜ Pendente |
-| 5 | Recursos + ports + rede | `phase-5-resources.md` | Phase 1, 2 | ⬜ Pendente |
-| 6 | docker-compose generation | `phase-6-compose.md` | Phase 3, 4, 5 | ⬜ Pendente |
-| 7 | TUI overhaul | `phase-7-tui.md` | Phase 1-6 | ⬜ Pendente |
-| 8 | Integração + docs | `phase-8-integration.md` | Phase 1-7 | ⬜ Pendente |
+| 1 | Validação empírica config dirs | `phase-1-config-dirs.md` | Phase 0 | ✅ Entregue (worktree, gates verdes) |
+| 2 | Runtime abstraction | `phase-2-runtime.md` | Phase 1 | ✅ Entregue (worktree, gates verdes) |
+| 3 | `.ai-launcher/` diretório | `phase-3-dot-launcher.md` | Phase 1, 2 | ✅ Entregue (worktree, gates verdes) |
+| 4 | Catálogo de serviços | `phase-4-services.md` | Phase 1 | ✅ Entregue (worktree, gates verdes) |
+| 5 | Recursos + ports + rede | `phase-5-resources.md` | Phase 1, 2 | ✅ Entregue (worktree, gates verdes) |
+| 6 | docker-compose generation | `phase-6-compose.md` | Phase 3, 4, 5 | ✅ Entregue (worktree, gates verdes) |
+| 7 | TUI overhaul | `phase-7-tui.md` | Phase 1-6 | ✅ Entregue (Oracle PASS 97/100, gates verdes) |
+| 8 | Integração + docs | `phase-8-integration.md` | Phase 1-7 | ✅ Entregue (gates verdes; Oracle externo sem retorno) |
 
 ## Diagrama de dependências
 

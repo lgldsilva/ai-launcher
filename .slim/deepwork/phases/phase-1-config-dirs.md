@@ -37,9 +37,12 @@ O projeto exige:
 ### 1.1 Construir imagem de verificação
 
 Criar um teste temporário que constrói uma imagem Docker com TODOS os agentes
-instaláveis (script + npm). Usar `|| true` em cada `RUN` para que um agente
-quebrado não pare o build inteiro. A imagem deve ter `node`/`npm` disponíveis
-(via nvm no DevProfile).
+instaláveis (script + npm). Cada `RUN` deve propagar o status da instalação:
+uma falha de agente não pode ser mascarada por `|| true` nem por um pipeline
+sem `pipefail`. Caso uma instalação seja explicitamente opcional, o teste deve
+capturar o status e só tolerar a falha quando o executável esperado já estiver
+disponível no container. A imagem deve ter `node`/`npm` disponíveis (via nvm no
+DevProfile).
 
 **Validação**: `docker images | grep verify` mostra a imagem construída.
 
@@ -60,7 +63,9 @@ Comparar os paths empíricos com o mapa declarado em `agentConfigDirs`.
 Corrigir TODOS os que não batem. Documentar cada correção com um comentário
 `// empirically verified: <agente> writes <path>`.
 
-**Paths já corrigidos**: `cursor-agent` (`~/.config/cursor` não `~/.cursor`).
+**Resultado da validação**: nesta execução Linux em 2026-08-07, `cursor-agent`
+gravou em `~/.cursor` (incluindo `cli-config.json` e `projects`), não em
+`~/.config/cursor`; o mapa foi mantido alinhado com essa evidência empírica.
 
 **Paths a verificar (prioridade alta — instaláveis)**:
 - claude: declarado `~/.claude`, `~/.claude.json`, `~/.claude/projects`

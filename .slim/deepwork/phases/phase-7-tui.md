@@ -60,7 +60,7 @@ Services
     [ ] PostgreSQL    :5432
     [ ] MySQL         :3306
   Databases (NoSQL)
-    [✓] MongoDB       :27017
+    [✓] MongoDB       27017:27017
     [✓] Redis         :6379
   Message Queues
     [ ] Kafka         :9092
@@ -95,7 +95,7 @@ persistem no profile (Ctrl+P) e no `.ai-launcher/config.yaml` (Ctrl+S).
 
 Cada seção tem sua hint na barra inferior:
 - Container: `Stacks · Space toggle · Enter edit resources/ports · Tab next`
-- Services: `Space add/remove service · Tab next`
+- Services: `Space add/remove · Enter edit published ports · Tab next`
 - Options: atualizada para incluir `Container (docker)` toggle
 
 **Validação**: Cada `sectionHint()` retorna a string correta.

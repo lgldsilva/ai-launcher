@@ -59,8 +59,8 @@ release therefore starts by sorting its new flags into "launch capability"
 name=value` or the parameter row in the TUI — never by per-agent special-case
 code.
 
-**Why.** The trigger was Kimi: besides `--model`, it accepts `--query`
-(initial query). Encoding that in Go would mean rebuilding the launcher for
+**Why.** The trigger was Kimi: besides `--model`, it accepts `--prompt`
+(initial prompt). Encoding that in Go would mean rebuilding the launcher for
 every new flag of any harness — unsustainable with ~20 agents in the catalog.
 
 **How.** `launcher.Build` emits the declared parameters in declaration order;
@@ -138,8 +138,9 @@ config persistence, safe defaults, argv composition.
 **How.** `make test-coverage` (and the CI `test` job) filter the profile with
 `awk` and fail below 90% on the filtered total; the CI job calls
 `make test-coverage` instead of repeating it. The `COVERAGE_EXCLUDE` regex in
-`.ai-standards.env` states the same boundary for the commit hooks, and
-`sonar.coverage.exclusions` for SonarCloud — three statements of one boundary,
+`.ai-standards.env` states the same boundary for the commit hooks, the
+`sonar.coverage.exclusions` for SonarCloud, and the CI `sonar` job still
+duplicates the `-coverpkg` list — four statements of one boundary,
 which have to be changed together. TUI, installer, and executor are covered by
 `go test -race -shuffle=on ./...` (race-only) and by the Gherkin contract
 suite.
@@ -230,6 +231,12 @@ adding isolation the container does not already have. Keeping them
 exclusive also keeps the argv contract simple: one chain, one backend,
 locked by the Gherkin suite.
 
+The image does still install `ai-memory` for a memory-enabled harness. That
+is a runtime dependency of the selected agent, not a second sandbox. The
+host-side `ai-jail` remains outside the image; nested jail execution is not
+enabled implicitly because the current catalog has no Linux ARM64 ai-jail
+asset and a missing nested runtime would create a false security guarantee.
+
 **Why same-path mounts.** The project is mounted read-write at its own path
 (`-v $PWD:$PWD`) rather than at a fixed `/workspace`: ai-memory scopes
 projects by absolute path, and agent configs record absolute paths. A
@@ -263,6 +270,65 @@ honest. The checksum-verified installer runs inside the image build itself
 build context), reusing the host installer's verification logic instead of
 reimplementing checksum validation in shell.
 
+## Why `.ai-launcher/` is a directory
+
+**Decision.** Docker artifacts live in a project-local `.ai-launcher/`
+directory: Dockerfile, install config, generated Compose, and any Linux
+launcher binary needed by the image build.
+
+**Why.** The old temporary Dockerfile was uninspectable after a launch, and a
+Compose document had nowhere durable to live. A directory gives the operator
+one reviewable, declarative environment and keeps generated files together.
+
+**Trade-off.** The directory is machine-local generated state. Compose is
+deterministic from the launcher selection, but an operator may deliberately
+keep a reviewed customization such as an extra service or host port. The
+launcher records hashes for that decision and asks again when the file or the
+generated selection changes; non-interactive callers must choose
+`--compose-update=keep|replace` explicitly.
+
+## Why runtime abstraction matters
+
+**Decision.** Docker, Podman, and nerdctl implement one runtime interface with
+auto-detection ordered Docker → Podman → nerdctl and explicit selection that
+never silently falls back.
+
+**Why.** Hardcoding `docker` blocked Podman users, while Podman supports
+daemonless/rootless development and nerdctl is natural on containerd/Kubernetes
+nodes. The interface centralizes command, Compose, host-gateway, and socket
+policy.
+
+## Why Compose is used when services exist
+
+**Decision.** A launch with infrastructure services uses Compose; a launch
+without them stays a single `docker run`/runtime command. Catalog data paths are
+mapped to project-local `.ai-launcher/data/<service>` bind mounts.
+
+**Why.** One container cannot run infrastructure alongside the agent with
+service DNS, shared networks, health dependencies, and persistent per-service
+data. Compose
+allows the agent to resolve `postgres:5432` or `redis:6379`; a bare
+`docker run` cannot provide that `mongo:27017` DNS topology.
+
+## Why rw config dirs are the shared-login model
+
+**Decision.** Each selected agent mounts only its own configuration/history
+directories read-write at the same host/container path. Host-only SSH and
+GitHub credential mounts remain read-only.
+
+**Why.** Read-only agent mounts caused logins made in the container to be lost
+when it exited. Read-write same-path mounts make login and session state
+persist while the per-agent map prevents another agent's credentials from
+being exposed.
+
+## Why service images are version-pinned
+
+**Decision.** Catalog service images use explicit versions, never `latest`.
+
+**Why.** `latest` tag drift would make the generated environment change
+without a selection change and invalidate the content-hash/cache promise.
+Pinned images make Compose output deterministic and make failures reproducible.
+
 ## Official vendor installers are recorded with allow_unverified
 
 **Decision.** The mainstream coding agents (claude, codex, opencode, kimi,
@@ -285,7 +351,9 @@ recipe-less and falls back to the host-binary mount.
 installers (pi, devin) hard-require a recent Node, and SDKMAN is the only
 portable way to pin a JDK LTS across distros. Both are shell-only, so the
 Dockerfile symlinks node/npm/npx and java/javac into /usr/local/bin and adds
-the nvm node bin dir to PATH.
+the nvm node bin dir to PATH. The runtime user is non-root; nvm and SDKMAN are
+installed under `/opt/nvm` and `/opt/sdkman` so host UID mapping cannot strand
+the executable behind /root.
 
 ## What we are NOT doing (yet)
 
@@ -341,6 +409,6 @@ the nvm node bin dir to PATH.
 - [ ] Do not change the canonical `ai-jail → ai-memory run → harness` order — if it changes, the contract suite must fail first.
 - [ ] Do not let the docker backend and the jail compose — they are mutually exclusive; enabling one must disable the other.
 - [ ] Do not install `latest` inside the image — the content-hashed tag would lie; pin the release version in the selection.
-- [ ] Do not mount agent credentials read-write in the container — same-path mounts of `~/.claude` etc. must stay `ro`.
+- [ ] Do not share another agent's credentials — same-path mounts are read-write only for the selected agent's own config/history directories; host-only SSH/GitHub mounts stay `ro`.
 - [ ] Do not turn the TUI back into a command generator — dry-run is the explicit print-only path.
 - [ ] Do not treat the Windows jail warning as an error — degradation with a warning is the correct behavior.

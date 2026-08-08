@@ -41,7 +41,6 @@ Criar `internal/container/compose.go`:
 
 ```go
 type ComposeFile struct {
-    Version   string                    // "3.9"
     Services  map[string]ComposeService // "agent", "postgres", "redis"
     Networks  map[string]ComposeNetwork
     Volumes   map[string]ComposeVolume
@@ -63,6 +62,8 @@ type ComposeService struct {
 ```
 
 `RenderCompose()` retorna o YAML como string (determinístico, keys ordenadas).
+O documento segue a Compose Specification atual e omite o campo top-level
+`version`, que é obsoleto nas implementações modernas.
 
 **Validação**: `TestRenderCompose` gera YAML válido para agente + 2 serviços.
 

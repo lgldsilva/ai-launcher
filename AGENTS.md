@@ -28,7 +28,8 @@ covered by `go test -race -shuffle=on ./...` (race-only). The
 `COVERAGE_EXCLUDE` regex is authoritative; this list only describes it. The
 commit hooks read the same boundary from the `COVERAGE_EXCLUDE` regex in
 `.ai-standards.env`, SonarCloud from `sonar.coverage.exclusions`, and the CI
-coverage job duplicates the `-coverpkg` list; change the four together. Do
+sonar job still duplicates the `-coverpkg` list (the `test` job calls
+`make test-coverage` since the dedup); change the four together. Do
 not move UI/execution packages into the gate.
 
 ## Git and hooks (ai-standards)

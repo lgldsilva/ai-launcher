@@ -85,19 +85,16 @@ env mínimo. Baseado em catálogos de referência como
 | mysql | mysql:8 | 3306 | mysql-data |
 | mariadb | mariadb:11 | 3306 | mariadb-data |
 | oracle | gvenzl/oracle-free:23-slim | 1521 | oracle-data |
-| sqlserver | mcr.microsoft.com/mssql/server:2022-latest | 1433 | mssql-data |
+| sqlserver | mcr.microsoft.com/mssql/server:2022-CU16-ubuntu-22.04 | 1433 | mssql-data |
 
 **Databases (NoSQL):**
 
 | ID | Image | Ports | Volume |
 |---|---|---|---|
 | mongo | mongo:8 | 27017 | mongo-data |
-| redis | redis:7 | 6379 | redis-data |
 | cassandra | cassandra:5 | 9042 | cassandra-data |
 | neo4j | neo4j:5 | 7474,7687 | neo4j-data |
-| dynamodb | amazon/dynamodb-local:2.5 | 8000 | — |
-| valkey | valkey/valkey:8 | 6379 | valkey-data |
-| dragonfly | docker.dragonflydb.io/dragonflydb/dragonfly:latest | 6379 | dragonfly-data |
+| dynamodb | amazon/dynamodb-local:2.6.0 | 8000 | dynamodb-data |
 
 **Databases (Vector):**
 
@@ -106,7 +103,7 @@ env mínimo. Baseado em catálogos de referência como
 | qdrant | qdrant/qdrant:v1.13 | 6333,6334 | qdrant-data |
 | weaviate | semitechnologies/weaviate:1.28 | 8080 | weaviate-data |
 | milvus | milvusdb/milvus:v2.4 | 19530 | milvus-data |
-| chroma | chromadb/chroma:latest | 8000 | chroma-data |
+| chroma | chromadb/chroma:0.6.3 | 8000 | chroma-data |
 | pgvector | pgvector/pgvector:pg16 | 5432 | pgvector-data |
 
 **Databases (Time-series):**
@@ -132,51 +129,69 @@ env mínimo. Baseado em catálogos de referência como
 |---|---|---|---|
 | kafka | bitnami/kafka:3.7 | 9092 | kafka-data |
 | redpanda | redpandadata/redpanda:v25 | 19092,8080 | redpanda-data |
-| rabbitmq | rabbitmq:3-management | 5672,15672 | rabbit-data |
-| nats | nats:2 | 4222,8222 | — |
+| rabbitmq | rabbitmq:3.13-management | 5672,15672 | rabbit-data |
+| nats | nats:2 | 4222,8222 | nats-data |
 | activemq | apache/activemq-classic:5.18 | 61616,8161 | amq-data |
 | pulsar | apachepulsar/pulsar:3.3 | 6650,8080 | pulsar-data |
+
+**Caches:**
+
+| ID | Image | Ports | Volume |
+|---|---|---|---|
+| redis | redis:7 | 6379 | redis-data |
+| valkey | valkey/valkey:8 | 6379 | valkey-data |
+| dragonfly | docker.dragonflydb.io/dragonflydb/dragonfly:v1.34.1 | 6379 | dragonfly-data |
 
 **Object Storage:**
 
 | ID | Image | Ports | Volume |
 |---|---|---|---|
-| minio | minio/minio:latest | 9000,9001 | minio-data |
+| minio | minio/minio:RELEASE.2025-02-28T09-55-16Z | 9000,9001 | minio-data |
 | localstack | localstack/localstack:4 | 4566 | ls-data |
 
 **Monitoring:**
 
 | ID | Image | Ports | Volume |
 |---|---|---|---|
-| prometheus | prom/prometheus:latest | 9090 | prom-data |
-| grafana | grafana/grafana:latest | 3000 | grafana-data |
-| jaeger | jaegertracing/all-in-one:1 | 16686,4317 | — |
-| loki | grafana/loki:latest | 3100 | loki-data |
-| otel-collector | otel/opentelemetry-collector:latest | 4317,4318 | — |
+| prometheus | prom/prometheus:v3.4.2 | 9090 | prom-data |
+| grafana | grafana/grafana:11.6.0 | 3000 | grafana-data |
+| jaeger | jaegertracing/all-in-one:1.69.0 | 16686,4317 | jaeger-data |
+| loki | grafana/loki:3.4.2 | 3100 | loki-data |
+| otel-collector | otel/opentelemetry-collector:0.127.0 | 4317,4318 | — |
 
 **Identity / Auth:**
 
 | ID | Image | Ports | Volume |
 |---|---|---|---|
 | keycloak | quay.io/keycloak/keycloak:26 | 8080 | keycloak-data |
-| authentik | ghcr.io/goauthentik/server:latest | 9000,9443 | authentik-data |
+| authentik | ghcr.io/goauthentik/server:2025.4.1 | 9000,9443 | authentik-data |
 
 **Workflow:**
 
 | ID | Image | Ports | Volume |
 |---|---|---|---|
 | airflow | apache/airflow:3 | 8080 | airflow-data |
-| temporal | temporalio/auto-setup:latest | 7233,8233 | temporal-data |
-| n8n | n8nio/n8n:latest | 5678 | n8n-data |
+| temporal | temporalio/auto-setup:1.27.2 | 7233,8233 | temporal-data |
+| n8n | n8nio/n8n:1.95.3 | 5678 | n8n-data |
 
 **Dev Tools:**
 
 | ID | Image | Ports | Volume |
 |---|---|---|---|
-| mailpit | axllent/mailpit:latest | 1025,8025 | — |
+| mailpit | axllent/mailpit:v1.20.5 | 1025,8025 | mailpit-data |
+| wiremock | wiremock/wiremock:3.13.2 | 8080 | wiremock-data |
+| code-server | codercom/code-server:4.131.0-39 | 8080 | code-server-config,code-server-data |
 | nginx | nginx:1-alpine | 80 | — |
 | traefik | traefik:v3 | 80,8080 | — |
 | caddy | caddy:2 | 80,443 | — |
+
+`code-server` is a browser-based developer service. It receives the selected
+project at `/home/coder/project`, keeps its configuration and extensions in
+the project `.ai-launcher/data/code-server` tree, and uses the image's default
+password authentication. Neovim is intentionally modeled as a selectable
+container stack rather than an infrastructure service; its XDG config, data,
+state, and cache directories are resolved separately for Linux, macOS, and
+Windows.
 
 ### 4.4 Funções de acesso
 
@@ -211,13 +226,17 @@ os serviços na seleção.
 ### 4.7 Config
 
 `options.services: [mongo, redis]` no `.ai-launcher/config.yaml`.
+Service host ports can be overridden with `options.container_service_ports`:
+`postgres: [{host: 15432, internal: 5432}]`. The CLI form is repeatable:
+`--service-port postgres=15432:5432`.
 
 ### 4.8 TUI: seção Services
 
 Nova seção na TUI (aparece quando docker ativo), com checkboxes agrupados por
 categoria. `Space` adiciona/remove. Mostra portas e volumes de cada serviço.
 
-**Validação**: `TestServicesView` renderiza as categorias e serviços.
+**Validação**: `TestServicesView` renderiza as categorias e serviços; Enter
+edita os published ports do serviço destacado.
 
 ## Files to create/modify
 
@@ -240,13 +259,13 @@ categoria. `Space` adiciona/remove. Mostra portas e volumes de cada serviço.
 
 ## Validation criteria (acceptance gate)
 
-- [ ] `make test` passa
-- [ ] `make test-coverage` ≥ 90% (services.go entra no gate)
-- [ ] `make lint-full` — 0 issues
-- [ ] `len(Services) >= 40` (catálogo cobre todas as categorias)
-- [ ] Todos os IDs são únicos (`TestServiceIDsUnique`)
-- [ ] `ValidServiceIDs` rejeita IDs desconhecidos
-- [ ] `ai-launcher --service mongo --dry-run` mostra o serviço
+- [x] `make test` passa
+- [x] `make test-coverage` ≥ 90% (services.go entra no gate)
+- [x] `make lint-full` — 0 issues
+- [x] `len(Services) >= 40` (catálogo cobre todas as categorias)
+- [x] Todos os IDs são únicos (`TestServiceIDsUnique`)
+- [x] `ValidServiceIDs` rejeita IDs desconhecidos
+- [x] `ai-launcher --service mongo --dry-run` mostra o serviço
 
 ## Out of scope
 

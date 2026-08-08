@@ -13,6 +13,48 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — the workspace config moved to `.ai-launcher/config.yaml`
+
+The workspace-local selection moved from `<project>/.ai-launch.yaml` to
+`<project>/.ai-launcher/config.yaml`, so the generated container artifacts
+(Dockerfile, Compose file, service data) live beside it under one directory. A
+legacy `.ai-launch.yaml` is still read; the first save (`--save`, `Ctrl+S`, or
+the autosave on run) writes the new file and renames the legacy one to
+`.ai-launch.yaml.bak`.
+
+**What you need to do:** nothing — the migration is automatic on the next
+save. One side effect to know: `trusted_local_configs` records are bound to
+the file's path, so the migration invalidates the record the legacy path held.
+The same save re-records trust for the new path, so a workspace you saved
+stays trusted, and an unsaved one never gains trust by being moved.
+
+### Changed — `--memory <value>` is the container memory limit
+
+`--memory` is still the ai-memory toggle, but a non-boolean value is now
+reinterpreted as the container memory limit: `--memory 4g` (or `--memory=512m`)
+is rewritten to `--container-memory` before flag parsing
+(`normalizeMemoryResourceFlag` in `cmd/ai-launcher/command_flow.go`). Boolean
+spellings (`--memory`, `--memory=true`) keep their ai-memory meaning, as does
+`--no-memory`.
+
+**What you need to do:** nothing, unless you were passing a value to
+`--memory` and relying on the parse error.
+
+### Added — complete Docker container mode
+
+- Runtime abstraction with Docker, Podman, and nerdctl auto-detection or
+  explicit selection.
+- Project-local `.ai-launcher/` directory with materialized Dockerfile,
+  install configuration, Linux launcher binary, and Compose output.
+- Infrastructure catalog with approximately 40 version-pinned services.
+- Deterministic `docker-compose.yaml` generation with networks, named volumes,
+  DNS-based service connections, and lifecycle commands.
+- Resource limits for memory, CPU, and PIDs, plus published ports and network
+  selection.
+- TUI services picker, resource editor, dynamic Compose preview, and complete
+  profile persistence.
+- Optional `zsh` stack, installed alongside the default bash shell.
+
 ### Discovered — Kilo Code release assets drifted upstream
 
 The flavor battery surfaced that the built-in `kilo` catalog entry points at
@@ -28,7 +70,7 @@ installing the kilo agent.
 
 ### Known limitation — agents without an official installer
 
-Four catalog agents (mimo, zero, oc, aider, goose, kiro-cli, hermes) have no
+Seven catalog agents (mimo, zero, oc, aider, goose, kiro-cli, hermes) have no
 official curl|bash, npm or release recipe, so in the docker backend they fall
 back to a read-only bind-mount of the host binary (works for static linux
 binaries; a macOS host binary does not execute in the linux container). The
@@ -58,6 +100,45 @@ could not see; all fixed and re-validated with real docker builds:
   prefix pinned to a fixed dir that joins PATH (ENV cannot expand `$(...)`);
   the docker workspace defaults to the cwd; agent versions compare
   component-wise (v2.10 > v2.9).
+
+### Fixed — review follow-ups on the container mode
+
+- **The artifact ledger covers every generated file** — `.compose-approval.json`
+  protected only `docker-compose.yaml`; an operator-edited `Dockerfile`,
+  `install-config.yaml`, or `.gitignore` was silently overwritten on the next
+  generate. All generated artifacts now go through the same keep/replace
+  review.
+- **Ctrl-C cleans up a Compose session** — SIGINT during an interactive
+  `compose run` session now runs `compose down` and removes the MCP overlay
+  mounts before exiting, and the agent's real exit code is propagated instead
+  of being flattened.
+- **Smaller images** — the agent installers run as the non-root `ai-launcher`
+  user, the Go and npm caches are cleaned in the same layer that fills them,
+  and the Docker CLI is installed only when the Docker permission is selected.
+- **TUI pinned versions survive agent switches and profile loads** — a pinned
+  agent version no longer reverts to the catalog default when the image
+  selection is re-planned.
+- **The Compose review screen is in English** — matching the rest of the UI.
+- **Compose rendering no longer varies with the TTY** — the generated
+  `docker-compose.yaml` is byte-identical in interactive and non-interactive
+  runs.
+- **The run side references the image the build side produced** — the Docker
+  CLI build option is part of the image tag hash, and `docker run`/Compose now
+  derive the tag with the same option; a launch granted the Docker permission
+  no longer dies with "Unable to find image" because the minimal image was
+  referenced instead.
+- **The mutation gate enforces its own thresholds** — Gremlins reported
+  efficacy/coverage below the configured minimums without failing the run, so
+  `scripts/mutation.sh` now parses the summary and fails when either minimum
+  is missed.
+- **The in-image install config is readable again** — BuildKit applied
+  `COPY --chmod=0644` to the implicitly created `/etc/ai-launch` parent
+  directory as well, leaving it `0644 root:root`; the least-privilege
+  installer got EACCES and the config fallback silently built with default
+  versions instead of the pinned ones. The Dockerfile now creates the
+  directory explicitly with mode 0755 before the COPY.
+- **Go helpers are on PATH** — `gopls` and `goimports` install into
+  `~/go/bin`, which now joins `PATH` in the Go stack layer.
 
 ### Added — docker container backend with stack selection
 
