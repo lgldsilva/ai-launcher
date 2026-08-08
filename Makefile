@@ -19,6 +19,11 @@ GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@v2.28.0
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0
 SHFMT ?= $(GO) run mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
 GORELEASER ?= $(GO) run github.com/goreleaser/goreleaser/v2@v2.13.0
+MUTATION_IMAGE ?= gogremlins/gremlins@sha256:1a026981a9155871ccaae7101e5ff8dc3a62616f6e054ace07336d5b559d5efe
+MUTATION_BASE ?= origin/main
+MUTATION_EFFICACY_MIN ?= 70
+MUTATION_COVERAGE_MIN ?= 90
+MUTATION_OUTPUT ?= .mutation/gremlins.json
 
 .PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec sec-static sec-vuln test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
 
@@ -69,8 +74,8 @@ lint-full:
 # the release config that ships the binaries. shellcheck comes from the host
 # (preinstalled on the CI runners); shfmt and goreleaser run via `go run`.
 lint-dist:
-	shellcheck install.sh
-	$(SHFMT) -i 2 -ci -d install.sh
+	shellcheck install.sh scripts/mutation.sh
+	$(SHFMT) -i 2 -ci -d install.sh scripts/mutation.sh
 	$(GORELEASER) check
 
 # The two halves are separate targets because CI runs them as separate jobs:
@@ -104,18 +109,20 @@ test-coverage:
 	$(GO) test -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
 	@logic_profile=$$(mktemp); \
 	trap 'rm -f "$$logic_profile"' EXIT; \
-	awk 'NR == 1 || $$1 !~ /internal\/launcher\/(executor|replace_.*)\.go:/' $(COVERAGE_FILE) > "$$logic_profile"; \
+	awk 'NR == 1 || $$1 !~ /internal\/launcher\/(executor.*|replace_.*)\.go:/' $(COVERAGE_FILE) > "$$logic_profile"; \
 	$(GO) tool cover -func="$$logic_profile"; \
 	coverage=$$($(GO) tool cover -func="$$logic_profile" | awk '/^total:/{gsub("%", "", $$3); print $$3}'); \
 	awk -v coverage="$$coverage" -v minimum="$(COVERAGE_MIN)" 'BEGIN { if (coverage + 0 < minimum + 0) { printf "FAIL: logic coverage %.1f%% is below %.1f%%\n", coverage, minimum; exit 1 } printf "PASS: logic coverage %.1f%% meets %.1f%% gate\n", coverage, minimum }'
 
-# Mutation testing is intentionally optional: it is useful locally or in a
-# dedicated CI image, but must not add a download or a flaky tool requirement.
+# Mutation testing runs in the pinned Gremlins container. The wrapper provisions
+# hermetic command stubs for catalog discovery and forwards the host UID/GID so
+# tests that inspect the launch identity remain meaningful.
 test-mutation:
-	@if command -v go-mutesting >/dev/null 2>&1; then \
-		go-mutesting ./internal/config/...; \
-	else \
-		printf '%s\n' 'SKIP: optional go-mutesting is not installed; see docs/test-strategy.md'; \
-	fi
+	MUTATION_IMAGE="$(MUTATION_IMAGE)" \
+	MUTATION_BASE="$(MUTATION_BASE)" \
+	MUTATION_EFFICACY_MIN="$(MUTATION_EFFICACY_MIN)" \
+	MUTATION_COVERAGE_MIN="$(MUTATION_COVERAGE_MIN)" \
+	MUTATION_OUTPUT="$(MUTATION_OUTPUT)" \
+		./scripts/mutation.sh
 
 test-all: test-unit test-property test-gherkin test-race test-coverage lint lint-full sec test-mutation
