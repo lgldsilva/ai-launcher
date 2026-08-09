@@ -125,9 +125,9 @@ func MaterializeLauncherBinary(projectDir, source string) (string, error) {
 	if err := writeMaterializedArtifact(path, data); err != nil {
 		return "", err
 	}
-	if err := os.Chmod(path, 0o755); err != nil { // #nosec G302 -- the copied launcher must be executable inside the build context.
-		return "", fmt.Errorf("make launcher binary executable: %w", err)
-	}
+	// The artifact stays 0600 on disk; the Dockerfile grants the exec bit at
+	// build time via COPY --chmod=0755, so the in-image mode has a single
+	// source of truth and no permissive file ever sits in the project.
 	return path, nil
 }
 
@@ -317,10 +317,9 @@ func PrepareBuildContextWithOptions(selection Selection, options DockerfileOptio
 			cleanup()
 			return nil, nil, fmt.Errorf("read launcher binary: %w", err)
 		}
-		// #nosec G306 -- the copied launcher binary must keep its exec bit for
-		// the in-image installer (COPY in the Dockerfile preserves it); the
-		// source is our own cross-compiled temp binary, not user input.
-		if err := os.WriteFile(dest, data, 0o755); err != nil { // #nosec G306 G703 -- exec bit required; dest is os.MkdirTemp-derived
+		// The copy stays 0600 in the build context: the Dockerfile grants the
+		// exec bit at build time via COPY --chmod=0755.
+		if err := os.WriteFile(dest, data, 0o600); err != nil { // #nosec G703 -- dest is os.MkdirTemp-derived
 			cleanup()
 			return nil, nil, fmt.Errorf("copy launcher binary: %w", err)
 		}

@@ -111,7 +111,11 @@ func DiscoverGitWorktreeMounts(root string) ([]config.Mount, error) {
 // production command is read-only and receives a fixed subcommand; root is
 // passed as data to Git's -C option rather than interpolated into a shell.
 var gitWorktreeList = func(root string) ([]byte, error) {
-	cmd := exec.Command("git", "-C", root, "worktree", "list", "--porcelain") // #nosec G204 -- fixed executable and arguments
+	gitCLI, err := exec.LookPath("git")
+	if err != nil {
+		return nil, fmt.Errorf("git not found in PATH: %w", err)
+	}
+	cmd := exec.Command(gitCLI, "-C", root, "worktree", "list", "--porcelain") // #nosec G204 -- fixed arguments, absolute path from LookPath
 	cmd.Env = GitProbeEnv(os.Environ())
 	return cmd.Output()
 }

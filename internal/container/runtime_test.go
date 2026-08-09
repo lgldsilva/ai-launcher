@@ -247,3 +247,10 @@ func TestRuntimeInfoPreflight(t *testing.T) {
 		t.Fatalf("RuntimeInfo() error = %v; want a docker info failure", err)
 	}
 }
+
+func TestListDockerContextsCommandFailsClearlyWithoutDocker(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := listDockerContextsCommand(); err == nil || !strings.Contains(err.Error(), "docker CLI not found in PATH") {
+		t.Fatalf("listDockerContextsCommand() error = %v; want a clear docker-not-found failure", err)
+	}
+}

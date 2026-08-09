@@ -33,6 +33,19 @@ func TestLauncherSourceRootOnlyAcceptsOwnModule(t *testing.T) {
 	}
 }
 
+func TestBuildLauncherLinuxFailsClearlyWithoutGoToolchain(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/lgldsilva/ai-launcher\n"), 0o600); err != nil { // #nosec G306 -- test fixture is private.
+		t.Fatal(err)
+	}
+	t.Setenv("GO_SRC_PATH", root)
+	t.Setenv("PATH", t.TempDir())
+	var out, errOut bytes.Buffer
+	if _, err := buildLauncherLinux(&out, &errOut); err == nil || !strings.Contains(err.Error(), "go toolchain not found in PATH") {
+		t.Fatalf("buildLauncherLinux() error = %v; want a clear go-toolchain-not-found failure", err)
+	}
+}
+
 func TestEmbeddedLauncherSourceRootFindsTheCheckoutForDevelopmentBuilds(t *testing.T) {
 	root := embeddedLauncherSourceRoot()
 	if root == "" {

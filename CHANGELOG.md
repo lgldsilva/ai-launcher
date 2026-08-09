@@ -154,6 +154,14 @@ could not see; all fixed and re-validated with real docker builds:
   the project's `docker-compose.yaml` is reused on every later run (including
   operator customizations), so regeneration stays idempotent and previews
   show a fixed `<generated-on-first-launch>` placeholder instead of a secret.
+- **Executables are spawned by absolute path and the launcher exec bit lives
+  in the Dockerfile** — SonarCloud flagged `exec.Command("go"|"docker"|"git")`
+  (S4036, PATH search) and a `chmod 0755` on the materialized launcher binary
+  (S2612). The three spawns now resolve the CLI with `exec.LookPath` first
+  (clearer not-found errors, no PATH-search invocation), and the Dockerfile
+  grants the exec bit at build time via `COPY --chmod=0755`, so the
+  project-local artifact stays 0600 with a single source of truth for the
+  in-image mode.
 
 ### Added — docker container backend with stack selection
 

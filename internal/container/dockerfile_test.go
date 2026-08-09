@@ -45,7 +45,7 @@ func TestDockerfile(t *testing.T) {
 		"python3-pip",
 		"# Agent: claude",
 		"pinned release 2.1.0 (checksum-verified)",
-		"COPY ai-launcher /usr/local/bin/ai-launcher",
+		"COPY --chmod=0755 ai-launcher /usr/local/bin/ai-launcher",
 		"COPY --chmod=0644 install-config.yaml /etc/ai-launch/install-config.yaml",
 		"RUN ai-launcher --config /etc/ai-launch/install-config.yaml --install --agent claude",
 		"# Agent: kiro-cli",

@@ -44,7 +44,7 @@ func TestPrepareBuildContext(t *testing.T) {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
 	for _, want := range []string{
-		"COPY ai-launcher /usr/local/bin/ai-launcher",
+		"COPY --chmod=0755 ai-launcher /usr/local/bin/ai-launcher",
 		"COPY --chmod=0644 install-config.yaml /etc/ai-launch/install-config.yaml",
 		"RUN ai-launcher --config /etc/ai-launch/install-config.yaml --install --agent kilo",
 	} {
@@ -151,8 +151,8 @@ func TestMaterializeLauncherBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("binary mode = %o; want 755", info.Mode().Perm())
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("binary mode = %o; want 600 (the Dockerfile grants the exec bit via COPY --chmod=0755)", info.Mode().Perm())
 	}
 }
 

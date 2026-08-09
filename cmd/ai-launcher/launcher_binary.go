@@ -50,7 +50,12 @@ func buildLauncherLinux(out, errOut io.Writer) (string, error) {
 	}
 	path := tmp.Name()
 	_ = tmp.Close()
-	cmd := exec.Command("go", "build", "-o", path, filepath.Join(src, "cmd", "ai-launcher")) // #nosec G204 G702 -- fixed argv, no shell, module root from the filesystem or GO_SRC_PATH
+	goToolchain, err := exec.LookPath("go")
+	if err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("go toolchain not found in PATH: %w", err)
+	}
+	cmd := exec.Command(goToolchain, "build", "-o", path, filepath.Join(src, "cmd", "ai-launcher")) // #nosec G204 G702 -- fixed argv, no shell, absolute path from LookPath
 	cmd.Dir = src
 	// Match the image architecture: an arm64 docker daemon (Raspberry Pi,
 	// homelab) pulls an arm64 ubuntu base, so the COPY'd launcher must be

@@ -132,7 +132,11 @@ func listRuntimeStatuses(lookPath func(string) (string, error)) []RuntimeStatus 
 // command only returns context names; it never changes Docker's active
 // context, so selecting a name remains an explicit launch-time decision.
 var listDockerContextsCommand = func() ([]byte, error) {
-	return exec.Command("docker", "context", "ls", "--format", "{{.Name}}").Output() // #nosec G204 -- fixed Docker context-list command
+	dockerCLI, err := exec.LookPath("docker")
+	if err != nil {
+		return nil, fmt.Errorf("docker CLI not found in PATH: %w", err)
+	}
+	return exec.Command(dockerCLI, "context", "ls", "--format", "{{.Name}}").Output() // #nosec G204 -- fixed Docker context-list command, absolute path from LookPath
 }
 
 // ListDockerContexts returns the names available to the local Docker CLI.

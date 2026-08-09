@@ -96,3 +96,10 @@ func TestGitProbeEnv(t *testing.T) {
 		t.Fatalf("GitProbeEnv() = %#v; want %#v", got, want)
 	}
 }
+
+func TestGitWorktreeListFailsClearlyWithoutGit(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := gitWorktreeList(t.TempDir()); err == nil || !strings.Contains(err.Error(), "git not found in PATH") {
+		t.Fatalf("gitWorktreeList() error = %v; want a clear git-not-found failure", err)
+	}
+}
