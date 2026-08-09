@@ -491,7 +491,11 @@ func TestSelectAgentUpdatesDockerSelection(t *testing.T) {
 		},
 	}
 	model := NewModel(config.DefaultGlobal(), launch)
-	// Move the cursor to a script agent (claude) and select it.
+	// NewModel probes the host PATH for installed agents; override the list so
+	// the test does not depend on claude being installed on the machine (CI
+	// runners have none of the catalog CLIs).
+	model.agents = []catalog.AgentStatus{{Agent: catalogAgent(t, "claude"), Installed: true, Path: "/home/tester/.local/bin/claude"}}
+	// Move the cursor to the claude row and select it.
 	for i, agent := range model.agents {
 		if agent.Agent.Command == "claude" {
 			// cursor 0 is "continue"; agent rows start at 1.
