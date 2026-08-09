@@ -279,7 +279,7 @@ func (m Model) previewView(b *strings.Builder) {
 			b.WriteString(badStyle.Render("Compose preview unavailable: "+launcher.SanitizeDisplay(err.Error())) + lineBreak)
 			return
 		}
-		rendered, err := container.RenderCompose(compose)
+		rendered, err := container.RenderCompose(container.MaskComposeSecrets(compose))
 		if err != nil {
 			b.WriteString(badStyle.Render("Compose preview unavailable: "+launcher.SanitizeDisplay(err.Error())) + lineBreak)
 			return

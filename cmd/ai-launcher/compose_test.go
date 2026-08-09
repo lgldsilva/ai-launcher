@@ -217,6 +217,40 @@ func TestComposeUpdateReviewPreservesManualChangesAndRemembersDecision(t *testin
 	}
 }
 
+func TestComposeGeneratedSecretIsStableAcrossInspections(t *testing.T) {
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+	cfg := launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "custom-cli"},
+		UseDocker: true,
+		Workspace: dir,
+		Services:  []string{"authentik"},
+		Docker: container.RunConfig{Selection: container.Selection{Agents: []container.AgentInstall{{
+			Command: "custom-cli",
+			Kind:    container.InstallScript,
+			Script:  "curl -fsSL https://example.com/custom-cli.sh | bash",
+		}}}},
+	}
+	if err := materializeComposeIfNeeded(cfg, composeUpdateReplace, &bytes.Buffer{}); err != nil {
+		t.Fatalf("initial materialization: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, containerArtifactDir, composeArtifactName)) // #nosec G304 -- test-owned artifact.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), container.GeneratedSecretMarker) || strings.Contains(string(data), "dev-secret-key-change-me") {
+		t.Fatalf("materialized Compose leaks the secret marker or the old hardcoded default:\n%s", data)
+	}
+	review, err := inspectComposeArtifact(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Changed {
+		t.Fatalf("review after materialization has a conflict; a generated secret must be reused from disk, not regenerated\nDiff:\n%s", review.Diff)
+	}
+}
+
 func TestComposeCommandArgvRejectsInvalidArguments(t *testing.T) {
 	for _, test := range []struct {
 		action   string

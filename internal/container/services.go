@@ -163,7 +163,7 @@ var Services = []Service{
 		"KEYCLOAK_ADMIN": "admin", "KEYCLOAK_ADMIN_PASSWORD": "admin",
 	}, "wget -qO- http://localhost:8080/health/ready", "Keycloak identity and access management"),
 	service("authentik", "Authentik", CategoryAuth, "ghcr.io/goauthentik/server:2025.4.1", []PortMapping{port(9000), port(9443)}, []string{"authentik-data:/data"}, map[string]string{
-		"AUTHENTIK_SECRET_KEY": "dev-secret-key-change-me", // #nosec G101 -- intentionally non-secret local development default.
+		"AUTHENTIK_SECRET_KEY": GeneratedSecretMarker,
 	}, "wget -qO- http://localhost:9000/-/health/ready/", "Authentik identity provider"),
 
 	// Workflow / Orchestration

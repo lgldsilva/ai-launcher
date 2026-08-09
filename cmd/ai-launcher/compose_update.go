@@ -119,6 +119,10 @@ func inspectComposeArtifact(cfg launcher.LaunchConfig) (composeArtifactReview, e
 	if err != nil {
 		return composeArtifactReview{}, fmt.Errorf("build compose: %w", err)
 	}
+	compose, err = container.ResolveComposeSecrets(mustGetwd(), compose)
+	if err != nil {
+		return composeArtifactReview{}, fmt.Errorf("resolve compose secrets: %w", err)
+	}
 	generated, err := container.RenderCompose(compose)
 	if err != nil {
 		return composeArtifactReview{}, fmt.Errorf("render compose: %w", err)

@@ -146,6 +146,14 @@ could not see; all fixed and re-validated with real docker builds:
   roots, and a test helper's fixture commands committed into the real
   checkout. Both the discovery command and the test helper now scrub the
   repository-pointing Git variables (`GitProbeEnv`).
+- **Compose service secrets are generated per project, not hardcoded** — the
+  Authentik catalog entry shipped `AUTHENTIK_SECRET_KEY: dev-secret-key-change-me`
+  (gosec G101). Catalog environment values marked with
+  `container.GeneratedSecretMarker` are now resolved once at Compose
+  materialization to a fresh 256-bit random hex secret; the value written to
+  the project's `docker-compose.yaml` is reused on every later run (including
+  operator customizations), so regeneration stays idempotent and previews
+  show a fixed `<generated-on-first-launch>` placeholder instead of a secret.
 
 ### Added — docker container backend with stack selection
 

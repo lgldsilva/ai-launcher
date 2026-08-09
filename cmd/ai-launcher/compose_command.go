@@ -214,7 +214,7 @@ func composePreviewYAML(composePath string, launchConfig launcher.LaunchConfig) 
 	if err != nil {
 		return "", fmt.Errorf("build compose: %w", err)
 	}
-	rendered, err := container.RenderCompose(compose)
+	rendered, err := container.RenderCompose(container.MaskComposeSecrets(compose))
 	if err != nil {
 		return "", fmt.Errorf("render compose: %w", err)
 	}

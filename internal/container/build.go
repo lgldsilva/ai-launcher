@@ -136,15 +136,20 @@ func MaterializeLauncherBinary(projectDir, source string) (string, error) {
 // a separate operation so callers without infrastructure services keep the
 // existing Dockerfile-only behavior.
 func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
-	content, err := RenderCompose(file)
-	if err != nil {
-		return "", err
-	}
+	var err error
 	if strings.TrimSpace(projectDir) == "" {
 		projectDir, err = os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("resolve project directory: %w", err)
 		}
+	}
+	file, err = ResolveComposeSecrets(projectDir, file)
+	if err != nil {
+		return "", err
+	}
+	content, err := RenderCompose(file)
+	if err != nil {
+		return "", err
 	}
 	if err := ensureComposeDataDirectories(projectDir, file); err != nil {
 		return "", err
