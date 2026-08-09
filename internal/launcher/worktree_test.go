@@ -2,9 +2,11 @@ package launcher
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -59,5 +61,38 @@ func TestDiscoverGitWorktreeMountsReportsNonGitRoot(t *testing.T) {
 	_, err := DiscoverGitWorktreeMounts(t.TempDir())
 	if err == nil {
 		t.Fatal("DiscoverGitWorktreeMounts() error = nil; want non-Git error")
+	}
+}
+
+func TestDiscoverGitWorktreeMountsIgnoresAmbientGitEnvironment(t *testing.T) {
+	// Git hooks (e.g. the ai-standards pre-push running this suite) export
+	// GIT_DIR for their own repository. Without scrubbing, `git -C <root>`
+	// resolves the ambient GIT_DIR instead of root and a non-Git root looks
+	// valid. Point GIT_DIR at this repository to reproduce the hook
+	// environment.
+	gitDir, err := exec.Command("git", "rev-parse", "--absolute-git-dir").Output() // #nosec G204 -- fixed read-only git query
+	if err != nil {
+		t.Fatalf("resolve repository git dir: %v", err)
+	}
+	t.Setenv("GIT_DIR", strings.TrimSpace(string(gitDir)))
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+
+	if _, err := DiscoverGitWorktreeMounts(t.TempDir()); err == nil {
+		t.Fatal("DiscoverGitWorktreeMounts() error = nil with ambient GIT_DIR; want non-Git error")
+	}
+}
+
+func TestGitProbeEnv(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"GIT_DIR=/other/repo/.git",
+		"GIT_WORK_TREE=/other/repo",
+		"GIT_QUARANTINE_PATH=/quarantine",
+		"HOME=/home/tester",
+	}
+	got := GitProbeEnv(env)
+	want := []string{"PATH=/usr/bin", "HOME=/home/tester"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("GitProbeEnv() = %#v; want %#v", got, want)
 	}
 }

@@ -112,5 +112,40 @@ func DiscoverGitWorktreeMounts(root string) ([]config.Mount, error) {
 // passed as data to Git's -C option rather than interpolated into a shell.
 var gitWorktreeList = func(root string) ([]byte, error) {
 	cmd := exec.Command("git", "-C", root, "worktree", "list", "--porcelain") // #nosec G204 -- fixed executable and arguments
+	cmd.Env = GitProbeEnv(os.Environ())
 	return cmd.Output()
+}
+
+// gitEnvOverride names the variables that point Git at a repository other
+// than the one -C selects. Hooks and scripts export them for their own
+// repository (git sets GIT_DIR for every hook), and Git resolves them before
+// -C — which would make discovery list the ambient repository and report a
+// non-Git root as valid.
+var gitEnvOverride = map[string]bool{
+	"GIT_DIR":                          true,
+	"GIT_WORK_TREE":                    true,
+	"GIT_COMMON_DIR":                   true,
+	"GIT_NAMESPACE":                    true,
+	"GIT_PREFIX":                       true,
+	"GIT_INDEX_FILE":                   true,
+	"GIT_OBJECT_DIRECTORY":             true,
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_QUARANTINE_PATH":              true,
+	"GIT_GRAFT_FILE":                   true,
+}
+
+// GitProbeEnv returns env without the repository-pointing Git variables. It is
+// exported so test helpers spawning `git -C <fixture>` share the same
+// protection: under a Git hook the ambient variables would redirect every
+// fixture command to the real repository.
+func GitProbeEnv(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if gitEnvOverride[key] {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }

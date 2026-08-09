@@ -67,13 +67,16 @@ func runGitTestCommand(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...) // #nosec G204 -- test uses a fixed executable and controlled arguments.
 	env := make([]string, 0, len(os.Environ())+1)
-	for _, entry := range os.Environ() {
+	for _, entry := range launcher.GitProbeEnv(os.Environ()) {
 		if !strings.HasPrefix(entry, "GIT_CONFIG_GLOBAL=") {
 			env = append(env, entry)
 		}
 	}
 	// The fixture must not depend on the maintainer's global signing key or
-	// hook template; those are outside the worktree behavior under test.
+	// hook template; those are outside the worktree behavior under test. The
+	// repository-pointing Git variables are scrubbed by GitProbeEnv: under a
+	// Git hook (e.g. the ai-standards pre-push) they would otherwise redirect
+	// every fixture command to the real repository.
 	cmd.Env = append(env, "GIT_CONFIG_GLOBAL=/dev/null")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)

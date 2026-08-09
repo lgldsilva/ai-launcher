@@ -139,6 +139,13 @@ could not see; all fixed and re-validated with real docker builds:
   directory explicitly with mode 0755 before the COPY.
 - **Go helpers are on PATH** — `gopls` and `goimports` install into
   `~/go/bin`, which now joins `PATH` in the Go stack layer.
+- **Git subprocesses no longer trust the ambient Git environment** —
+  `git -C <path>` resolves `GIT_DIR`/`GIT_WORK_TREE` before `-C`, so any
+  Git invocation made under a Git hook (e.g. the ai-standards pre-push)
+  targeted the hook's repository: worktree discovery accepted non-Git
+  roots, and a test helper's fixture commands committed into the real
+  checkout. Both the discovery command and the test helper now scrub the
+  repository-pointing Git variables (`GitProbeEnv`).
 
 ### Added — docker container backend with stack selection
 
