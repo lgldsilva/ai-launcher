@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 	"github.com/muesli/termenv"
 )
@@ -447,6 +448,139 @@ func TestModelSaveAndHelpShortcuts(t *testing.T) {
 	}
 }
 
+func TestComposeReviewIsShownInsideTUIBeforeRun(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "custom-cli"},
+		UseDocker:   true,
+		Workspace:   "/workspace",
+		Services:    []string{"redis"},
+		Permissions: map[string]bool{},
+		Docker: container.RunConfig{Selection: container.Selection{Agents: []container.AgentInstall{{
+			Command: "custom-cli",
+			Kind:    container.InstallScript,
+			Script:  "echo install",
+		}}}},
+	})
+	chosen := ComposeUpdateChoice(0)
+	model.hooks.ReviewCompose = func(launcher.LaunchConfig) (*ComposeUpdateReview, error) {
+		return &ComposeUpdateReview{
+			Diff: "--- current\n+++ generated\n-    - 16379:6379\n+    - 6379:6379\n",
+			Choose: func(choice ComposeUpdateChoice) error {
+				chosen = choice
+				return nil
+			},
+		}, nil
+	}
+	if model.confirmRun(false) {
+		t.Fatal("confirmRun should stop for Compose review")
+	}
+	if model.composeReview == nil || !strings.Contains(model.View(), "16379:6379") {
+		t.Fatalf("Compose review was not rendered: %q", model.View())
+	}
+	model = applyKey(t, model, runeKey("m"))
+	if chosen != KeepCompose || model.composeReview != nil || len(model.result) == 0 {
+		t.Fatalf("keep review result: choice=%d review=%v result=%v", chosen, model.composeReview != nil, model.result)
+	}
+}
+
+// The compose review screen is part of an English UI: the scroll indicators
+// and the key legend must not leak Portuguese.
+func TestComposeReviewViewUsesEnglish(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.height = 10
+	model.composeReview = &ComposeUpdateReview{Diff: strings.Repeat(" unchanged\n", 19) + " unchanged"}
+	model.composeReviewOffset = 4
+	view := model.composeReviewView()
+	for _, want := range []string{"↑ 4 line(s) above", "line(s) below", "[m] keep current", "[s] replace with generated", "[Esc] cancel"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("compose review missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"linha(s)", "manter", "substituir", "rolar", "cancelar"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("compose review still renders Portuguese %q:\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestDockerSectionHintsAndHelpDescribeAllBackendControls(t *testing.T) {
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	model.section = model.containerIndex()
+	if hint := model.sectionHint(); !strings.Contains(hint, "resources/ports") || !strings.Contains(hint, "toggle stacks") {
+		t.Fatalf("container hint = %q", hint)
+	}
+	model.section = model.servicesIndex()
+	if hint := model.sectionHint(); !strings.Contains(hint, "add/remove") || !strings.Contains(hint, "Enter edit ports") {
+		t.Fatalf("services hint = %q", hint)
+	}
+	model.section = 3
+	if hint := model.sectionHint(); !strings.Contains(hint, "Container docker included") {
+		t.Fatalf("options hint = %q", hint)
+	}
+	model.helpOpen = true
+	help := model.View()
+	for _, want := range []string{"Container", "Services", "resources", "ports", "Compose YAML"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("help missing %q:\n%s", want, help)
+		}
+	}
+}
+
+func TestShortDockerLayoutShowsOnlyTheActiveSection(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	model.height = 12
+	view := model.View()
+	if !strings.Contains(view, "Agent") || !strings.Contains(view, "compact view") {
+		t.Fatalf("short Docker view = %q; want active section and compact hint", view)
+	}
+	if strings.Contains(view, "\nServices\n") {
+		t.Fatalf("short Docker view rendered inactive sections and will clip the TUI: %q", view)
+	}
+}
+
+func TestShortDockerLayoutFollowsContainerSection(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	model.height = 12
+	model.section = model.containerIndex()
+	model.cursor = len(model.stackIDs) + len(model.containerResourceRows())
+	view := model.View()
+	if !strings.Contains(view, "Container") || !strings.Contains(view, "Runtime:") {
+		t.Fatalf("short Container view = %q; want the active container controls", view)
+	}
+	if strings.Contains(view, "\nAgent\n") {
+		t.Fatalf("short Container view rendered the inactive Agent section: %q", view)
+	}
+}
+
+func TestShortLayoutShowsRunFailureStatus(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	model.height = 12
+	model.section = model.containerIndex()
+	model.status = "Cannot run — fix these first:\n  · docker runtime is unavailable"
+
+	view := model.View()
+	for _, want := range []string{"Cannot run", "docker runtime is unavailable", "[5 Container]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("short failure view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestNewModelInitializesNilPermissions(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{})
 	if model.launch.Permissions == nil {
@@ -688,15 +822,15 @@ func TestModelLoadsProfileFromTheProfilesSection(t *testing.T) {
 
 func TestModelEditsDeclaredParamValues(t *testing.T) {
 	launch := launcher.LaunchConfig{
-		Agent: config.Agent{Command: "kimi", Params: []config.Param{{Name: "query", Flag: "--query", TakesValue: true}}},
+		Agent: config.Agent{Command: "kimi", Params: []config.Param{{Name: "query", Flag: "--prompt", TakesValue: true}}},
 	}
 	model := NewModel(config.DefaultGlobal(), launch)
 	model.section = 3
 	model.cursor = 0 // NewModel parks cursor on the selected agent; reset for options.
-	for range len(model.optionRows()) {
+	for range len(model.optionRows()) + len(model.advancedOptionRows()) {
 		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	}
-	if model.cursor != len(model.optionRows()) {
+	if model.cursor != len(model.optionRows())+len(model.advancedOptionRows()) {
 		t.Fatalf("cursor = %d; want first param row", model.cursor)
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -708,7 +842,7 @@ func TestModelEditsDeclaredParamValues(t *testing.T) {
 	if model.launch.ParamValues["query"] != "oi" {
 		t.Fatalf("param values = %#v", model.launch.ParamValues)
 	}
-	if !strings.Contains(model.View(), "query: oi (--query)") {
+	if !strings.Contains(model.View(), "query: oi (--prompt)") {
 		t.Fatalf("options view does not show the param value: %s", model.View())
 	}
 
@@ -719,6 +853,74 @@ func TestModelEditsDeclaredParamValues(t *testing.T) {
 	if _, ok := model.launch.ParamValues["query"]; ok {
 		t.Fatalf("empty param input should clear the value: %#v", model.launch.ParamValues)
 	}
+}
+
+func TestModelEditsAdvancedLaunchInputs(t *testing.T) {
+	launch := launcher.LaunchConfig{
+		Agent: config.Agent{
+			Command:        "codex",
+			SupportsMemory: true,
+			SupportsYolo:   true,
+		},
+		UseMemory:   true,
+		Permissions: map[string]bool{},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	model.section = 3
+
+	edit := func(t *testing.T, index int, value string) {
+		t.Helper()
+		model.cursor = len(model.optionRows()) + index
+		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+		if !model.textInputActive {
+			t.Fatalf("advanced row %d did not open editor", index)
+		}
+		model = applyKey(t, model, runeKey(value))
+		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+		if model.textInputActive {
+			t.Fatalf("advanced row %d editor stayed open: %q", index, model.status)
+		}
+	}
+
+	edit(t, 0, "feature-x")
+	edit(t, 1, "resume-42")
+	edit(t, 2, "/workspaces/acme")
+	edit(t, 3, "billing")
+	edit(t, 4, `--model "sonnet 4" --verbose`)
+
+	if model.launch.NewWorkstream != "feature-x" || model.launch.Workstream != "resume-42" ||
+		model.launch.Workspace != "/workspaces/acme" || model.launch.Project != "billing" {
+		t.Fatalf("advanced launch inputs = %#v", model.launch)
+	}
+	wantArgs := []string{"--model", "sonnet 4", "--verbose"}
+	if !reflect.DeepEqual(model.launch.ExtraArgs, wantArgs) {
+		t.Fatalf("extra args = %#v; want %#v", model.launch.ExtraArgs, wantArgs)
+	}
+	view := model.View()
+	for _, want := range []string{
+		"New workstream name: feature-x",
+		"Resume workstream: resume-42",
+		"Memory workspace: /workspaces/acme",
+		"Memory project: billing",
+		`Extra agent args: --model 'sonnet 4' --verbose`,
+		"quotes supported",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("options view missing %q:\n%s", want, view)
+		}
+	}
+
+	model.cursor = len(model.optionRows()) + 4
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model.textInputValue = `--model "unterminated`
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.textInputActive || !strings.Contains(model.status, "Invalid extra args") {
+		t.Fatalf("invalid extra args did not stay editable: active=%t status=%q", model.textInputActive, model.status)
+	}
+	if !strings.Contains(model.View(), "Invalid extra args") {
+		t.Fatalf("invalid extra args was not visible in the editor view:\n%s", model.View())
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEscape})
 }
 
 func TestModelSavesProfileWithCtrlP(t *testing.T) {

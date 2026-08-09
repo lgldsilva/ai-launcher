@@ -47,6 +47,32 @@ func TestDryRunSucceedsWithWarningsOnly(t *testing.T) {
 	}
 }
 
+func TestDryRunUsesExplicitPodmanRuntime(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	stubToolsOnPath(t, "podman")
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
+	stdout, stderr, err := runCapture(t,
+		"--config", globalPath,
+		"--local-config", localPath,
+		"--agent", "custom-cli",
+		"--no-jail",
+		"--no-memory",
+		"--container-runtime", "podman",
+		"--stack", "go",
+		"--workspace", "/work",
+		"--dry-run",
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stdout, "podman run") {
+		t.Fatalf("stdout = %q; want podman run argv", stdout)
+	}
+	if !strings.Contains(stdout, "host.containers.internal:host-gateway") {
+		t.Fatalf("stdout = %q; want Podman host gateway", stdout)
+	}
+}
+
 // ESC/CSI bytes in repository-controlled argv fragments must not reach the
 // terminal raw — dry-run is the advertised diagnostic surface.
 func TestDryRunSanitizesTerminalControlsInArgv(t *testing.T) {
@@ -66,5 +92,28 @@ func TestDryRunSanitizesTerminalControlsInArgv(t *testing.T) {
 	}
 	if stdout != "" && !strings.Contains(stdout, `\x1b`) && strings.Contains(stdout, "RED") {
 		t.Fatalf("stdout = %q; want visible-escaped CSI when RED is shown", stdout)
+	}
+}
+
+func TestDryRunRedactsSensitiveEnvironmentValues(t *testing.T) {
+	got := shellJoin([]string{
+		"docker",
+		"run",
+		"-e",
+		"AI_MEMORY_AUTH_TOKEN=memory-secret",
+		"OPENAI_API_KEY=api-secret",
+		"HOME=/tmp/launcher",
+		"--token=cli-secret",
+	})
+	for _, secret := range []string{"memory-secret", "api-secret", "cli-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("shellJoin() leaked %q in %q", secret, got)
+		}
+	}
+	if strings.Count(got, "<redacted>") != 3 {
+		t.Fatalf("shellJoin() = %q; want three redacted values", got)
+	}
+	if !strings.Contains(got, "HOME=/tmp/launcher") {
+		t.Fatalf("shellJoin() = %q; non-sensitive environment must remain visible", got)
 	}
 }

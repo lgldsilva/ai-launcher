@@ -137,6 +137,250 @@ ai-launcher --agent claude --no-jail --dry-run
 ai-launcher --agent claude --ssh --gh --dry-run
 # ai-jail --exec --no-docker --ssh --rw-map …/.config/gh --map ~/.local/bin ai-memory run claude --executable ~/.local/bin/claude
 ```
+
+### Docker container backend
+
+Instead of ai-jail, the agent can run inside a Docker container built from the
+selected toolchain stacks. Enable it with `--docker-backend` plus one or more
+`--stack` flags. The backend auto-detects Docker, Podman, or nerdctl, while
+`--container-runtime` selects one explicitly. Selecting infrastructure
+services switches the lifecycle from one `docker run` container to a
+materialized `docker-compose.yaml`, giving the agent service DNS, persistent
+per-service data, and health-checked dependencies.
+
+```bash
+ai-launcher --agent claude --docker-backend --stack go --stack python --dry-run
+# docker run --rm -i -w /path/to/project \
+#   -v /path/to/project:/path/to/project \
+#   -v ~/.claude:~/.claude:ro -v ~/.claude.json:~/.claude.json:ro \
+#   --add-host=host.docker.internal:host-gateway \
+#   ai-launcher-box:<sha12> claude
+```
+
+Quick start with PostgreSQL and Redis:
+
+```bash
+ai-launcher --docker-backend --agent claude --stack go \
+  --service postgres --service redis generate
+ai-launcher --docker-backend compose up
+```
+
+The generated project-local `.ai-launcher/` directory is the inspectable
+source of truth. It contains `Dockerfile`, `install-config.yaml`, the
+cross-compiled Linux launcher when a release agent needs it, and
+`docker-compose.yaml` when services are selected. `generate` and `compose up`
+rebuild these derived files from the current selection. If the existing
+`docker-compose.yaml` differs from the new rendering, ai-launcher shows a
+line-by-line diff in the TUI and asks whether to keep the current file or
+replace it. Keeping it preserves manual ports, environment entries, or extra
+services; replacing applies the current launcher YAML. The decision is hashed
+in `.compose-approval.json`, so the same accepted customization is not
+questioned again until either the file or the generated selection changes.
+
+For CLI and automation, use `--compose-update=keep` or
+`--compose-update=replace`. The default is `prompt`; a non-interactive command
+with a conflict stops and prints the diff instead of overwriting it.
+`compose down`, `logs`, and `ps` consume the existing materialized file and ask
+you to run `generate` when it is missing. Put durable selection changes in the
+launcher YAML; use the Compose review when you intentionally need a custom
+port or an additional container.
+The generated `Dockerfile` and `install-config.yaml` remain derived files and
+are refreshed without this Compose customization step.
+
+To use another Docker daemon/context, pass `--container-context` or save
+`options.container_context` in the workspace config. The value is applied to
+Docker info, image inspection/build, `docker run`, and Compose commands;
+empty means the Docker CLI's current context. In the TUI, edit the Docker
+context resource and use Up/Down to select a context returned by Docker; the
+empty `(current)` entry leaves the host's current context unchanged. Manual
+entry remains available if the daemon cannot list contexts. The CLI equivalent
+is `docker context ls`.
+
+The TUI also exposes Container → Runtime. It lists `auto`, Docker, Podman, and
+nerdctl with local PATH availability; selecting Podman or nerdctl clears an
+incompatible Docker context before launch.
+
+Loopback ai-memory and MCP endpoints are rewritten to the host gateway without
+mounting the host filesystem. Set `options.container_host_gateway: false` when
+the container must not reach host TCP services. For a narrower MCP boundary,
+put an allowlisted HTTP/SSE MCP proxy on one dedicated host port and point the
+agent at that port; do not use `--network host` or mount the Docker socket.
+
+When `ai-launcher` is started from a terminal with Compose services selected,
+it runs the agent through `docker compose run --rm --service-ports agent` so
+the terminal belongs to the agent instead of showing dependency logs. The
+dependencies are stopped automatically when that interactive session exits;
+service data is preserved in `.ai-launcher/data/<service>` and is not removed
+by the launcher's automatic `compose down`. Generated service data is a host
+bind mount, so even `compose down --volumes` does not erase it.
+
+The image is built from the selection (stacks + agent + auxiliary tools) and tagged by a
+content hash, so an identical selection reuses the cached image — the build
+runs only once. The images are large by design (multi-GB: the toolchain
+stacks, the agent installers, and the shared development profile), and the
+content-hash tag is what keeps that cost a one-time event per selection rather
+than a per-launch one. On the first launch the launcher cross-compiles a Linux copy
+of itself, materializes the build context, and runs `docker build` (the
+installer runs inside the build with its checksum verification intact;
+script agents install via their official `curl | bash` recipe). The base
+image carries Node LTS via nvm only when the Node stack or an agent that
+declares a Node prerequisite is selected, and the Java stack installs JDK 21
+via SDKMAN. A Go/Python/Rust-only image does not create `/opt/nvm` or
+`/usr/local/lib/nvm-bin`. Each stack shares its host toolchain/cache directories (nvm, sdkman,
+cargo, go-build, m2...) read-write with the container, so downloads are
+reused on both sides. Portable package and build caches are resolved from the
+host platform and mounted at Linux container paths; native toolchain managers
+such as nvm and SDKMAN are shared automatically only on a compatible Linux
+host. The development profile also includes Git, SSH tooling, `jq`, `yq`,
+`ripgrep`, `fd`, archive tools, and the Docker CLI. When the trusted catalog
+contains `semidx`, the image installs its checksum-verified CLI on `PATH`, so
+agent MCP configurations can use the stdio command `semidx mcp`; the launcher
+mounts only `~/.config/semidx` and `~/.cache/semidx`, never the host's complete
+home or config tree. The project and each selected agent's credential/history
+directories are mounted read-write at identical paths — log in on the host
+or inside the container once and the session persists for both. Host-only
+credentials such as SSH and GitHub remain read-only. Services listening on
+the host (the ai-memory server, MCP servers) stay reachable via
+`host.docker.internal`; config files that store MCP URLs are copied,
+rewritten, and mounted over the originals so the host files are never
+modified. Set `AI_LAUNCHER_NO_REWRITE=1` to disable the localhost rewrite.
+The generated image runs the agent as the non-root `ai-launcher` user. It also
+contains the Docker CLI; selecting the Docker permission mounts the host
+control socket and adds its group to the container process, allowing commands
+such as `docker build` and `docker run` to use the host daemon. This is
+Docker-outside-of-Docker, not a daemon started inside the image, and socket
+access remains effectively host-root access.
+
+Resource limits and published ports are opt-in:
+
+```bash
+ai-launcher --docker-backend --agent claude --stack go \
+  --container-memory 4g --cpus 2.0 --pids 512 \
+  --publish 3000:3000 --network bridge --dry-run
+```
+
+For an agent plus PostgreSQL and Redis, the generated Compose network resolves
+`postgres:5432` and `redis:6379` from the agent. Their default host ports are
+published for host tools; choose different ports in `container_service_ports`
+when a local service already occupies 5432 or 6379. The override replaces the
+published mappings for that service while preserving its internal Compose
+port:
+
+```yaml
+options:
+  container_service_ports:
+    postgres:
+      - host: 15432
+        internal: 5432
+    wiremock:
+      - host: 18080
+        internal: 8080
+```
+
+The CLI equivalent is repeatable: `--service-port postgres=15432:5432`.
+In the TUI, select a service and press Enter to edit its published mappings;
+an empty value keeps the service available only on the Compose network.
+
+**Warning:** published service ports bind on all host interfaces
+(`0.0.0.0`), and the catalog services ship development-default credentials
+(`dev`/`dev`, `admin`/`admin`, and similar). Anyone on the LAN can reach a
+published service while the Compose session is up — keep it on a trusted
+network, publish only what host tools need, or firewall the ports.
+
+Each catalog service keeps its own declared container data target and maps it
+to `.ai-launcher/data/<service>` when Compose is generated. PostgreSQL uses
+`.ai-launcher/data/postgres`, Redis uses `.ai-launcher/data/redis`, and
+WireMock uses `.ai-launcher/data/wiremock` for `/home/wiremock`. Services
+without a persistent data path are not given a fake volume. The TUI shows the
+catalog target and the project data directory.
+
+Persistence is service-specific, including the runtime flags that make the
+mounted directory effective: DynamoDB Local uses `-sharedDb -dbPath ./data`,
+NATS uses JetStream with `-js -sd /data`, Jaeger all-in-one uses its Badger
+backend under `/badger`, and Mailpit stores its SQLite database at
+`/data/mailpit.db`. NGINX, Traefik, and the OpenTelemetry Collector remain
+stateless in their default catalog configuration; their configuration,
+certificates, or file-storage extensions must be enabled explicitly before a
+project data directory is appropriate.
+
+For browser-based editing, select the `code-server` service. It publishes
+port 8080, mounts the project at `/home/coder/project`, and persists its
+configuration and extensions under `.ai-launcher/data/code-server`. The image
+keeps password authentication enabled by default; use SSH forwarding or a
+TLS/authenticated reverse proxy before exposing it outside a trusted network.
+For terminal editing, select the `Neovim` stack. It installs `nvim` and
+shares the platform-specific Neovim configuration, data, state, and cache
+directories when they exist. SSH or the optional container tmux session is the
+transport for that terminal workflow. An optional `zsh` stack installs zsh
+alongside the default bash for terminals that prefer it.
+
+In the TUI, toggle `Container (docker)` in Options to switch the backend
+from the jail (they are mutually exclusive), then pick stacks in the new
+Container section.
+
+For a multi-window interactive session, enable `Container tmux` in the TUI or
+set `options.container_tmux.enabled: true`. The image includes tmux and starts
+the agent in the `ai-launcher` session, so normal `Ctrl-b c` and pane keys
+remain available. Existing host customizations are mounted read-only: by
+default `~/.tmux.conf`, `~/.tmux.conf.local`, and `~/.tmux` when they exist.
+Use explicit paths when the host uses another layout:
+
+```yaml
+options:
+  docker: true
+  container_tmux:
+    enabled: true
+    config: ~/.config/tmux/tmux.conf
+    local_config: ~/.config/tmux/tmux.conf.local
+    oh_my_tmux_dir: ~/.config/oh-my-tmux
+    additional_paths:
+      - ~/.tmux/plugins
+```
+
+Only those files/directories are shared, always as `ro`; the tmux socket, the
+host `$HOME` root, and host credentials outside the normal agent mounts are
+not transported into the container. Use `additional_paths` for plugins, scripts
+or sourced fragments referenced by the custom configuration. The setting applies
+to interactive Docker and Compose paths, not to non-interactive or dry-run
+processes.
+
+Dependency directories are configurable in the trusted global config or in a
+saved workspace/profile selection. The default `safe` policy shares only
+existing portable caches for the selected stacks; a source that does not exist
+is reported and skipped. Toolchain directories are platform-aware, and a
+macOS/Windows host does not bind-mount a native Linux toolchain into the Linux
+image unless `allow_incompatible: true` is explicitly set.
+
+```yaml
+# ~/.config/ai-launch/config.yaml
+container_dependencies:
+  policy: safe
+  overrides:
+    node.nvm:
+      enabled: true
+      sources:
+        linux: ~/.nvm
+        darwin: ~/.nvm
+      target: /opt/nvm
+      mode: rw
+    java.sdkman:
+      enabled: true
+      source: ~/.sdkman
+      target: /opt/sdkman
+    java.maven-repository:
+      mode: rw
+    gradle.cache:
+      mode: rw
+    rust.cargo-registry:
+      mode: ro
+```
+
+The built-in IDs cover Go module/build caches, Cargo registry/git, pip, nvm,
+npm, SDKMAN, Maven, Gradle, ccache, NuGet, Bundler, Composer, Elixir Mix/Hex,
+and Dart/Flutter Pub. Use `policy: none` to disable automatic selection, or
+set `enabled: true` for an individual ID. `source` overrides the current host
+path; `sources` selects a path by `linux`, `darwin`, or `windows`; `target`
+must be an absolute Linux path; and `mode` is `ro` or `rw`.
 ## Installation
 
 ### Curl installer (recommended)
@@ -226,7 +470,9 @@ runs in CLI mode and executes for real (it is not a command generator — use
 | `ai-launcher --list-profiles` / `--delete-profile N` | Lists or removes profiles saved in the global config |
 | `ai-launcher --workstream-search "query" [--workstream-id ID] [--limit N] [--json]` | Searches the ai-memory workstream ledger and exits (read-only; not sandboxed) |
 | `ai-launcher --save-profile N [flags]` | Saves the merged selection as a profile and exits without launching |
-| `ai-launcher --save` (or `--save-only`) | Writes the selection to the local `.ai-launch.yaml` and exits |
+| `ai-launcher --save` (or `--save-only`) | Writes the selection to the local `.ai-launcher/config.yaml` and exits |
+| `ai-launcher [docker flags] generate` | Materializes the `.ai-launcher/` artifacts (Dockerfile, install-config.yaml, `docker-compose.yaml`) from the current selection without launching |
+| `ai-launcher [docker flags] compose up\|down\|logs\|ps [args]` | Runs the runtime's Compose subcommand against the materialized `.ai-launcher/docker-compose.yaml` |
 | `ai-launcher --version` | Prints the binary version (release, commit, build date) and exits |
 | `ai-launcher help` | Shows flag usage |
 
@@ -242,7 +488,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--display` / `--pictures` / `--tailscale` / `--systemd-user` / `--mise` / `--worktree` | Optional jail passthroughs, all off by default; each one **forces** its capability on (platform support varies — `display` and `systemd-user` are Linux-only) |
 | `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and exits |
 | `--no-jail` / `--sandbox` | Explicitly disables / enables ai-jail |
-| `--memory` / `--no-memory` | Enables / disables the ai-memory layer |
+| `--memory` / `--no-memory` | Enables / disables the ai-memory layer. A non-boolean value is the container memory limit instead: `--memory 4g` (or `--memory=512m`) is an alias for `--container-memory` |
 | `--yolo` / `--no-yolo` | Passes (or not) the agent's dangerous-mode flag |
 | `--new <name>` / `--workstream <name>` | Creates / resumes an ai-memory workstream |
 | `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
@@ -256,6 +502,9 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--extra-args "<args>"` / `--args` | Extra arguments forwarded to the harness (`--args` is an alias) |
 | `--profile <name>` | Loads a saved profile as the base selection |
 | `--config <path>` / `--local-config <path>` | Alternative paths for the global / local config |
+| `--no-local-config` | Ignores the workspace config and starts from the built-in defaults |
+| `--no-color` / `--high-contrast` | Disables color output / switches to high-contrast colors |
+| `--compose-update=prompt\|keep\|replace` | Handles a changed generated Compose file: review interactively, preserve it, or replace it |
 | `--dry-run` | Runs pre-flight validation, prints the generated command, and exits without executing. Warnings go to stderr and still exit 0; a fatal issue reports the problem, still prints the argv, and exits non-zero |
 | `--version` | Prints the binary version and exits |
 | `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
@@ -283,7 +532,7 @@ and a permission is on). On Windows they are hidden: there is no ai-jail.
 | **Tailscale socket** / `--tailscale` | `ai-jail --tailscale` | Linux + macOS | Tailscale daemon if agents use the tailnet | Off by default |
 | **systemd user bus** / `--systemd-user` | `ai-jail --systemd-user` | Linux only | systemd user session | Off by default; hidden on macOS and unsupported there (pre-flight warns `unsupported-platform`) |
 | **mise integration** / `--mise` | `ai-jail --mise` | Linux + macOS | mise if agents rely on its shims | Forces mise on; ai-jail auto-detects it when left off |
-| **Git worktree passthrough** / `--worktree` | `ai-jail --worktree` | Linux + macOS | — | Forces worktree metadata on; ai-jail auto-detects it when left off |
+| **Git worktree passthrough** / `--worktree` | `ai-jail --worktree`; Docker/Compose bind-mounts registered worktree roots | Linux + macOS | — | Docker discovers existing non-bare paths from `git worktree list --porcelain`, including worktrees outside the current project; stale registrations are skipped |
 
 Permissions unsupported on the current platform are hidden in the TUI; if a
 hand-edited config enables one anyway, pre-flight reports an
@@ -358,7 +607,7 @@ With the jail enabled, every home dotfile symlink that resolves outside
 recreates those symlinks inside the sandbox without their targets.
 
 Precedence of the final selection: **built-in defaults < local
-`.ai-launch.yaml` < profile (`--profile`) < explicit flags**.
+`.ai-launcher/config.yaml` < profile (`--profile`) < explicit flags**.
 
 ### Examples
 
@@ -382,7 +631,7 @@ ai-launcher --workstream-search "why did we drop redis"
 # From a bare shell, name the workstream yourself
 ai-launcher --workstream-search "migration that failed" --workstream-id "$WS" --limit 50 --json
 
-# Parameter declared in the catalog (Kimi declares "query" and "model")
+# Parameter declared in the catalog (Kimi's stable key is "query", mapped to --prompt)
 ai-launcher --agent kimi --param query="refactor the auth module" --param model=k2
 
 # Save the merged selection as a reusable profile
@@ -424,7 +673,7 @@ rows declared by the agent's catalog entry follow them):
 | `a` / `+` / `/` | Mounts: open add-folder panel |
 | `Backspace` | Remove the selected mount (or edit path while adding) |
 | `d` / `Ctrl+D` | Dry-run (preview argv, stay open) |
-| `Ctrl+S` | Save the selection to `.ai-launch.yaml` (running with `r` also autosaves, so the next open restores it) |
+| `Ctrl+S` | Save the selection to `.ai-launcher/config.yaml` (running with `r` also autosaves, so the next open restores it) |
 | `Ctrl+P` | Save the selection as a named profile in the global config |
 | `?` | Help (full key list) |
 | `q` / `Esc` / `Ctrl+C` | Quit without running |
@@ -459,17 +708,18 @@ permissions that depend on it. To run sandboxed from Windows, use WSL2.
 
 | File | Scope | Contents |
 | --- | --- | --- |
-| `~/.config/ai-launch/config.yaml` | Global (machine) | Catalog of `agents`, `tools`, `permissions`, `default_mounts`, `recent_agents`, `profiles`, `memory_server_url`, `memory_auth_token` |
-| `<project>/.ai-launch.yaml` | Workspace | Selection: `agent`, `permissions`, `mounts`, `options` (includes `jail_flags`, `param_values`, `extra_args`) |
+| `~/.config/ai-launch/config.yaml` | Global (machine) | Catalog of `agents`, `tools`, `permissions`, `default_mounts`, `container_dependencies`, `recent_agents`, `profiles`, `memory_server_url`, `memory_auth_token` |
+| `<project>/.ai-launcher/config.yaml` | Workspace | Selection: `agent`, `permissions`, `mounts`, `options` (includes `jail_flags`, `param_values`, `extra_args`, `container_dependencies`, `container_tmux`); legacy `.ai-launch.yaml` is migrated on save |
 | `~/.config/ai-launch/install-state.json` | Global | Already-installed release tags |
 | `~/.config/ai-launch/install.log` | Global | Install log (0600, no tokens) |
 | `~/.local/share/ai-launcher/bin/ai-memory` | Global | Managed ai-memory native runner (exported as `AI_MEMORY_NATIVE_BIN`) |
 
 ### The workspace config is not trusted
 
-`.ai-launch.yaml` travels with the repository, so for any checkout you did not
-write yourself it is somebody else's input. It cannot lower your security
-posture on its own — the launcher refuses, naming the explicit opt-in:
+`.ai-launcher/config.yaml` travels with the repository, so for any checkout you
+did not write yourself it is somebody else's input. In one-shot CLI and
+`--dry-run` mode it cannot lower your security posture on its own — the launcher
+refuses, naming the explicit opt-in:
 
 | The file tries to | Result |
 | --- | --- |
@@ -478,13 +728,17 @@ posture on its own — the launcher refuses, naming the explicit opt-in:
 | Declare a relative mount, or mount `/` | Refused |
 | Mount a sensitive tree (`/etc`, `/usr`, another user's home, a container socket…) | Refused. Pass `--mount <path>` to accept it |
 | Enable a `permission` (ssh, gh, docker, gpu…) | Refused. Pass the matching flag (`--ssh`, `--gh`, `--docker`…) to accept it |
-| Set `options.yolo: true` | Refused. Pass `--yolo` to accept it |
+| Set `options.yolo: true` | CLI: refused; pass `--yolo`. Bare TUI: shown as the `--yolo` option for review before `r` |
 | List `options.extra_args` | Refused. Pass `--args "<args>"` to accept it |
 | Set `options.param_values` (model selection, catalog flags) | Refused. Pass `--param name=value` to accept it |
 | Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: save the selection or select a profile |
 
 What you type on the command line stays fully trusted: the boundary is around
-the file, not around you.
+the file, not around you. The bare `ai-launcher` invocation is the interactive
+consent surface: it opens the TUI so the operator can review and adjust the
+effective permissions, mounts, jail/container mode, and visible options before
+running. An unresolved agent from the workspace file remains blocked because it
+cannot be selected from the catalog.
 
 **The file you saved yourself is yours.** `--save` / `Ctrl+S` records the
 file's canonical path and SHA-256 in the global config, and a file matching

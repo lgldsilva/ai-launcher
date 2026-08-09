@@ -4,10 +4,12 @@ bin/
 dist/
 coverage.out
 coverage.html
+.mutation/
 
 # Local tool session/agent state (machine-specific, never ship)
 .crush/
 .slim/
+.slim/deepwork/
 # BEGIN oh-my-opencode-slim worktrees
 .slim/worktrees/
 .slim/worktrees.json
@@ -22,3 +24,6 @@ internal/**/testdata/rapid/
 
 # Local saved launcher selection (machine-specific, written by the TUI/CLI save flow)
 .ai-launch.yaml
+# This repo's own generated container artifacts (end-user projects get the
+# generated .ai-launcher/.gitignore instead)
+/.ai-launcher/

@@ -14,6 +14,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
@@ -28,30 +29,41 @@ type featureStep struct {
 }
 
 type launchSpec struct {
-	Agent         string            `yaml:"agent"`
-	Executable    string            `yaml:"executable"`
-	Home          string            `yaml:"home"`
-	ClearHome     bool              `yaml:"clear_home"`
-	GOOS          string            `yaml:"goos"`
-	Jail          bool              `yaml:"jail"`
-	JailExec      bool              `yaml:"jail_exec"`
-	JailFlags     config.JailFlags  `yaml:"jail_flags"`
-	Memory        bool              `yaml:"memory"`
-	Continue      bool              `yaml:"continue"`
-	Fresh         bool              `yaml:"fresh"`
-	RunHarness    string            `yaml:"run_harness"`
-	NewWorkstream string            `yaml:"new_workstream"`
-	Workstream    string            `yaml:"workstream"`
-	Workspace     string            `yaml:"workspace"`
-	Project       string            `yaml:"project"`
-	Permissions   map[string]bool   `yaml:"permissions"`
-	Mounts        []config.Mount    `yaml:"mounts"`
-	Yolo          bool              `yaml:"yolo"`
-	YoloFlag      string            `yaml:"yolo_flag"`
-	Params        []config.Param    `yaml:"params"`
-	ParamValues   map[string]string `yaml:"param_values"`
-	Args          []string          `yaml:"args"`
-	Missing       []string          `yaml:"missing_commands"`
+	Agent             string            `yaml:"agent"`
+	Executable        string            `yaml:"executable"`
+	Home              string            `yaml:"home"`
+	ClearHome         bool              `yaml:"clear_home"`
+	GOOS              string            `yaml:"goos"`
+	Jail              bool              `yaml:"jail"`
+	Docker            bool              `yaml:"docker"`
+	Stacks            []string          `yaml:"stacks"`
+	Services          []string          `yaml:"services"`
+	Runtime           string            `yaml:"runtime"`
+	ContainerMemory   string            `yaml:"container_memory"`
+	CPUs              string            `yaml:"cpus"`
+	PIDs              int64             `yaml:"pids"`
+	Ports             []string          `yaml:"ports"`
+	Network           string            `yaml:"network"`
+	JailExec          bool              `yaml:"jail_exec"`
+	JailFlags         config.JailFlags  `yaml:"jail_flags"`
+	Memory            bool              `yaml:"memory"`
+	Continue          bool              `yaml:"continue"`
+	Fresh             bool              `yaml:"fresh"`
+	RunHarness        string            `yaml:"run_harness"`
+	NewWorkstream     string            `yaml:"new_workstream"`
+	Workstream        string            `yaml:"workstream"`
+	Workspace         string            `yaml:"workspace"`
+	Project           string            `yaml:"project"`
+	Permissions       map[string]bool   `yaml:"permissions"`
+	DockerSocketGroup int               `yaml:"docker_socket_group"`
+	Mounts            []config.Mount    `yaml:"mounts"`
+	WorktreeMounts    []string          `yaml:"worktree_mounts"`
+	Yolo              bool              `yaml:"yolo"`
+	YoloFlag          string            `yaml:"yolo_flag"`
+	Params            []config.Param    `yaml:"params"`
+	ParamValues       map[string]string `yaml:"param_values"`
+	Args              []string          `yaml:"args"`
+	Missing           []string          `yaml:"missing_commands"`
 }
 
 func TestGherkinLauncherContract(t *testing.T) {
@@ -143,6 +155,14 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 		// before building, exactly like the CLI dispatch does.
 		launch, _ = launcher.ConstrainToPlatform(launch, spec.GOOS, config.DefaultGlobal().Permissions)
 	}
+	// The docker contract asserts the mount composition, not the host
+	// existence filter (that has its own unit test): stub the probe so the
+	// /home/tester fixture mounts survive.
+	if spec.Docker {
+		origExists := container.ExistsOnHost
+		container.ExistsOnHost = func(string) bool { return true }
+		defer func() { container.ExistsOnHost = origExists }()
+	}
 	argv, err := launcher.Build(launch)
 	if failure, expected := scenario.failureExpectation(); expected {
 		if err == nil || !strings.Contains(err.Error(), failure) {
@@ -153,15 +173,61 @@ func runBuildScenario(t *testing.T, scenario featureScenario) bool {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+	if len(spec.Services) > 0 {
+		expected, ok := scenario.step("Then the Compose YAML contains")
+		if !ok {
+			t.Fatal("Compose scenario must define expected YAML fragments")
+		}
+		compose, err := launcher.BuildCompose(launch)
+		if err != nil {
+			t.Fatalf("BuildCompose() error = %v", err)
+		}
+		rendered, err := container.RenderCompose(compose)
+		if err != nil {
+			t.Fatalf("RenderCompose() error = %v", err)
+		}
+		for _, fragment := range nonEmptyLines(expected.doc) {
+			if !strings.Contains(rendered, fragment) {
+				t.Fatalf("Compose YAML missing %q:\n%s", fragment, rendered)
+			}
+		}
+		return true
+	}
 	expected, ok := scenario.step("Then the command equals")
 	if !ok {
 		t.Fatal("launch scenario must define an expected command")
 	}
 	want := nonEmptyLines(expected.doc)
+	// Docker scenarios pin a placeholder tag (ai-launcher-box:000000000000)
+	// because the real tag is the content hash of the normalized selection.
+	// Resolve it here so the contract asserts the structure without encoding
+	// a hash that would change when the pinned test version changes.
+	if launch.UseDocker {
+		want = resolveDockerImageTag(want, launch.Docker.Selection, launch.Permissions[config.PermissionDocker])
+	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 	return true
+}
+
+// resolveDockerImageTag substitutes the real content-hashed tag for the
+// placeholder in docker contract scenarios. The docker permission switches
+// the image to the CLI-bearing build, and the option is part of the hash.
+func resolveDockerImageTag(lines []string, selection container.Selection, dockerCLI bool) []string {
+	tag, err := container.ImageTagWithOptions(selection, container.DockerfileOptions{DockerCLI: dockerCLI})
+	if err != nil {
+		return lines
+	}
+	resolved := make([]string, len(lines))
+	for i, line := range lines {
+		if strings.HasPrefix(line, "ai-launcher-box:") {
+			resolved[i] = tag
+		} else {
+			resolved[i] = line
+		}
+	}
+	return resolved
 }
 
 // runLocalConfigScenario handles "Given a local configuration" scenarios and
@@ -205,24 +271,82 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		agent.Memory = &config.MemoryIntegration{RunHarness: spec.RunHarness}
 	}
 	return launcher.LaunchConfig{
-		Agent:           agent,
-		Executable:      spec.Executable,
-		HomeDir:         spec.Home,
-		UseJail:         spec.Jail,
-		JailExec:        spec.JailExec,
-		JailFlags:       spec.JailFlags,
-		UseMemory:       spec.Memory,
-		ContinueSession: spec.Continue,
-		Fresh:           spec.Fresh,
-		NewWorkstream:   spec.NewWorkstream,
-		Workstream:      spec.Workstream,
-		Workspace:       spec.Workspace,
-		Project:         spec.Project,
-		Permissions:     spec.Permissions,
-		Mounts:          spec.Mounts,
-		Yolo:            spec.Yolo,
-		ExtraArgs:       spec.Args,
-		ParamValues:     spec.ParamValues,
+		Agent:            agent,
+		Executable:       spec.Executable,
+		HomeDir:          spec.Home,
+		UseJail:          spec.Jail,
+		UseDocker:        spec.Docker,
+		ContainerRuntime: spec.Runtime,
+		Services:         append([]string(nil), spec.Services...),
+		JailExec:         spec.JailExec,
+		JailFlags:        spec.JailFlags,
+		UseMemory:        spec.Memory,
+		ContinueSession:  spec.Continue,
+		Fresh:            spec.Fresh,
+		NewWorkstream:    spec.NewWorkstream,
+		Workstream:       spec.Workstream,
+		Workspace:        spec.Workspace,
+		Project:          spec.Project,
+		Permissions:      spec.Permissions,
+		Mounts:           spec.Mounts,
+		Yolo:             spec.Yolo,
+		ExtraArgs:        spec.Args,
+		ParamValues:      spec.ParamValues,
+		Docker:           dockerRunConfig(spec),
+	}
+}
+
+// dockerRunConfig derives the container run inputs from a docker-enabled spec.
+// The selection is deliberately NOT normalized here: a scenario that declares
+// an unknown stack (validation contract) must flow through to the validator
+// as an invalid selection rather than panicking at parse time. The agent is
+// pinned to a placeholder version so the image tag stays deterministic; the
+// catalog pins real versions at launch time. The workspace doubles as the
+// same-path project mount.
+func dockerRunConfig(spec launchSpec) container.RunConfig {
+	if !spec.Docker {
+		return container.RunConfig{}
+	}
+	ports, _ := container.ParsePortMappings(spec.Ports)
+	run := container.RunConfig{
+		Runtime:  runtimeForSpec(spec.Runtime),
+		HostGOOS: "linux",
+		Selection: container.Selection{
+			Stacks: spec.Stacks,
+			Agents: []container.AgentInstall{{
+				Command: spec.Agent,
+				Kind:    container.InstallRelease,
+				Version: "0.0.0-test",
+			}},
+		},
+		Interactive:          true,
+		AddHostGateway:       true,
+		ProjectDir:           spec.Workspace,
+		MemoryLimit:          spec.ContainerMemory,
+		CPULimit:             spec.CPUs,
+		PIDsLimit:            spec.PIDs,
+		ExposedPorts:         ports,
+		NetworkName:          spec.Network,
+		WorktreeMounts:       append([]string(nil), spec.WorktreeMounts...),
+		DockerSocketGroupID:  spec.DockerSocketGroup,
+		DockerSocketGroupSet: spec.DockerSocketGroup != 0,
+	}
+	if run.ProjectDir == "" {
+		run.ProjectDir = "/work"
+	}
+	return run
+}
+
+func runtimeForSpec(name string) container.Runtime {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "podman":
+		return container.PodmanRuntime{}
+	case "nerdctl":
+		return container.NerdctlRuntime{}
+	case "docker":
+		return container.DockerRuntime{}
+	default:
+		return nil
 	}
 }
 

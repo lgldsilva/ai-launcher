@@ -14,29 +14,36 @@ Triggers: push to `main` and every pull request. All jobs run on
 | Job | What it does | Fails the build when |
 | --- | --- | --- |
 | `test` | `go build`, `go test -race -shuffle=on ./...`, coverage gate | Filtered coverage < 90% (`COVERAGE_MIN`) |
+| `mutation` | Containerized Gremlins mutation testing against `origin/main` | Efficacy < 70% or mutator coverage < 90% |
 | `lint` | `gofmt -l`, `go vet`, `golangci-lint` v2.12 | Any formatting/lint issue pending |
 | `dist` | `make lint-dist`: ShellCheck + `shfmt -i 2 -ci -d` on `install.sh`, `goreleaser check` | Any issue in the install script or the release config |
 | `gosec` | `make sec-static`: gosec SAST over our own code | Any gosec finding, including a `#nosec` annotation that no longer holds |
 | `vuln` | `govulncheck` | Known vulnerability reachable in the code |
 | `trivy` | Filesystem scan, severity `CRITICAL`, `ignore-unfixed` | CRITICAL vulnerability with a fix available |
 | `sbom` | Generates a CycloneDX SBOM and publishes it as an artifact | SBOM generation fails |
-| `sonar` | SonarCloud analysis via pinned `npx sonarqube-scanner@5.0.0`; `SONAR_TOKEN` only on the scanner step | Quality gate red (`qualitygate.wait=true`) |
+| `sonar` | SonarCloud analysis via the pinned SonarSource scan action v8.2.1 | Quality gate red (`qualitygate.wait=true`) |
 
 The `test` job's coverage gate replicates `make test-coverage`: it measures
-only `internal/config`, `internal/catalog`, and `internal/launcher`, excludes
-the PTY executor (`executor.go`) and the per-platform `replace_*.go` files,
-and compares the filtered total against 90%. The CI job runs
+only `internal/config`, `internal/catalog`, `internal/launcher`, and
+`internal/container`, excludes the PTY executor (`executor.go`) and the
+per-platform `replace_*.go` files, and compares the filtered total against 90%.
+The CI job runs
 `make test-coverage` rather than repeating the command, so the two can never
 report different numbers on the same commit. The commit hooks state the same
 boundary as the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — details in
 [test-strategy.md](test-strategy.md).
 
+The `mutation` job uses the same `make test-mutation` target as local
+validation. It checks out full history so Gremlins can calculate the diff from
+`origin/main`, and uploads `.mutation/gremlins.json` for inspection even when
+the gate fails. The mutator itself is pinned by image digest in the Makefile;
+Docker is therefore an explicit prerequisite rather than a host installation.
+
 The `sonar` job is **gated on the `SONAR_TOKEN` secret**: every step skips
 cleanly while the secret does not exist, so forks and early setup stay green.
-`SONAR_TOKEN` is injected only into the scanner step environment — never the
-job env and never the coverage/`go test` step — so same-repository PR code
-cannot read it. The scanner package is pinned
-(`npx -y sonarqube-scanner@5.0.0`). The scanner runs with
+`SONAR_TOKEN` is injected only into the scan action — never the coverage/
+`go test` step — so same-repository PR code cannot read it. The action is
+pinned by commit SHA. The scanner runs with
 `-Dsonar.host.url=https://sonarcloud.io` and `-Dsonar.qualitygate.wait=true`;
 `sonar-project.properties` at the repo root is host-agnostic (sources, test
 inclusions, coverage exclusions aligned with the 90% gate) and never carries

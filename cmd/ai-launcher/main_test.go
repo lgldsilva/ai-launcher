@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/container"
+	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
 // stubToolsOnPath puts executable stubs for the harness and the upstream CLIs
@@ -73,6 +75,9 @@ func writeTestConfigs(t *testing.T, localYAML string) (globalPath, localPath str
     command: custom-cli
     supports_memory: true
     supports_yolo: true
+    # A recipe so docker-mode tests have an install path (script agent).
+    source_url: https://example.com/custom-cli.sh
+    allow_unverified: true
     yolo_flag: --custom-yolo
     # custom-cli is a wrapper: ai-memory run only accepts its fixed harness
     # list, so the catalog declares which of those it maps onto.
@@ -239,6 +244,45 @@ func TestSaveProfilePersistsMergedSelectionWithoutLaunching(t *testing.T) {
 	}
 	if profile.Agent != "custom-cli" || profile.Options == nil || !profile.Options.Yolo || profile.Options.ParamValues["model"] != "v9" {
 		t.Fatalf("saved profile = %#v", profile)
+	}
+}
+
+func TestProfileFromLaunchPersistsContainerRuntime(t *testing.T) {
+	profile := profileFromLaunch(launcher.LaunchConfig{
+		Agent:            config.Agent{Command: "claude"},
+		UseDocker:        true,
+		ContainerRuntime: "podman",
+		Docker: container.RunConfig{
+			Runtime:      container.PodmanRuntime{},
+			MemoryLimit:  "4g",
+			CPULimit:     "2.0",
+			PIDsLimit:    512,
+			ExposedPorts: []container.PortMapping{{Host: 3000, Internal: 3000}},
+			NetworkName:  "bridge",
+		},
+	})
+	if profile.Options == nil || profile.Options.ContainerRuntime != "podman" {
+		t.Fatalf("profile = %#v; want container_runtime podman", profile)
+	}
+	if profile.Options.ContainerMemory != "4g" || profile.Options.ContainerCPUs != "2.0" || profile.Options.ContainerPIDs != 512 || len(profile.Options.ContainerPorts) != 1 || profile.Options.ContainerNetwork != "bridge" {
+		t.Fatalf("profile resources = %#v", profile.Options)
+	}
+}
+
+func TestServiceFlagsAreValidatedAndShownByDryRun(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\n")
+	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--no-memory", "--service", "redis", "--service", "mongo", "--dry-run")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !strings.Contains(out, "services: mongo redis") {
+		t.Fatalf("dry-run = %q; want canonical service selection", out)
+	}
+
+	if _, err := runDryRun(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--no-memory", "--service", "not-a-service", "--dry-run"); err == nil || !strings.Contains(err.Error(), "unknown service") {
+		t.Fatalf("unknown service error = %v; want validation failure", err)
 	}
 }
 

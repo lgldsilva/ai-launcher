@@ -22,13 +22,13 @@ make build           # compiles bin/ai-launcher from the CLI entry point
 make test            # complete and deterministic Go suite
 make fmt             # formats all Go sources
 make lint            # go vet on all packages
-make test-unit       # tests of the logic packages (config, catalog, launcher)
+make test-unit       # tests of the logic packages (config, catalog, launcher, container)
 make test-property   # property-based tests (rapid)
 make test-gherkin    # executable launcher-contract scenarios
 make test-race       # full suite with -race -shuffle=on
 make test-coverage   # atomic coverage profile + 90% gate on the logic
-make test-mutation   # optional mutation check; skips explicitly when absent
-make test-all        # all deterministic checks, then the optional mutation
+make test-mutation   # containerized Gremlins mutation gate
+make test-all        # all deterministic checks, including mutation
 ```
 
 `go test ./...` remains the baseline deterministic command. The project uses
@@ -40,8 +40,8 @@ in triple quotes.
 
 `test-coverage` uses Go's atomic instrumentation, prints per-function
 coverage, and enforces a **minimum gate of 90% aggregated line coverage** on
-the logic packages: `internal/config`, `internal/catalog`, and
-`internal/launcher`. Only override `COVERAGE_MIN` for diagnosis; CI and merge
+the logic packages: `internal/config`, `internal/catalog`, `internal/launcher`,
+and `internal/container`. Only override `COVERAGE_MIN` for diagnosis; CI and merge
 validation use the default gate. The commit hooks express the same boundary as
 the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — a regex rather than a
 package list, so the hook can race-test `./...` while measuring only the logic
@@ -55,19 +55,27 @@ and spawned processes. They remain subject to build, vet, `-race`, and
 smoke/manual checks; the pure command-assembly contract is covered by the
 unit and Gherkin suites.
 
-Mutation tests are deliberately optional. If a developer or a dedicated CI
-image has `go-mutesting` installed, `make test-mutation` runs against
-`internal/config`; otherwise it reports an explicit, successful skip and
-never downloads tools. Use the maintained Avito fork — the original
-zimmski project vendors a 2019 `golang.org/x/tools` and crashes on modern
-Go. Suggested one-time local install:
+Mutation testing is a real gate and runs in the pinned
+`gogremlins/gremlins` container. The runner is deliberately container-only:
+it does not install a mutator on the host, and it mounts the checkout with the
+host UID/GID so the report remains writable. It also creates hermetic command
+stubs for catalog discovery, so host-installed agent CLIs do not change the
+result.
+
+The default command compares the checkout with `origin/main`, enforces 70%
+test efficacy and 90% mutator coverage, and writes the detailed report to
+`.mutation/gremlins.json` (ignored by Git). Override the base or thresholds
+only for diagnosis, for example:
 
 ```bash
-go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+MUTATION_BASE=HEAD~1 make test-mutation
+MUTATION_EFFICACY_MIN=80 make test-mutation
 ```
 
-Pin that tool in a CI image before making the mutation score a merge gate. Do
-not make the normal `go test ./...` depend on it.
+CI fetches the complete history because the diff base is part of the test
+contract. A missing Docker daemon or base ref is a hard failure; mutation
+testing never reports a successful skip. Worktrees are supported by mounting
+the common Git directory read-only and supplying the worktree `.git` file.
 
 ## Known regression expectations
 

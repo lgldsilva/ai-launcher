@@ -13,6 +13,233 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — the workspace config moved to `.ai-launcher/config.yaml`
+
+The workspace-local selection moved from `<project>/.ai-launch.yaml` to
+`<project>/.ai-launcher/config.yaml`, so the generated container artifacts
+(Dockerfile, Compose file, service data) live beside it under one directory. A
+legacy `.ai-launch.yaml` is still read; the first save (`--save`, `Ctrl+S`, or
+the autosave on run) writes the new file and renames the legacy one to
+`.ai-launch.yaml.bak`.
+
+**What you need to do:** nothing — the migration is automatic on the next
+save. One side effect to know: `trusted_local_configs` records are bound to
+the file's path, so the migration invalidates the record the legacy path held.
+The same save re-records trust for the new path, so a workspace you saved
+stays trusted, and an unsaved one never gains trust by being moved.
+
+### Changed — `--memory <value>` is the container memory limit
+
+`--memory` is still the ai-memory toggle, but a non-boolean value is now
+reinterpreted as the container memory limit: `--memory 4g` (or `--memory=512m`)
+is rewritten to `--container-memory` before flag parsing
+(`normalizeMemoryResourceFlag` in `cmd/ai-launcher/command_flow.go`). Boolean
+spellings (`--memory`, `--memory=true`) keep their ai-memory meaning, as does
+`--no-memory`.
+
+**What you need to do:** nothing, unless you were passing a value to
+`--memory` and relying on the parse error.
+
+### Added — complete Docker container mode
+
+- Runtime abstraction with Docker, Podman, and nerdctl auto-detection or
+  explicit selection.
+- Project-local `.ai-launcher/` directory with materialized Dockerfile,
+  install configuration, Linux launcher binary, and Compose output.
+- Infrastructure catalog with approximately 40 version-pinned services.
+- Deterministic `docker-compose.yaml` generation with networks, named volumes,
+  DNS-based service connections, and lifecycle commands.
+- Resource limits for memory, CPU, and PIDs, plus published ports and network
+  selection.
+- TUI services picker, resource editor, dynamic Compose preview, and complete
+  profile persistence.
+- Optional `zsh` stack, installed alongside the default bash shell.
+
+### Discovered — Kilo Code release assets drifted upstream
+
+The flavor battery surfaced that the built-in `kilo` catalog entry points at
+CLI assets (`kilo-linux-x64.tar.gz`, `kilo-darwin-arm64.zip`) that upstream
+stopped shipping on the `releases/latest` tag: Kilo-Org now publishes a
+parallel `jetbrains/` release series whose assets are JetBrains bundles
+without a CLI. The launcher's installer always resolves `releases/latest`, so
+`ai-launcher --install` (and the docker image build) fails for `kilo` with
+`release asset not found` until upstream ships CLI assets on a latest tag
+again, or the installer learns to skip release series without the platform
+asset. No action is required to use the launcher; this only affects
+installing the kilo agent.
+
+### Known limitation — agents without an official installer
+
+Seven catalog agents (mimo, zero, oc, aider, goose, kiro-cli, hermes) have no
+official curl|bash, npm or release recipe, so in the docker backend they fall
+back to a read-only bind-mount of the host binary (works for static linux
+binaries; a macOS host binary does not execute in the linux container). The
+remaining 15 agents install inside the image: 10 from their official vendor
+scripts (claude, codex, opencode, kimi, agy, pi, omp, cursor-agent, grok,
+devin) and 5 from npm (gemini, qwen, crush, openclaw, cline) — validated by
+real docker builds in the flavor matrix. kilo installs from its (currently
+drifting) release recipe.
+
+### Fixed — runtime correctness from the final review (GLM 5.2)
+
+The final code review caught three critical runtime bugs the argv-only tests
+could not see; all fixed and re-validated with real docker builds:
+
+- **HOME is now passed explicitly** (`-e HOME=<home>`) — docker run does not
+  inherit the parent HOME, and with `--user UID:GID` the container defaults
+  to `/` or `/root`, making every same-path credential/cache mount
+  unreachable.
+- **MCP overlays are emitted before the image argument** — appended after the
+  image, docker treated `-v` as the agent's native args and the rewrite never
+  applied.
+- **Declared params and the yolo flag reach the agent** in docker mode (the
+  jail path composed them; docker silently dropped them).
+- Image tag now hashes the install script / npm package / setup flag, so a
+  changed recipe invalidates the cache.
+- The TUI re-plans the image selection when the agent changes; npm global
+  prefix pinned to a fixed dir that joins PATH (ENV cannot expand `$(...)`);
+  the docker workspace defaults to the cwd; agent versions compare
+  component-wise (v2.10 > v2.9).
+
+### Fixed — review follow-ups on the container mode
+
+- **The artifact ledger covers every generated file** — `.compose-approval.json`
+  protected only `docker-compose.yaml`; an operator-edited `Dockerfile`,
+  `install-config.yaml`, or `.gitignore` was silently overwritten on the next
+  generate. All generated artifacts now go through the same keep/replace
+  review.
+- **Ctrl-C cleans up a Compose session** — SIGINT during an interactive
+  `compose run` session now runs `compose down` and removes the MCP overlay
+  mounts before exiting, and the agent's real exit code is propagated instead
+  of being flattened.
+- **Smaller images** — the agent installers run as the non-root `ai-launcher`
+  user, the Go and npm caches are cleaned in the same layer that fills them,
+  and the Docker CLI is installed only when the Docker permission is selected.
+- **TUI pinned versions survive agent switches and profile loads** — a pinned
+  agent version no longer reverts to the catalog default when the image
+  selection is re-planned.
+- **The Compose review screen is in English** — matching the rest of the UI.
+- **Compose rendering no longer varies with the TTY** — the generated
+  `docker-compose.yaml` is byte-identical in interactive and non-interactive
+  runs.
+- **The run side references the image the build side produced** — the Docker
+  CLI build option is part of the image tag hash, and `docker run`/Compose now
+  derive the tag with the same option; a launch granted the Docker permission
+  no longer dies with "Unable to find image" because the minimal image was
+  referenced instead.
+- **The mutation gate enforces its own thresholds** — Gremlins reported
+  efficacy/coverage below the configured minimums without failing the run, so
+  `scripts/mutation.sh` now parses the summary and fails when either minimum
+  is missed.
+- **The in-image install config is readable again** — BuildKit applied
+  `COPY --chmod=0644` to the implicitly created `/etc/ai-launch` parent
+  directory as well, leaving it `0644 root:root`; the least-privilege
+  installer got EACCES and the config fallback silently built with default
+  versions instead of the pinned ones. The Dockerfile now creates the
+  directory explicitly with mode 0755 before the COPY.
+- **Go helpers are on PATH** — `gopls` and `goimports` install into
+  `~/go/bin`, which now joins `PATH` in the Go stack layer.
+- **Git subprocesses no longer trust the ambient Git environment** —
+  `git -C <path>` resolves `GIT_DIR`/`GIT_WORK_TREE` before `-C`, so any
+  Git invocation made under a Git hook (e.g. the ai-standards pre-push)
+  targeted the hook's repository: worktree discovery accepted non-Git
+  roots, and a test helper's fixture commands committed into the real
+  checkout. Both the discovery command and the test helper now scrub the
+  repository-pointing Git variables (`GitProbeEnv`).
+- **Compose service secrets are generated per project, not hardcoded** — the
+  Authentik catalog entry shipped `AUTHENTIK_SECRET_KEY: dev-secret-key-change-me`
+  (gosec G101). Catalog environment values marked with
+  `container.GeneratedSecretMarker` are now resolved once at Compose
+  materialization to a fresh 256-bit random hex secret; the value written to
+  the project's `docker-compose.yaml` is reused on every later run (including
+  operator customizations), so regeneration stays idempotent and previews
+  show a fixed `<generated-on-first-launch>` placeholder instead of a secret.
+- **Executables are spawned by absolute path and the launcher exec bit lives
+  in the Dockerfile** — SonarCloud flagged `exec.Command("go"|"docker"|"git")`
+  (S4036, PATH search) and a `chmod 0755` on the materialized launcher binary
+  (S2612). The three spawns now resolve the CLI with `exec.LookPath` first
+  (clearer not-found errors, no PATH-search invocation), and the Dockerfile
+  grants the exec bit at build time via `COPY --chmod=0755`, so the
+  project-local artifact stays 0600 with a single source of truth for the
+  in-image mode.
+
+### Added — docker container backend with stack selection
+
+The launcher can now run the agent inside a docker container instead of
+ai-jail: `options.docker: true` in the selection (or `--docker-backend` on the
+command line) switches the sandbox from the jail to a container built from the
+selected toolchain stacks. The image is tagged by a content hash of the
+selection (stacks + pinned agent versions), so an identical selection reuses
+the cached image without rebuilding.
+
+```
+# .ai-launch.yaml
+options:
+  docker: true
+  stacks: [go, python]
+```
+
+or, from the CLI:
+
+```
+ai-launcher --docker-backend --stack go --stack python --dry-run
+```
+
+What ships with it:
+
+- **Shared login (read-write config dirs)** — each agent's config
+  directories are mounted read-write at identical paths, and the agent only
+  sees its own: a login made inside a container persists to the host and to
+  every other container sharing the same host paths (validated end to end:
+  container A writes → host sees → container B reads). The per-agent config
+  map covers the mainstream CLIs (claude, codex, opencode, kimi, agy, pi,
+  crush, omp, cursor, grok, devin, gemini, qwen, openclaw, cline, muse, ...)
+  with platform variants (macOS/Linux/Windows host paths).
+- **TUI Container section** — stack checkboxes plus a "Shared config (rw)"
+  panel listing the selected agent's config dirs, so the mount map is
+  visible before launching.
+- **Shared toolchain caches** — each stack shares its host toolchain/cache
+  directories with the container read-write (nvm, sdkman, cargo, rustup,
+  go-build, npm, m2, gradle, pip), so downloads on either side are reused
+  and disk stays lean.
+- **Node LTS and JDK 21 via managers** — the base image carries nvm with the
+  Node LTS line and the Java stack installs the JDK 21 LTS through SDKMAN,
+  so agents that require a recent Node (pi, devin) or a specific JDK install
+  out of the box.
+- **Real image builds** — on launch, the launcher materializes the build
+  context (generated Dockerfile + minimal install config + a cross-compiled
+  linux copy of itself) and runs `docker build`, streaming the daemon
+  output. The installer runs *inside* the image build with its checksum
+  verification intact (nothing is reimplemented in shell); script agents
+  install via their official `curl | bash` recipe. A content-hashed image tag
+  means an identical selection reuses the cached image — the build runs once.
+- **MCP config overlays** — config files that reference `localhost` URLs
+  (`~/.claude.json`, opencode config) are copied, rewritten to
+  `host.docker.internal`, and mounted over the originals inside the
+  container. The host file is never modified.
+- **Permission → mount mapping** — `--ssh`, `--gh` and `--docker` reuse the
+  existing permission model: ssh and gh mount their config directories
+  read-only, docker mounts the control socket (an explicit opt-in; write
+  access there is root on the host).
+- **Host reachability** — URLs pointing at `localhost`/`127.0.0.1` in
+  `AI_MEMORY_SERVER_URL` and MCP configs are rewritten to
+  `host.docker.internal` (with `--add-host` on Linux) so services on the host
+  stay reachable from inside the container.
+- **New CLIs without a rebuild** — agents with a GitHub release recipe are
+  installed inside the image from a pinned version; script-only recipes
+  require `allow_unverified`; agents with no recipe fall back to a read-only
+  bind-mount of the host binary.
+- **TUI** — a Container section with stack checkboxes appears when the docker
+  backend is active; the Options section toggles between jail and container
+  (they are mutually exclusive).
+- **Trust boundary** — an unsaved workspace-local `.ai-launch.yaml` cannot
+  switch the sandbox to docker; `--docker-backend` or a saved selection is
+  required, mirroring the existing `jail: false` gate.
+
+**What you need to do:** nothing. This is additive; existing configurations
+are unaffected and keep the ai-jail default. Note that a `.ai-launch.yaml`
+with `docker: true` is refused until saved or run with `--docker-backend`.
+
 ### Fixed — `--workstream-search` sends the workstream id upstream requires
 
 `ai-memory workstream-search` declares `--workstream-id` as a required
