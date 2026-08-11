@@ -16,6 +16,14 @@ type ComposeFile struct {
 	Services map[string]ComposeService `yaml:"services"`
 	Networks map[string]ComposeNetwork `yaml:"networks,omitempty"`
 	Volumes  map[string]ComposeVolume  `yaml:"volumes,omitempty"`
+	// GeneratedFiles maps an absolute host path to content that
+	// MaterializeCompose must write alongside docker-compose.yaml (for
+	// example the egress proxy's squid.conf). yaml:"-" is required: this
+	// must never leak into the rendered Compose document. Builders
+	// (BuildCompose) only ever populate this map — they do no I/O
+	// themselves; MaterializeCompose is the single place these bytes reach
+	// disk.
+	GeneratedFiles map[string]string `yaml:"-"`
 }
 
 // ComposeService is one agent or infrastructure service in the generated

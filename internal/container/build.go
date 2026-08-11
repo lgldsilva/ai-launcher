@@ -154,6 +154,9 @@ func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
 	if err := ensureComposeDataDirectories(projectDir, file); err != nil {
 		return "", err
 	}
+	if err := writeComposeGeneratedFiles(projectDir, file); err != nil {
+		return "", err
+	}
 	dir := filepath.Join(projectDir, containerArtifactDirName)
 	if err := ensureMaterializedDir(dir); err != nil {
 		return "", err
@@ -163,6 +166,28 @@ func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// writeComposeGeneratedFiles writes any content BuildCompose staged on
+// ComposeFile.GeneratedFiles (for example the egress proxy's squid.conf).
+// BuildCompose stays pure — it only computes content and a path; this is the
+// single place those bytes reach disk, alongside every other Compose
+// artifact, with the same symlink-refusal and atomic-write guarantees.
+// Domain-agnostic: works for any future generated file, not just the proxy.
+func writeComposeGeneratedFiles(projectDir string, file ComposeFile) error {
+	dataDir := filepath.Join(projectDir, containerArtifactDirName, "data")
+	for path, content := range file.GeneratedFiles {
+		if !pathWithin(dataDir, path) {
+			return fmt.Errorf("generated compose file %s escapes the data directory", path)
+		}
+		if err := ensureMaterializedDir(filepath.Dir(path)); err != nil {
+			return err
+		}
+		if err := writeMaterializedArtifact(path, []byte(content)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureComposeDataDirectories creates only the service data directories

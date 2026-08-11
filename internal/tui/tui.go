@@ -77,6 +77,11 @@ const (
 	// startContainerResourceInput's switch) — it exists purely so the row
 	// has a stable identity, matching every other row in the model.
 	resourceNetworkInternal containerResourceKind = "container-network-internal"
+	// resourceNetworkAllowedDomains identifies the "Allowed domains" text
+	// row for LaunchConfig.ContainerNetworkAllowedDomains — only meaningful
+	// while resourceNetworkInternal is on, since that's what triggers the
+	// egress-proxy injection in BuildCompose.
+	resourceNetworkAllowedDomains containerResourceKind = "container-network-allowed-domains"
 )
 
 // containerRowRole distinguishes a text-editable resource row (opens

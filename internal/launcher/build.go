@@ -31,6 +31,12 @@ type LaunchConfig struct {
 	// argv builder carries it for config/TUI/profile propagation; Compose
 	// materialization consumes it when the container backend is selected.
 	Services []string
+	// ContainerNetworkAllowedDomains activates the v2 egress-allowlist proxy
+	// when ContainerNetworkInternal is also true — see the field's doc
+	// comment there. Compose-only, like ContainerNetworkInternal: never
+	// consumed by container.RunConfig/BuildRunCommand (the plain `docker
+	// run` path has no proxy to inject).
+	ContainerNetworkAllowedDomains []string
 	// ContainerEnvironment overrides the generated service connection
 	// variables in compose. Values are persisted in local/profile config, but
 	// are not used by the single-container backend.

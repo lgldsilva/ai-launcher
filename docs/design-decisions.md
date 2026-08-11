@@ -298,25 +298,62 @@ is not hypothetical.
 `LaunchConfig.ContainerNetworkInternal *bool` carries the raw tri-state
 operator choice, distinct from the already-resolved
 `LaunchConfig.Docker.NetworkInternal bool` that `BuildCompose`/
-`BuildRunCommand` actually consume. `ContainerHostGateway` only kept the
-resolved form, so `--save`/`--save-profile` silently dropped the operator's
-raw choice; that gap is not repeated here on purpose, because losing this
-one is a safety regression (the operator believes egress is blocked when the
-next launch reopens it) rather than a cosmetic default drifting back.
+`BuildRunCommand` actually consume. `ContainerHostGateway` originally only
+kept the resolved form, so `--save`/`--save-profile` silently dropped the
+operator's raw choice; that gap was not repeated here on purpose, because
+losing this one is a safety regression (the operator believes egress is
+blocked when the next launch reopens it) rather than a cosmetic default
+drifting back. `ContainerHostGateway` itself has since received the same
+fix (raw tri-state added to `LaunchConfig`, threaded through persistence and
+the TUI's profile load path, which turned out to be missing entirely, not
+just the save side).
 
-**Why all-or-nothing instead of a domain allowlist now.** Docker networks
-have no domain/IP allowlist primitive — `internal: true` is a network-layer
-on/off switch. Selective egress needs a companion dual-homed proxy service
-(squid/tinyproxy on both the internal network and a normal bridge with real
-internet access, with `HTTP_PROXY`/`HTTPS_PROXY` pushed into the agent
-container) — the same "run a narrow proxy instead of opening the door"
-philosophy already applied to the *inbound* `host.docker.internal` gateway
-case (see ARCHITECTURE.md, "MCP server reachability" / the host-gateway
+## The v2 egress-allowlist proxy
+
+**Decision.** `options.container_network_allowed_domains` activates a
+selective egress proxy when `container_network_internal` is also `true`:
+`BuildCompose` (`internal/launcher/compose.go`'s `addEgressProxy`) injects a
+dual-homed squid service (`internal/container/egressproxy.go`) instead of
+leaving the agent with zero egress. The proxy sits on the existing internal
+network (where the agent and selected services live) and a new
+`<network>-egress` bridge network with real internet access — it is the only
+dual-homed service. The agent gets `HTTP_PROXY`/`HTTPS_PROXY` (and lowercase
+variants) pointing at it. `containerNetworkInternalIssues` softens its
+warning from `internal-network-blocks-agent` to `internal-network-restricts-agent`
+when domains are configured (still a warning — an incomplete allowlist fails
+silently as a blocked connection, not a clear error); a new
+`container-network-allowed-domains-without-internal-network` warning covers
+the inert case (domains configured, internal network off).
+
+**Why squid, not tinyproxy.** Squid's `acl ... dstdomain` supports real
+subdomain-wildcard matching and a `CONNECT`-method ACL for HTTPS tunneling;
+tinyproxy's `Filter` mechanism is a flat regex/substring list with no
+first-class per-domain ACL semantics — the same "run a narrow proxy instead
+of opening the door" philosophy already applied to the *inbound*
+`host.docker.internal` gateway case (see ARCHITECTURE.md's host-gateway
 section: "run a host-side MCP HTTP/SSE proxy... do not use `--network host`
-and do not mount the Docker socket"). `AddInfrastructureServiceWithDataDir`
-and the catalog `Service`/`ComposeServiceFromCatalog` representation
-already used for postgres/redis are the reusable insertion points for that
-proxy service — a v2, not shipped here.
+and do not mount the Docker socket"), now applied outbound.
+
+**Why the proxy is not a catalog `Service`.** The infrastructure catalog
+(`internal/container/services.go`, postgres/redis/etc.) is a user-selectable
+TUI picklist; an auto-injected security proxy does not belong there — it
+never appears as a checkbox. More concretely, `AddInfrastructureServiceWithDataDir`
+resolves its volume mount as a **directory** under `.ai-launcher/data/<service>/`;
+the proxy needs to mount a single **file** (`squid.conf`), so reusing that
+helper would mount a directory over a file path. The proxy gets its own
+constructor (`EgressProxyComposeService`), injected directly into
+`file.Services["egress-proxy"]` at the same tier `file.Services["agent"]`
+already is.
+
+**Why `ComposeFile.GeneratedFiles`.** `BuildCompose` stays pure (no I/O) —
+only `MaterializeCompose` writes to disk. The squid.conf content is computed
+as a string and staged on a new `ComposeFile.GeneratedFiles map[string]string`
+field (`yaml:"-"`, so it never leaks into the rendered Compose document);
+`MaterializeCompose` writes it via a new `writeComposeGeneratedFiles`, reusing
+the same symlink-refusal and atomic-write helpers every other materialized
+artifact gets. This sidesteps `ensureComposeDataDirectories`, which assumes
+every service volume source is a directory and would either `mkdir` where a
+file needs to be or fail outright if the proxy's config path went through it.
 
 ## Why `.ai-launcher/` is a directory
 

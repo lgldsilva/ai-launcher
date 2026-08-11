@@ -97,6 +97,23 @@ func TestOptionsScalarFormPreservesContainerNetworkInternal(t *testing.T) {
 	}
 }
 
+func TestOptionsScalarFormPreservesContainerNetworkAllowedDomains(t *testing.T) {
+	var options Options
+	contents := "docker: true\ncontainer_network_internal: true\ncontainer_network_allowed_domains: [api.anthropic.com, github.com]\nextra_args: --model sonnet\n"
+	if err := yaml.Unmarshal([]byte(contents), &options); err != nil {
+		t.Fatalf("decode scalar-form options: %v", err)
+	}
+	want := []string{"api.anthropic.com", "github.com"}
+	if len(options.ContainerNetworkAllowedDomains) != len(want) {
+		t.Fatalf("scalar-form allowed domains = %v; want %v", options.ContainerNetworkAllowedDomains, want)
+	}
+	for i, domain := range want {
+		if options.ContainerNetworkAllowedDomains[i] != domain {
+			t.Fatalf("scalar-form allowed domains = %v; want %v", options.ContainerNetworkAllowedDomains, want)
+		}
+	}
+}
+
 func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 	global := DefaultGlobal()
 	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "grok", "zero", "devin", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}

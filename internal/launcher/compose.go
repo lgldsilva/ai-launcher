@@ -52,6 +52,9 @@ func BuildCompose(cfg LaunchConfig) (container.ComposeFile, error) {
 	if err := addServiceConnectionEnvironment(&agent, cfg.Services, cfg.ContainerServicePorts); err != nil {
 		return container.ComposeFile{}, err
 	}
+	if err := addEgressProxy(&file, &agent, cfg, run, networkName, dataDir); err != nil {
+		return container.ComposeFile{}, err
+	}
 	for key, value := range cfg.ContainerEnvironment {
 		if agent.Environment == nil {
 			agent.Environment = make(map[string]string)
@@ -66,6 +69,47 @@ func BuildCompose(cfg LaunchConfig) (container.ComposeFile, error) {
 		return container.ComposeFile{}, err
 	}
 	return file, nil
+}
+
+// addEgressProxy injects the v2 egress-allowlist proxy when the internal
+// network is on and domains are configured — otherwise the agent is left
+// with zero egress on an internal network (v1 behavior, unchanged). No-op
+// combinations (domains without internal network) are handled entirely by
+// validation warnings, not here; this function only acts when both are set.
+// Called before the cfg.ContainerEnvironment overlay loop so an operator's
+// explicit HTTP_PROXY/HTTPS_PROXY still wins over this default.
+func addEgressProxy(file *container.ComposeFile, agent *container.ComposeService, cfg LaunchConfig, run container.RunConfig, networkName, dataDir string) error {
+	if !run.NetworkInternal || len(cfg.ContainerNetworkAllowedDomains) == 0 {
+		return nil
+	}
+	egressNetworkName := networkName + "-egress"
+	file.Networks[egressNetworkName] = container.ComposeNetwork{Driver: "bridge"}
+
+	configPath := container.EgressProxyConfigPath(dataDir)
+	content, err := container.GenerateEgressProxyConfig(cfg.ContainerNetworkAllowedDomains)
+	if err != nil {
+		return err
+	}
+	if file.GeneratedFiles == nil {
+		file.GeneratedFiles = make(map[string]string)
+	}
+	file.GeneratedFiles[configPath] = content
+
+	proxy, err := container.EgressProxyComposeService(configPath, networkName, egressNetworkName)
+	if err != nil {
+		return err
+	}
+	file.Services[container.EgressProxyServiceID] = proxy
+
+	proxyURL := fmt.Sprintf("http://%s:%d", container.EgressProxyServiceID, container.EgressProxyPort)
+	if agent.Environment == nil {
+		agent.Environment = make(map[string]string)
+	}
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		agent.Environment[key] = proxyURL
+	}
+	agent.DependsOn = append(agent.DependsOn, container.EgressProxyServiceID)
+	return nil
 }
 
 func addComposeServices(file *container.ComposeFile, ids []string, overrides map[string][]container.PortMapping, networkName, dataDir string, run container.RunConfig) error {

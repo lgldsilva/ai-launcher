@@ -496,6 +496,13 @@ func (m Model) containerResourceRows() []containerResourceRow {
 				m.status = "Network: internal only disabled — outbound access restored."
 			},
 		},
+		{
+			name:  "Allowed domains",
+			kind:  resourceNetworkAllowedDomains,
+			value: displayResourceValue(strings.Join(m.launch.ContainerNetworkAllowedDomains, ",")),
+			hint:  "comma-separated, e.g. api.anthropic.com,github.com — only used when Net: internal is on",
+			role:  containerRowText,
+		},
 	}
 }
 

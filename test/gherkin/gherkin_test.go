@@ -45,6 +45,7 @@ type launchSpec struct {
 	Ports             []string          `yaml:"ports"`
 	Network           string            `yaml:"network"`
 	InternalNetwork   bool              `yaml:"internal_network"`
+	AllowedDomains    []string          `yaml:"allowed_domains"`
 	JailExec          bool              `yaml:"jail_exec"`
 	JailFlags         config.JailFlags  `yaml:"jail_flags"`
 	Memory            bool              `yaml:"memory"`
@@ -272,28 +273,29 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		agent.Memory = &config.MemoryIntegration{RunHarness: spec.RunHarness}
 	}
 	return launcher.LaunchConfig{
-		Agent:            agent,
-		Executable:       spec.Executable,
-		HomeDir:          spec.Home,
-		UseJail:          spec.Jail,
-		UseDocker:        spec.Docker,
-		ContainerRuntime: spec.Runtime,
-		Services:         append([]string(nil), spec.Services...),
-		JailExec:         spec.JailExec,
-		JailFlags:        spec.JailFlags,
-		UseMemory:        spec.Memory,
-		ContinueSession:  spec.Continue,
-		Fresh:            spec.Fresh,
-		NewWorkstream:    spec.NewWorkstream,
-		Workstream:       spec.Workstream,
-		Workspace:        spec.Workspace,
-		Project:          spec.Project,
-		Permissions:      spec.Permissions,
-		Mounts:           spec.Mounts,
-		Yolo:             spec.Yolo,
-		ExtraArgs:        spec.Args,
-		ParamValues:      spec.ParamValues,
-		Docker:           dockerRunConfig(spec),
+		Agent:                          agent,
+		Executable:                     spec.Executable,
+		HomeDir:                        spec.Home,
+		UseJail:                        spec.Jail,
+		UseDocker:                      spec.Docker,
+		ContainerRuntime:               spec.Runtime,
+		Services:                       append([]string(nil), spec.Services...),
+		ContainerNetworkAllowedDomains: append([]string(nil), spec.AllowedDomains...),
+		JailExec:                       spec.JailExec,
+		JailFlags:                      spec.JailFlags,
+		UseMemory:                      spec.Memory,
+		ContinueSession:                spec.Continue,
+		Fresh:                          spec.Fresh,
+		NewWorkstream:                  spec.NewWorkstream,
+		Workstream:                     spec.Workstream,
+		Workspace:                      spec.Workspace,
+		Project:                        spec.Project,
+		Permissions:                    spec.Permissions,
+		Mounts:                         spec.Mounts,
+		Yolo:                           spec.Yolo,
+		ExtraArgs:                      spec.Args,
+		ParamValues:                    spec.ParamValues,
+		Docker:                         dockerRunConfig(spec),
 	}
 }
 

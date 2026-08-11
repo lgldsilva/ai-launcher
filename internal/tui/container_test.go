@@ -801,8 +801,8 @@ func TestContainerResourceRowRoleDefaultsToText(t *testing.T) {
 		Permissions: map[string]bool{},
 	})
 	rows := model.containerResourceRows()
-	if len(rows) != 8 {
-		t.Fatalf("containerResourceRows() = %d rows; want 8", len(rows))
+	if len(rows) != 9 {
+		t.Fatalf("containerResourceRows() = %d rows; want 9", len(rows))
 	}
 	for _, row := range rows {
 		if row.kind == resourceNetworkInternal {
@@ -889,5 +889,77 @@ func TestContainerViewShowsNetworkInternalToggle(t *testing.T) {
 	view = model.View()
 	if !strings.Contains(view, "Net: internal") {
 		t.Fatalf("view missing \"Net: internal\" row when enabled:\n%s", view)
+	}
+}
+
+// TestAllowedDomainsCommitParsesAndValidates covers the "Allowed domains"
+// row's commit path: comma-parse round trip, empty clears the field, and an
+// invalid entry is rejected without mutating m.launch (mirrors how
+// commitContainerResource already behaves for resourcePorts).
+func TestAllowedDomainsCommitParsesAndValidates(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+
+	if err := model.commitContainerResource(resourceNetworkAllowedDomains, "api.anthropic.com, github.com"); err != nil {
+		t.Fatalf("commitContainerResource() error = %v", err)
+	}
+	want := []string{"api.anthropic.com", "github.com"}
+	if len(model.launch.ContainerNetworkAllowedDomains) != len(want) {
+		t.Fatalf("ContainerNetworkAllowedDomains = %v; want %v", model.launch.ContainerNetworkAllowedDomains, want)
+	}
+	for i, domain := range want {
+		if model.launch.ContainerNetworkAllowedDomains[i] != domain {
+			t.Fatalf("ContainerNetworkAllowedDomains = %v; want %v", model.launch.ContainerNetworkAllowedDomains, want)
+		}
+	}
+
+	if err := model.commitContainerResource(resourceNetworkAllowedDomains, ""); err != nil {
+		t.Fatalf("commitContainerResource(empty) error = %v", err)
+	}
+	if model.launch.ContainerNetworkAllowedDomains != nil {
+		t.Fatalf("ContainerNetworkAllowedDomains = %v; want nil after clearing", model.launch.ContainerNetworkAllowedDomains)
+	}
+
+	if err := model.commitContainerResource(resourceNetworkAllowedDomains, "api.anthropic.com, github.com"); err != nil {
+		t.Fatalf("commitContainerResource() error = %v", err)
+	}
+	if err := model.commitContainerResource(resourceNetworkAllowedDomains, "bad domain"); err == nil {
+		t.Fatal("commitContainerResource(\"bad domain\") = nil error; want rejection")
+	}
+	if len(model.launch.ContainerNetworkAllowedDomains) != len(want) {
+		t.Fatalf("ContainerNetworkAllowedDomains mutated by rejected commit: %v", model.launch.ContainerNetworkAllowedDomains)
+	}
+}
+
+// TestStartContainerResourceInputPopulatesAllowedDomains covers the editor's
+// value-population path — the "Allowed domains" row reads m.launch directly
+// (like resourceRuntime already does) since containerResourceInputValue only
+// receives container.RunConfig, not the full model.
+func TestStartContainerResourceInputPopulatesAllowedDomains(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:                      true,
+		Permissions:                    map[string]bool{},
+		ContainerNetworkAllowedDomains: []string{"api.anthropic.com", "github.com"},
+	})
+	rows := model.containerResourceRows()
+	index := -1
+	for i, row := range rows {
+		if row.kind == resourceNetworkAllowedDomains {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("Allowed domains row not found in containerResourceRows()")
+	}
+	model.section = model.containerIndex()
+	model.cursor = len(model.stackIDs) + index
+	model.startContainerResourceInput()
+	if model.textInputValue != "api.anthropic.com,github.com" {
+		t.Fatalf("textInputValue = %q; want \"api.anthropic.com,github.com\"", model.textInputValue)
 	}
 }

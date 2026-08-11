@@ -113,6 +113,16 @@ func TestContainerNetworkInternalWarnsOnBlockedAgentAndOnRequiresCompose(t *test
 			code: "internal-network-requires-compose",
 		},
 		{
+			name: "docker with a service, internal network, and allowed domains warns it restricts (not blocks) the agent",
+			cfg: LaunchConfig{
+				UseDocker:                      true,
+				Services:                       []string{"redis"},
+				Docker:                         container.RunConfig{NetworkInternal: true},
+				ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
+			},
+			code: "internal-network-restricts-agent",
+		},
+		{
 			name: "internal network off raises nothing",
 			cfg: LaunchConfig{
 				UseDocker: true,
@@ -132,6 +142,60 @@ func TestContainerNetworkInternalWarnsOnBlockedAgentAndOnRequiresCompose(t *test
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			issues := containerNetworkInternalIssues(tc.cfg)
+			if tc.code == "" {
+				if len(issues) != 0 {
+					t.Fatalf("issues = %#v; want none", issues)
+				}
+				return
+			}
+			issue, found := issueByCode(issues, tc.code)
+			if !found {
+				t.Fatalf("issues = %#v; want code %q", issues, tc.code)
+			}
+			if !issue.Warning {
+				t.Error("the launch must still be allowed to proceed; this is advisory")
+			}
+		})
+	}
+}
+
+func TestContainerNetworkAllowedDomainsWarnsWithoutInternalNetwork(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  LaunchConfig
+		code string
+	}{
+		{
+			name: "domains configured without internal network warns the allowlist is inert",
+			cfg: LaunchConfig{
+				UseDocker:                      true,
+				Services:                       []string{"redis"},
+				ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
+			},
+			code: "container-network-allowed-domains-without-internal-network",
+		},
+		{
+			name: "domains configured with internal network on raises nothing here",
+			cfg: LaunchConfig{
+				UseDocker:                      true,
+				Services:                       []string{"redis"},
+				Docker:                         container.RunConfig{NetworkInternal: true},
+				ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
+			},
+			code: "",
+		},
+		{
+			name: "no domains configured raises nothing",
+			cfg: LaunchConfig{
+				UseDocker: true,
+				Services:  []string{"redis"},
+			},
+			code: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := containerNetworkAllowedDomainsIssues(tc.cfg)
 			if tc.code == "" {
 				if len(issues) != 0 {
 					t.Fatalf("issues = %#v; want none", issues)

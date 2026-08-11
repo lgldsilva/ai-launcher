@@ -1287,3 +1287,59 @@ Feature: Launcher command contract
       """
       internal: true
       """
+
+  Scenario: Renders Compose YAML with an egress-allowlist proxy
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /work
+      internal_network: true
+      allowed_domains: [api.anthropic.com]
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      egress-proxy
+      ai-launcher-egress
+      HTTP_PROXY
+      """
+
+  Scenario: Warns when allowed domains restrict rather than block the agent
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /w
+      internal_network: true
+      allowed_domains: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      internal-network-restricts-agent
+      """
+
+  Scenario: Warns when allowed domains are configured without the internal network
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /w
+      allowed_domains: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      container-network-allowed-domains-without-internal-network
+      """

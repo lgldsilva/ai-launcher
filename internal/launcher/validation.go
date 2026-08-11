@@ -116,6 +116,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
 	issues = append(issues, containerNetworkInternalIssues(cfg)...)
+	issues = append(issues, containerNetworkAllowedDomainsIssues(cfg)...)
 	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
 	if v.Getwd != nil {
 		// Advisory only — ai-jail works on macOS; the friction is ai-memory
@@ -273,9 +274,35 @@ func containerNetworkInternalIssues(cfg LaunchConfig) []Issue {
 			Warning: true,
 		}}
 	}
+	if len(cfg.ContainerNetworkAllowedDomains) > 0 {
+		return []Issue{{
+			Code:    "internal-network-restricts-agent",
+			Message: "the internal Compose network restricts outbound traffic to container_network_allowed_domains via an egress proxy; confirm every domain the agent's own API and every selected service need is included — a missing domain fails silently as a blocked connection, not a clear error",
+			Warning: true,
+		}}
+	}
 	return []Issue{{
 		Code:    "internal-network-blocks-agent",
 		Message: "the internal Compose network blocks ALL outbound traffic, including the agent's own LLM API calls; confirm the agent can reach its API another way (for example a host-side proxy) before relying on this",
+		Warning: true,
+	}}
+}
+
+// containerNetworkAllowedDomainsIssues warns when the domain allowlist is
+// configured but the internal network isn't active (or Docker isn't the
+// backend) — addEgressProxy never fires, so the allowlist is a silent no-op
+// (open egress, not restricted egress) rather than the safety boundary the
+// operator likely expects.
+func containerNetworkAllowedDomainsIssues(cfg LaunchConfig) []Issue {
+	if len(cfg.ContainerNetworkAllowedDomains) == 0 {
+		return nil
+	}
+	if cfg.UseDocker && cfg.Docker.NetworkInternal {
+		return nil
+	}
+	return []Issue{{
+		Code:    "container-network-allowed-domains-without-internal-network",
+		Message: "container_network_allowed_domains is configured but container_network_internal is not on; the egress proxy is never injected and the domain list has no effect — network access remains fully open",
 		Warning: true,
 	}}
 }
