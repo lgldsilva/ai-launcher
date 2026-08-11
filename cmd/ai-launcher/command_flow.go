@@ -99,6 +99,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	dockerConfig.PIDsLimit = inputs.local.Options.ContainerPIDs
 	dockerConfig.ExposedPorts = append([]container.PortMapping(nil), inputs.local.Options.ContainerPorts...)
 	dockerConfig.NetworkName = inputs.local.Options.ContainerNetwork
+	dockerConfig.NetworkInternal = config.EffectiveContainerNetworkInternal(inputs.local.Options.ContainerNetworkInternal)
 	dockerConfig.Tmux = inputs.local.Options.ContainerTmux.Enabled && dockerConfig.Interactive
 	dockerConfig.Context = strings.TrimSpace(inputs.local.Options.ContainerContext)
 	dockerConfig.AddHostGateway = effectiveContainerHostGateway(inputs.local.Options.ContainerHostGateway)
@@ -110,35 +111,36 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		return runtimeErr
 	}
 	launchConfig := launcher.LaunchConfig{
-		Agent:                 inputs.status.Agent,
-		Executable:            inputs.status.Path,
-		HomeDir:               home,
-		MemoryServerURL:       inputs.global.MemoryServerURL,
-		MemoryAuthToken:       inputs.global.MemoryAuthToken,
-		UseJail:               inputs.local.Options.Jail && !inputs.local.Options.Docker,
-		UseDocker:             inputs.local.Options.Docker,
-		ContainerRuntime:      config.EffectiveContainerRuntime(inputs.local.Options.ContainerRuntime),
-		ContainerContext:      strings.TrimSpace(inputs.local.Options.ContainerContext),
-		Services:              append([]string(nil), inputs.local.Options.Services...),
-		ContainerEnvironment:  cloneStringMap(inputs.local.Options.ContainerEnvironment),
-		ContainerServicePorts: cloneServicePortMappings(inputs.local.Options.ContainerServicePorts),
-		ContainerDependencies: config.MergeDependencySettings(inputs.global.ContainerDependencies, inputs.local.Options.ContainerDependencies),
-		ContainerTmux:         inputs.local.Options.ContainerTmux,
-		Docker:                dockerConfig,
-		UseMemory:             inputs.local.Options.Memory,
-		ContinueSession:       opts.continueSession,
-		JailExec:              len(args) > 0,
-		NewWorkstream:         inputs.local.Options.NewWorkstream,
-		Workstream:            inputs.local.Options.Workstream,
-		Workspace:             inputs.local.Options.Workspace,
-		Project:               inputs.local.Options.Project,
-		JailFlags:             inputs.local.Options.JailFlags,
-		Permissions:           inputs.permissions,
-		Mounts:                inputs.mounts,
-		Yolo:                  inputs.local.Options.Yolo,
-		Fresh:                 inputs.local.Options.Fresh,
-		ExtraArgs:             inputs.local.Options.ExtraArgs,
-		ParamValues:           inputs.local.Options.ParamValues,
+		Agent:                    inputs.status.Agent,
+		Executable:               inputs.status.Path,
+		HomeDir:                  home,
+		MemoryServerURL:          inputs.global.MemoryServerURL,
+		MemoryAuthToken:          inputs.global.MemoryAuthToken,
+		UseJail:                  inputs.local.Options.Jail && !inputs.local.Options.Docker,
+		UseDocker:                inputs.local.Options.Docker,
+		ContainerRuntime:         config.EffectiveContainerRuntime(inputs.local.Options.ContainerRuntime),
+		ContainerContext:         strings.TrimSpace(inputs.local.Options.ContainerContext),
+		ContainerNetworkInternal: inputs.local.Options.ContainerNetworkInternal,
+		Services:                 append([]string(nil), inputs.local.Options.Services...),
+		ContainerEnvironment:     cloneStringMap(inputs.local.Options.ContainerEnvironment),
+		ContainerServicePorts:    cloneServicePortMappings(inputs.local.Options.ContainerServicePorts),
+		ContainerDependencies:    config.MergeDependencySettings(inputs.global.ContainerDependencies, inputs.local.Options.ContainerDependencies),
+		ContainerTmux:            inputs.local.Options.ContainerTmux,
+		Docker:                   dockerConfig,
+		UseMemory:                inputs.local.Options.Memory,
+		ContinueSession:          opts.continueSession,
+		JailExec:                 len(args) > 0,
+		NewWorkstream:            inputs.local.Options.NewWorkstream,
+		Workstream:               inputs.local.Options.Workstream,
+		Workspace:                inputs.local.Options.Workspace,
+		Project:                  inputs.local.Options.Project,
+		JailFlags:                inputs.local.Options.JailFlags,
+		Permissions:              inputs.permissions,
+		Mounts:                   inputs.mounts,
+		Yolo:                     inputs.local.Options.Yolo,
+		Fresh:                    inputs.local.Options.Fresh,
+		ExtraArgs:                inputs.local.Options.ExtraArgs,
+		ParamValues:              inputs.local.Options.ParamValues,
 	}
 	// The docker backend mounts the current project; default the workspace to
 	// the working directory when neither workspace nor project were configured

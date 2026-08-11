@@ -133,6 +133,12 @@ type RunConfig struct {
 	// NetworkName selects an optional Docker network, such as "host" or a
 	// project-specific bridge network.
 	NetworkName string
+	// NetworkInternal marks the generated Compose network internal, blocking
+	// ALL egress including the agent's own LLM API calls. Compose-only: the
+	// plain `docker run` backend (BuildRunCommand) never reads this field —
+	// there is no `docker run` equivalent of a Compose-level `internal: true`
+	// network attribute.
+	NetworkInternal bool
 	// Tmux starts the in-container agent in a named interactive tmux session.
 	// The launcher enables it only for a real terminal; keeping the flag here
 	// lets dry-run and Compose expose the same in-container command.

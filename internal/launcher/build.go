@@ -50,6 +50,12 @@ type LaunchConfig struct {
 	// ContainerContext is the optional Docker context applied to run, build,
 	// image-inspect and Compose commands. Empty uses Docker's current context.
 	ContainerContext string
+	// ContainerNetworkInternal is the raw tri-state operator choice, carried
+	// separately from Docker.NetworkInternal (the already-resolved bool
+	// BuildCompose/BuildRunCommand consume) so --save and --save-profile do
+	// not silently drop this safety-relevant toggle the way
+	// ContainerHostGateway's resolved-only representation does today.
+	ContainerNetworkInternal *bool
 	// Docker holds the inputs the docker argv builder needs: the image
 	// selection (stacks + pinned agents), the mounts to share, and the launch
 	// environment. Zero value means the docker backend was enabled without a

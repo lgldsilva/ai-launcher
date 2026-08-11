@@ -258,6 +258,19 @@ type Options struct {
 	// false disables both the host-gateway entry and loopback URL rewriting.
 	// It never mounts the host filesystem or Docker socket.
 	ContainerHostGateway *bool `yaml:"container_host_gateway,omitempty"`
+	// ContainerNetworkInternal marks the generated Compose network internal
+	// (no gateway to the outside world), blocking ALL outbound traffic from
+	// every Compose service, including the agent's own LLM API calls. nil
+	// keeps today's default (open egress); true is an explicit, all-or-
+	// nothing v1 opt-in — see docs/design-decisions.md. It only takes effect
+	// on the Compose path (at least one service selected); a plain `docker
+	// run` launch ignores it and preflight warns
+	// (internal-network-requires-compose).
+	//
+	// If you add/change this field, you MUST also update the scalar struct
+	// and literal below in UnmarshalYAML — see
+	// TestOptionsScalarFormPreservesContainerNetworkInternal.
+	ContainerNetworkInternal *bool `yaml:"container_network_internal,omitempty"`
 	// Stacks names the toolchains installed in the docker image (go, python,
 	// rust, ...). Only meaningful with docker: true; ignored by the jail path.
 	Stacks []string `yaml:"stacks,omitempty"`
@@ -315,6 +328,13 @@ func EffectiveContainerRuntime(value string) string {
 	return value
 }
 
+// EffectiveContainerNetworkInternal resolves the tri-state
+// ContainerNetworkInternal preference: nil or explicit false both mean open
+// egress (today's default); only an explicit true blocks it.
+func EffectiveContainerNetworkInternal(value *bool) bool {
+	return value != nil && *value
+}
+
 // UnmarshalYAML accepts both the current lossless list form and the scalar
 // form used by the original launcher documentation (for example,
 // extra_args: "--model sonnet"). SaveLocal always emits the list form.
@@ -336,61 +356,63 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 	}
 
 	var scalar struct {
-		Jail                  bool                     `yaml:"jail"`
-		Memory                bool                     `yaml:"memory"`
-		Yolo                  bool                     `yaml:"yolo"`
-		Docker                bool                     `yaml:"docker,omitempty"`
-		ContainerRuntime      string                   `yaml:"container_runtime,omitempty"`
-		ContainerContext      string                   `yaml:"container_context,omitempty"`
-		ContainerHostGateway  *bool                    `yaml:"container_host_gateway,omitempty"`
-		Stacks                []string                 `yaml:"stacks,omitempty"`
-		Services              []string                 `yaml:"services,omitempty"`
-		ContainerMemory       string                   `yaml:"container_memory,omitempty"`
-		ContainerCPUs         string                   `yaml:"container_cpus,omitempty"`
-		ContainerPIDs         int64                    `yaml:"container_pids,omitempty"`
-		ContainerPorts        []PortMapping            `yaml:"container_ports,omitempty"`
-		ContainerNetwork      string                   `yaml:"container_network,omitempty"`
-		ContainerEnvironment  map[string]string        `yaml:"container_environment,omitempty"`
-		ContainerServicePorts map[string][]PortMapping `yaml:"container_service_ports,omitempty"`
-		ContainerDependencies DependencySettings       `yaml:"container_dependencies,omitempty"`
-		ContainerTmux         TmuxSettings             `yaml:"container_tmux,omitempty"`
-		NewWorkstream         string                   `yaml:"new_workstream,omitempty"`
-		Workstream            string                   `yaml:"workstream,omitempty"`
-		Workspace             string                   `yaml:"workspace,omitempty"`
-		Project               string                   `yaml:"project,omitempty"`
-		JailFlags             JailFlags                `yaml:"jail_flags,omitempty"`
-		ExtraArgs             string                   `yaml:"extra_args,omitempty"`
-		ParamValues           map[string]string        `yaml:"param_values,omitempty"`
+		Jail                     bool                     `yaml:"jail"`
+		Memory                   bool                     `yaml:"memory"`
+		Yolo                     bool                     `yaml:"yolo"`
+		Docker                   bool                     `yaml:"docker,omitempty"`
+		ContainerRuntime         string                   `yaml:"container_runtime,omitempty"`
+		ContainerContext         string                   `yaml:"container_context,omitempty"`
+		ContainerHostGateway     *bool                    `yaml:"container_host_gateway,omitempty"`
+		ContainerNetworkInternal *bool                    `yaml:"container_network_internal,omitempty"`
+		Stacks                   []string                 `yaml:"stacks,omitempty"`
+		Services                 []string                 `yaml:"services,omitempty"`
+		ContainerMemory          string                   `yaml:"container_memory,omitempty"`
+		ContainerCPUs            string                   `yaml:"container_cpus,omitempty"`
+		ContainerPIDs            int64                    `yaml:"container_pids,omitempty"`
+		ContainerPorts           []PortMapping            `yaml:"container_ports,omitempty"`
+		ContainerNetwork         string                   `yaml:"container_network,omitempty"`
+		ContainerEnvironment     map[string]string        `yaml:"container_environment,omitempty"`
+		ContainerServicePorts    map[string][]PortMapping `yaml:"container_service_ports,omitempty"`
+		ContainerDependencies    DependencySettings       `yaml:"container_dependencies,omitempty"`
+		ContainerTmux            TmuxSettings             `yaml:"container_tmux,omitempty"`
+		NewWorkstream            string                   `yaml:"new_workstream,omitempty"`
+		Workstream               string                   `yaml:"workstream,omitempty"`
+		Workspace                string                   `yaml:"workspace,omitempty"`
+		Project                  string                   `yaml:"project,omitempty"`
+		JailFlags                JailFlags                `yaml:"jail_flags,omitempty"`
+		ExtraArgs                string                   `yaml:"extra_args,omitempty"`
+		ParamValues              map[string]string        `yaml:"param_values,omitempty"`
 	}
 	if err := yaml.Unmarshal(data, &scalar); err != nil {
 		return listErr
 	}
 	*o = Options{
-		Jail:                  scalar.Jail,
-		Memory:                scalar.Memory,
-		Yolo:                  scalar.Yolo,
-		Docker:                scalar.Docker,
-		ContainerRuntime:      scalar.ContainerRuntime,
-		ContainerContext:      strings.TrimSpace(scalar.ContainerContext),
-		ContainerHostGateway:  scalar.ContainerHostGateway,
-		Stacks:                scalar.Stacks,
-		Services:              scalar.Services,
-		ContainerMemory:       scalar.ContainerMemory,
-		ContainerCPUs:         scalar.ContainerCPUs,
-		ContainerPIDs:         scalar.ContainerPIDs,
-		ContainerPorts:        scalar.ContainerPorts,
-		ContainerNetwork:      scalar.ContainerNetwork,
-		ContainerEnvironment:  cloneStringMap(scalar.ContainerEnvironment),
-		ContainerServicePorts: cloneServicePortMappings(scalar.ContainerServicePorts),
-		ContainerDependencies: scalar.ContainerDependencies.Clone(),
-		ContainerTmux:         scalar.ContainerTmux,
-		NewWorkstream:         scalar.NewWorkstream,
-		Workstream:            scalar.Workstream,
-		Workspace:             scalar.Workspace,
-		Project:               scalar.Project,
-		JailFlags:             scalar.JailFlags,
-		ExtraArgs:             strings.Fields(scalar.ExtraArgs),
-		ParamValues:           scalar.ParamValues,
+		Jail:                     scalar.Jail,
+		Memory:                   scalar.Memory,
+		Yolo:                     scalar.Yolo,
+		Docker:                   scalar.Docker,
+		ContainerRuntime:         scalar.ContainerRuntime,
+		ContainerContext:         strings.TrimSpace(scalar.ContainerContext),
+		ContainerHostGateway:     scalar.ContainerHostGateway,
+		ContainerNetworkInternal: scalar.ContainerNetworkInternal,
+		Stacks:                   scalar.Stacks,
+		Services:                 scalar.Services,
+		ContainerMemory:          scalar.ContainerMemory,
+		ContainerCPUs:            scalar.ContainerCPUs,
+		ContainerPIDs:            scalar.ContainerPIDs,
+		ContainerPorts:           scalar.ContainerPorts,
+		ContainerNetwork:         scalar.ContainerNetwork,
+		ContainerEnvironment:     cloneStringMap(scalar.ContainerEnvironment),
+		ContainerServicePorts:    cloneServicePortMappings(scalar.ContainerServicePorts),
+		ContainerDependencies:    scalar.ContainerDependencies.Clone(),
+		ContainerTmux:            scalar.ContainerTmux,
+		NewWorkstream:            scalar.NewWorkstream,
+		Workstream:               scalar.Workstream,
+		Workspace:                scalar.Workspace,
+		Project:                  scalar.Project,
+		JailFlags:                scalar.JailFlags,
+		ExtraArgs:                strings.Fields(scalar.ExtraArgs),
+		ParamValues:              scalar.ParamValues,
 	}
 	applyOptionDefaults(o, declaredKeys(data))
 	return nil

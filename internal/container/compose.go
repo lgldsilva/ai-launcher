@@ -42,9 +42,16 @@ type ComposeService struct {
 	Healthcheck map[string]any    `yaml:"healthcheck,omitempty"`
 }
 
-// ComposeNetwork describes a named compose network.
+// ComposeNetwork describes a named compose network. Internal, when true, is
+// the Compose Spec's own network-level flag: Docker adds no gateway/route to
+// the host's outbound interface for it, so every service attached only to
+// this network — including the agent's own LLM API calls — loses all
+// internet egress. Compose networks have no domain/IP allowlist primitive;
+// selective access needs a companion dual-homed proxy service (see
+// docs/design-decisions.md).
 type ComposeNetwork struct {
-	Driver string `yaml:"driver,omitempty"`
+	Driver   string `yaml:"driver,omitempty"`
+	Internal bool   `yaml:"internal,omitempty"`
 }
 
 // ComposeVolume describes a named compose volume.

@@ -720,6 +720,41 @@ Feature: Launcher command contract
       allow-tcp-ports-without-lockdown
       """
 
+  Scenario: Warns when the internal network blocks the agent
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /w
+      internal_network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      internal-network-blocks-agent
+      """
+
+  Scenario: Warns when the internal network has no Compose services to apply to
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      workspace: /w
+      internal_network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      internal-network-requires-compose
+      """
+
   Scenario: Rejects a harness ai-memory run does not accept
     Given a validation configuration
       """
@@ -1235,4 +1270,20 @@ Feature: Launcher command contract
       networks:
       ai-launcher:
       /work/.ai-launcher/data/postgres:/var/lib/postgresql
+      """
+
+  Scenario: Renders Compose YAML with an internal network
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /work
+      internal_network: true
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      internal: true
       """

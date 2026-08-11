@@ -61,6 +61,42 @@ func TestOptionsContainerHostGatewayCanBeDisabledExplicitly(t *testing.T) {
 	}
 }
 
+func TestOptionsContainerNetworkInternalCanBeEnabledExplicitly(t *testing.T) {
+	var options Options
+	if err := yaml.Unmarshal([]byte("docker: true\ncontainer_network_internal: true\n"), &options); err != nil {
+		t.Fatalf("decode options: %v", err)
+	}
+	if options.ContainerNetworkInternal == nil || !*options.ContainerNetworkInternal {
+		t.Fatalf("container network internal = %#v; want explicit true", options.ContainerNetworkInternal)
+	}
+	var defaults Options
+	if err := yaml.Unmarshal([]byte("docker: true\n"), &defaults); err != nil {
+		t.Fatalf("decode default options: %v", err)
+	}
+	if defaults.ContainerNetworkInternal != nil {
+		t.Fatalf("omitted container network internal = %#v; want default nil", defaults.ContainerNetworkInternal)
+	}
+}
+
+// Regression: TestOptionsContainerNetworkInternalCanBeEnabledExplicitly above
+// only exercises the list-form decode path (yaml.Unmarshal into
+// optionsWithoutMethods succeeds directly). It would NOT catch a
+// ContainerNetworkInternal field forgotten in the scalar struct or the
+// *o = Options{...} literal inside UnmarshalYAML's fallback branch, because
+// that branch is only reached when the list-form decode fails. Combine the
+// new field with extra_args as a bare string (documented scalar form) to
+// force that fallback and prove the field survives it too.
+func TestOptionsScalarFormPreservesContainerNetworkInternal(t *testing.T) {
+	var options Options
+	contents := "docker: true\ncontainer_network_internal: true\nextra_args: --model sonnet\n"
+	if err := yaml.Unmarshal([]byte(contents), &options); err != nil {
+		t.Fatalf("decode scalar-form options: %v", err)
+	}
+	if options.ContainerNetworkInternal == nil || !*options.ContainerNetworkInternal {
+		t.Fatalf("scalar-form container network internal = %#v; want explicit true", options.ContainerNetworkInternal)
+	}
+}
+
 func TestDefaultGlobalIncludesCommonCLIHarnesses(t *testing.T) {
 	global := DefaultGlobal()
 	wanted := []string{"claude", "codex", "opencode", "kimi", "kilo", "mimo", "agy", "pi", "crush", "omp", "cursor-agent", "grok", "zero", "devin", "oc", "gemini", "qwen", "aider", "goose", "kiro-cli", "openclaw", "hermes", "cline"}

@@ -270,6 +270,54 @@ honest. The checksum-verified installer runs inside the image build itself
 build context), reusing the host installer's verification logic instead of
 reimplementing checksum validation in shell.
 
+## The internal Compose network is all-or-nothing in v1
+
+**Decision.** `options.container_network_internal: true` marks the
+generated Compose network `internal: true` (`internal/container/compose.go`),
+blocking every outbound route for every service on it — including the
+agent's own LLM API calls. There is no selective allowlist: it is either
+"the container backend has the same open egress it always had" or "nothing
+gets out at all." Two pre-flight warnings guard the two ways this surprises
+an operator: `internal-network-blocks-agent` fires whenever the toggle is on
+and a Compose service is selected (the common case), and
+`internal-network-requires-compose` fires when it is on with zero services
+selected — the plain `docker run` backend (`BuildRunCommand`) has no Compose
+network at all, so the toggle is a silent no-op there.
+
+**Why Compose-only.** `internal: true` is a Compose Spec network-level
+attribute; there is no `docker run` equivalent short of a separate
+`docker network create --internal` step outside this launcher's argv
+building. `BuildCompose` already only runs when at least one infrastructure
+service is selected (see "The docker container backend replaces the jail"
+above and `internal/launcher/compose.go`'s service-count guard) — a launch
+with the container backend but no services goes through the plain `docker
+run` path today regardless of this toggle, so the requires-compose warning
+is not hypothetical.
+
+**Why the field is persisted separately from the resolved value.**
+`LaunchConfig.ContainerNetworkInternal *bool` carries the raw tri-state
+operator choice, distinct from the already-resolved
+`LaunchConfig.Docker.NetworkInternal bool` that `BuildCompose`/
+`BuildRunCommand` actually consume. `ContainerHostGateway` only kept the
+resolved form, so `--save`/`--save-profile` silently dropped the operator's
+raw choice; that gap is not repeated here on purpose, because losing this
+one is a safety regression (the operator believes egress is blocked when the
+next launch reopens it) rather than a cosmetic default drifting back.
+
+**Why all-or-nothing instead of a domain allowlist now.** Docker networks
+have no domain/IP allowlist primitive — `internal: true` is a network-layer
+on/off switch. Selective egress needs a companion dual-homed proxy service
+(squid/tinyproxy on both the internal network and a normal bridge with real
+internet access, with `HTTP_PROXY`/`HTTPS_PROXY` pushed into the agent
+container) — the same "run a narrow proxy instead of opening the door"
+philosophy already applied to the *inbound* `host.docker.internal` gateway
+case (see ARCHITECTURE.md, "MCP server reachability" / the host-gateway
+section: "run a host-side MCP HTTP/SSE proxy... do not use `--network host`
+and do not mount the Docker socket"). `AddInfrastructureServiceWithDataDir`
+and the catalog `Service`/`ComposeServiceFromCatalog` representation
+already used for postgres/redis are the reusable insertion points for that
+proxy service — a v2, not shipped here.
+
 ## Why `.ai-launcher/` is a directory
 
 **Decision.** Docker artifacts live in a project-local `.ai-launcher/`

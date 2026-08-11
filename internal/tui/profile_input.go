@@ -65,6 +65,8 @@ func (m *Model) loadProfile(name string) {
 		m.launch.Docker.PIDsLimit = profile.Options.ContainerPIDs
 		m.launch.Docker.ExposedPorts = append([]container.PortMapping(nil), profile.Options.ContainerPorts...)
 		m.launch.Docker.NetworkName = profile.Options.ContainerNetwork
+		m.launch.ContainerNetworkInternal = profile.Options.ContainerNetworkInternal
+		m.launch.Docker.NetworkInternal = config.EffectiveContainerNetworkInternal(profile.Options.ContainerNetworkInternal)
 		m.launch.Docker.Selection.Agents = []container.AgentInstall{
 			planDockerAgentInstall(m.launch.HomeDir, m.launch.Agent, m.launch.Executable),
 		}
@@ -127,21 +129,21 @@ func (m *Model) updateTextInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			runes := []rune(m.textInputValue)
 			m.textInputValue = string(runes[:len(runes)-1])
 		}
-		if m.textInputKind == string(resourceContext) {
+		if m.textInputKind.isResource(resourceContext) {
 			m.contextCursor = -1
 		}
-		if m.textInputKind == string(resourceRuntime) {
+		if m.textInputKind.isResource(resourceRuntime) {
 			m.runtimeCursor = -1
 		}
 	case keyUp, keyDown:
-		if m.textInputKind == string(resourceContext) {
+		if m.textInputKind.isResource(resourceContext) {
 			delta := -1
 			if key.String() == keyDown {
 				delta = 1
 			}
 			m.moveContextCursor(delta)
 		}
-		if m.textInputKind == string(resourceRuntime) {
+		if m.textInputKind.isResource(resourceRuntime) {
 			delta := -1
 			if key.String() == keyDown {
 				delta = 1
@@ -151,10 +153,10 @@ func (m *Model) updateTextInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		if key.Type == tea.KeyRunes {
 			m.textInputValue += string(key.Runes)
-			if m.textInputKind == string(resourceContext) {
+			if m.textInputKind.isResource(resourceContext) {
 				m.contextCursor = -1
 			}
-			if m.textInputKind == string(resourceRuntime) {
+			if m.textInputKind.isResource(resourceRuntime) {
 				m.runtimeCursor = -1
 			}
 		}
@@ -167,13 +169,12 @@ func (m *Model) updateTextInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // SaveProfile hook.
 func (m *Model) commitTextInput() {
 	value := strings.TrimSpace(m.textInputValue)
-	if m.textInputKind == "profile" {
+	if m.textInputKind.isProfile() {
 		m.textInputActive = false
 		m.saveProfileAs(value)
 		return
 	}
-	if strings.HasPrefix(m.textInputKind, "service-ports:") {
-		serviceID := strings.TrimPrefix(m.textInputKind, "service-ports:")
+	if serviceID, ok := m.textInputKind.serviceIDValue(); ok {
 		if err := m.commitServicePortOverride(serviceID, value); err != nil {
 			m.textInputActive = true
 			m.status = "Invalid service port: " + err.Error()
@@ -183,8 +184,8 @@ func (m *Model) commitTextInput() {
 		m.status = "Service ports updated"
 		return
 	}
-	if strings.HasPrefix(m.textInputKind, "container-") {
-		if err := m.commitContainerResource(containerResourceKind(m.textInputKind), value); err != nil {
+	if resource, ok := m.textInputKind.resourceKind(); ok {
+		if err := m.commitContainerResource(resource, value); err != nil {
 			m.textInputActive = true
 			m.status = "Invalid container resource: " + err.Error()
 			return
@@ -193,8 +194,7 @@ func (m *Model) commitTextInput() {
 		m.status = "Container resource updated"
 		return
 	}
-	if m.advancedOptionKindActive() {
-		kind := advancedOptionKind(m.textInputKind)
+	if kind, ok := m.textInputKind.advancedKind(); ok {
 		if kind == advancedExtraArgs {
 			args, err := launcher.SplitArgs(value)
 			if err != nil {
@@ -256,30 +256,31 @@ func (m *Model) saveProfileAs(name string) {
 		Permissions: m.launch.Permissions,
 		Mounts:      m.launch.Mounts,
 		Options: &config.Options{
-			Jail:                  m.launch.UseJail,
-			Docker:                m.launch.UseDocker,
-			ContainerRuntime:      config.EffectiveContainerRuntime(m.launch.ContainerRuntime),
-			ContainerContext:      strings.TrimSpace(m.launch.ContainerContext),
-			Stacks:                append([]string(nil), m.launch.Docker.Selection.Stacks...),
-			Services:              append([]string(nil), m.launch.Services...),
-			ContainerEnvironment:  copyStringMap(m.launch.ContainerEnvironment),
-			ContainerServicePorts: copyServicePortMappings(m.launch.ContainerServicePorts),
-			ContainerTmux:         m.launch.ContainerTmux,
-			ContainerMemory:       m.launch.Docker.MemoryLimit,
-			ContainerCPUs:         m.launch.Docker.CPULimit,
-			ContainerPIDs:         m.launch.Docker.PIDsLimit,
-			ContainerPorts:        append([]config.PortMapping(nil), m.launch.Docker.ExposedPorts...),
-			ContainerNetwork:      m.launch.Docker.NetworkName,
-			Memory:                m.launch.UseMemory,
-			Yolo:                  m.launch.Yolo,
-			Fresh:                 m.launch.Fresh,
-			NewWorkstream:         m.launch.NewWorkstream,
-			Workstream:            m.launch.Workstream,
-			Workspace:             m.launch.Workspace,
-			Project:               m.launch.Project,
-			JailFlags:             m.launch.JailFlags,
-			ExtraArgs:             m.launch.ExtraArgs,
-			ParamValues:           m.launch.ParamValues,
+			Jail:                     m.launch.UseJail,
+			Docker:                   m.launch.UseDocker,
+			ContainerRuntime:         config.EffectiveContainerRuntime(m.launch.ContainerRuntime),
+			ContainerContext:         strings.TrimSpace(m.launch.ContainerContext),
+			Stacks:                   append([]string(nil), m.launch.Docker.Selection.Stacks...),
+			Services:                 append([]string(nil), m.launch.Services...),
+			ContainerEnvironment:     copyStringMap(m.launch.ContainerEnvironment),
+			ContainerServicePorts:    copyServicePortMappings(m.launch.ContainerServicePorts),
+			ContainerTmux:            m.launch.ContainerTmux,
+			ContainerMemory:          m.launch.Docker.MemoryLimit,
+			ContainerCPUs:            m.launch.Docker.CPULimit,
+			ContainerPIDs:            m.launch.Docker.PIDsLimit,
+			ContainerPorts:           append([]config.PortMapping(nil), m.launch.Docker.ExposedPorts...),
+			ContainerNetwork:         m.launch.Docker.NetworkName,
+			ContainerNetworkInternal: m.launch.ContainerNetworkInternal,
+			Memory:                   m.launch.UseMemory,
+			Yolo:                     m.launch.Yolo,
+			Fresh:                    m.launch.Fresh,
+			NewWorkstream:            m.launch.NewWorkstream,
+			Workstream:               m.launch.Workstream,
+			Workspace:                m.launch.Workspace,
+			Project:                  m.launch.Project,
+			JailFlags:                m.launch.JailFlags,
+			ExtraArgs:                m.launch.ExtraArgs,
+			ParamValues:              m.launch.ParamValues,
 		},
 	}
 	if !containsString(m.profileNames, name) {

@@ -44,6 +44,7 @@ type launchSpec struct {
 	PIDs              int64             `yaml:"pids"`
 	Ports             []string          `yaml:"ports"`
 	Network           string            `yaml:"network"`
+	InternalNetwork   bool              `yaml:"internal_network"`
 	JailExec          bool              `yaml:"jail_exec"`
 	JailFlags         config.JailFlags  `yaml:"jail_flags"`
 	Memory            bool              `yaml:"memory"`
@@ -327,6 +328,7 @@ func dockerRunConfig(spec launchSpec) container.RunConfig {
 		PIDsLimit:            spec.PIDs,
 		ExposedPorts:         ports,
 		NetworkName:          spec.Network,
+		NetworkInternal:      spec.InternalNetwork,
 		WorktreeMounts:       append([]string(nil), spec.WorktreeMounts...),
 		DockerSocketGroupID:  spec.DockerSocketGroup,
 		DockerSocketGroupSet: spec.DockerSocketGroup != 0,

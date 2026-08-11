@@ -75,6 +75,28 @@ func TestBuildComposeSelectsAgentAndInfrastructure(t *testing.T) {
 	}
 }
 
+func TestBuildComposeSetsInternalNetworkWhenConfigured(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Services = []string{"redis"}
+	cfg.Docker.NetworkInternal = true
+
+	file, err := BuildCompose(cfg)
+	if err != nil {
+		t.Fatalf("BuildCompose() error = %v", err)
+	}
+	network, ok := file.Networks["ai-launcher"]
+	if !ok || !network.Internal {
+		t.Fatalf("networks = %#v; want ai-launcher internal=true", file.Networks)
+	}
+	rendered, err := container.RenderCompose(file)
+	if err != nil {
+		t.Fatalf("RenderCompose() error = %v", err)
+	}
+	if !strings.Contains(rendered, "internal: true") {
+		t.Fatalf("rendered compose missing %q:\n%s", "internal: true", rendered)
+	}
+}
+
 func hasComposeVolume(volumes []string, want string) bool {
 	for _, volume := range volumes {
 		if volume == want {

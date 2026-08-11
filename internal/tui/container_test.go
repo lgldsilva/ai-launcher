@@ -328,7 +328,18 @@ func TestDockerContextEditorListsAndSelectsContext(t *testing.T) {
 		Docker:      container.RunConfig{Runtime: container.DockerRuntime{}},
 	})
 	model.section = model.containerIndex()
-	model.cursor = len(model.stackIDs) + len(model.containerResourceRows()) - 1
+	rows := model.containerResourceRows()
+	contextIndex := -1
+	for i, row := range rows {
+		if row.kind == resourceContext {
+			contextIndex = i
+			break
+		}
+	}
+	if contextIndex < 0 {
+		t.Fatal("Docker context row not found in containerResourceRows()")
+	}
+	model.cursor = len(model.stackIDs) + contextIndex
 	model.startContainerResourceInput()
 	if !strings.Contains(model.View(), "Contexts (↑/↓)") || !strings.Contains(model.View(), "remote-builder") {
 		t.Fatalf("context editor does not show the picker:\n%s", model.View())
@@ -357,7 +368,18 @@ func TestDockerContextEditorAllowsManualEntryWhenListFails(t *testing.T) {
 		Docker:      container.RunConfig{Runtime: container.DockerRuntime{}},
 	})
 	model.section = model.containerIndex()
-	model.cursor = len(model.stackIDs) + len(model.containerResourceRows()) - 1
+	rows := model.containerResourceRows()
+	contextIndex := -1
+	for i, row := range rows {
+		if row.kind == resourceContext {
+			contextIndex = i
+			break
+		}
+	}
+	if contextIndex < 0 {
+		t.Fatal("Docker context row not found in containerResourceRows()")
+	}
+	model.cursor = len(model.stackIDs) + contextIndex
 	model.startContainerResourceInput()
 	if !strings.Contains(model.status, "contexts unavailable") {
 		t.Fatalf("status = %q; want context-list diagnostic", model.status)
@@ -455,8 +477,8 @@ func TestContainerResourceInputValidatesAndUpdates(t *testing.T) {
 
 	model.cursor = len(model.stackIDs)
 	model.startContainerResourceInput()
-	if model.textInputKind != string(resourceMemory) || model.textInputValue != "" {
-		t.Fatalf("memory input = kind %q value %q", model.textInputKind, model.textInputValue)
+	if !model.textInputKind.isResource(resourceMemory) || model.textInputValue != "" {
+		t.Fatalf("memory input = kind %+v value %q", model.textInputKind, model.textInputValue)
 	}
 	model.textInputValue = "1m"
 	model.commitTextInput()
@@ -764,5 +786,108 @@ func TestLoadProfilePinsReleaseVersion(t *testing.T) {
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("profile selection does not validate: %v", err)
+	}
+}
+
+// TestContainerResourceRowRoleDefaultsToText is a tripwire for
+// containerRowRole: every original resource row is text-editable (opens
+// startContainerResourceInput) and must stay that way. The one deliberate
+// exception is "Net: internal" (added for ContainerNetworkInternal), which
+// must stay a toggle row — this test locks both facts down.
+func TestContainerResourceRowRoleDefaultsToText(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	rows := model.containerResourceRows()
+	if len(rows) != 8 {
+		t.Fatalf("containerResourceRows() = %d rows; want 8", len(rows))
+	}
+	for _, row := range rows {
+		if row.kind == resourceNetworkInternal {
+			if row.role != containerRowToggle {
+				t.Fatalf("row %q role = %v; want containerRowToggle", row.name, row.role)
+			}
+			continue
+		}
+		if row.role != containerRowText {
+			t.Fatalf("row %q role = %v; want containerRowText", row.name, row.role)
+		}
+	}
+}
+
+// TestToggleNetworkInternalUpdatesSelection covers the toggle row itself: it
+// must flip both LaunchConfig.ContainerNetworkInternal (the raw tri-state,
+// carried for --save/--save-profile round-tripping) and Docker.NetworkInternal
+// (the resolved value BuildCompose reads), and set a loud status message —
+// this is the "warning at the moment of the mistake" the design calls for,
+// distinct from the preflight warning that fires later at launch time.
+func TestToggleNetworkInternalUpdatesSelection(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Services:    []string{"redis"},
+		Permissions: map[string]bool{},
+	})
+	rows := model.containerResourceRows()
+	index := -1
+	for i, row := range rows {
+		if row.kind == resourceNetworkInternal {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("Net: internal row not found in containerResourceRows()")
+	}
+	model.section = model.containerIndex()
+	model.cursor = len(model.stackIDs) + index
+
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+	if model.launch.ContainerNetworkInternal == nil || !*model.launch.ContainerNetworkInternal {
+		t.Fatalf("ContainerNetworkInternal = %v; want true", model.launch.ContainerNetworkInternal)
+	}
+	if !model.launch.Docker.NetworkInternal {
+		t.Fatal("Docker.NetworkInternal = false; want true")
+	}
+	if !strings.Contains(model.status, "CANNOT reach the internet") {
+		t.Fatalf("status = %q; want a loud egress warning", model.status)
+	}
+
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+	if model.launch.ContainerNetworkInternal == nil || *model.launch.ContainerNetworkInternal {
+		t.Fatalf("ContainerNetworkInternal = %v; want false after second toggle", model.launch.ContainerNetworkInternal)
+	}
+	if model.launch.Docker.NetworkInternal {
+		t.Fatal("Docker.NetworkInternal = true; want false after second toggle")
+	}
+	if !strings.Contains(model.status, "disabled") {
+		t.Fatalf("status = %q; want a disabled confirmation", model.status)
+	}
+}
+
+// TestContainerViewShowsNetworkInternalToggle covers the row's rendering:
+// name, on/off value, and hint must all appear so the loud consequence is
+// visible without opening a text editor.
+func TestContainerViewShowsNetworkInternalToggle(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	view := model.View()
+	for _, want := range []string{"Net: internal", "off", "blocks ALL outbound"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+
+	enabled := true
+	model.launch.ContainerNetworkInternal = &enabled
+	model.launch.Docker.NetworkInternal = true
+	view = model.View()
+	if !strings.Contains(view, "Net: internal") {
+		t.Fatalf("view missing \"Net: internal\" row when enabled:\n%s", view)
 	}
 }

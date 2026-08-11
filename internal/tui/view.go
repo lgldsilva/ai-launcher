@@ -213,29 +213,33 @@ func (m Model) textInputLines() []string {
 	label := "Profile"
 	hint := ""
 	switch {
-	case m.textInputKind == "param":
+	case m.textInputKind.isParam():
 		label = m.paramTarget.Name + " (" + m.paramTarget.Flag + ")"
-	case m.advancedOptionKindActive():
-		if row, ok := m.advancedOption(advancedOptionKind(m.textInputKind)); ok {
-			label = row.name
-			hint = row.hint
+	case m.textInputKind.isAdvanced():
+		if kind, ok := m.textInputKind.advancedKind(); ok {
+			if row, ok := m.advancedOption(kind); ok {
+				label = row.name
+				hint = row.hint
+			}
 		}
-	case strings.HasPrefix(m.textInputKind, "container-"):
-		kind := containerResourceKind(m.textInputKind)
-		label = containerResourceLabel(kind)
-		hint = containerResourceEditHint(kind)
-	case strings.HasPrefix(m.textInputKind, "service-ports:"):
-		serviceID := strings.TrimPrefix(m.textInputKind, "service-ports:")
-		if service, ok := container.ServiceByID(serviceID); ok {
-			label = service.Name + " ports"
+	case m.textInputKind.isContainerResource():
+		if kind, ok := m.textInputKind.resourceKind(); ok {
+			label = containerResourceLabel(kind)
+			hint = containerResourceEditHint(kind)
 		}
-		hint = servicePortEditHint()
+	case m.textInputKind.isServicePort():
+		if serviceID, ok := m.textInputKind.serviceIDValue(); ok {
+			if service, ok := container.ServiceByID(serviceID); ok {
+				label = service.Name + " ports"
+			}
+			hint = servicePortEditHint()
+		}
 	}
 	lines := []string{fmt.Sprintf("  %s: %s█", label, m.textInputValue)}
 	if hint != "" {
 		lines = append(lines, mutedStyle.Render("  Format: "+hint))
 	}
-	if m.textInputKind == string(resourceContext) {
+	if m.textInputKind.isResource(resourceContext) {
 		choices := m.contextChoices()
 		labels := make([]string, 0, len(choices))
 		for index, choice := range choices {
@@ -247,7 +251,7 @@ func (m Model) textInputLines() []string {
 		}
 		lines = append(lines, mutedStyle.Render("  Contexts (↑/↓): "+strings.Join(labels, "  ")))
 	}
-	if m.textInputKind == string(resourceRuntime) {
+	if m.textInputKind.isResource(resourceRuntime) {
 		choices := m.runtimeChoices()
 		labels := make([]string, 0, len(choices))
 		for index, choice := range choices {
@@ -468,14 +472,38 @@ func (m Model) containerResourceRows() []containerResourceRow {
 		source = "--container-runtime"
 	}
 	return []containerResourceRow{
-		{name: "Memory", kind: resourceMemory, value: displayResourceValue(m.launch.Docker.MemoryLimit), hint: "512m / 2g"},
-		{name: "CPU", kind: resourceCPU, value: displayResourceValue(m.launch.Docker.CPULimit), hint: "1.0 cores"},
-		{name: "PIDs", kind: resourcePIDs, value: displayPIDs(m.launch.Docker.PIDsLimit), hint: "integer, e.g. 256"},
-		{name: "Ports", kind: resourcePorts, value: displayResourceValue(strings.Join(ports, ",")), hint: "3000:3000[,udp]"},
-		{name: "Network", kind: resourceNetwork, value: displayResourceValue(m.launch.Docker.NetworkName), hint: "bridge / host"},
-		{name: "Runtime", kind: resourceRuntime, value: runtime.Name() + " (" + source + ")", hint: "auto / docker / podman / nerdctl"},
-		{name: "Docker context", kind: resourceContext, value: displayResourceValue(m.launch.ContainerContext), hint: "empty = current; list with docker context ls"},
+		{name: "Memory", kind: resourceMemory, value: displayResourceValue(m.launch.Docker.MemoryLimit), hint: "512m / 2g", role: containerRowText},
+		{name: "CPU", kind: resourceCPU, value: displayResourceValue(m.launch.Docker.CPULimit), hint: "1.0 cores", role: containerRowText},
+		{name: "PIDs", kind: resourcePIDs, value: displayPIDs(m.launch.Docker.PIDsLimit), hint: "integer, e.g. 256", role: containerRowText},
+		{name: "Ports", kind: resourcePorts, value: displayResourceValue(strings.Join(ports, ",")), hint: "3000:3000[,udp]", role: containerRowText},
+		{name: "Network", kind: resourceNetwork, value: displayResourceValue(m.launch.Docker.NetworkName), hint: "bridge / host", role: containerRowText},
+		{name: "Runtime", kind: resourceRuntime, value: runtime.Name() + " (" + source + ")", hint: "auto / docker / podman / nerdctl", role: containerRowText},
+		{name: "Docker context", kind: resourceContext, value: displayResourceValue(m.launch.ContainerContext), hint: "empty = current; list with docker context ls", role: containerRowText},
+		{
+			name:  "Net: internal",
+			kind:  resourceNetworkInternal,
+			value: displayNetworkInternal(m.launch.ContainerNetworkInternal),
+			hint:  "blocks ALL outbound incl. this agent's API — Compose-only, needs a service",
+			role:  containerRowToggle,
+			toggle: func(m *Model) {
+				next := !config.EffectiveContainerNetworkInternal(m.launch.ContainerNetworkInternal)
+				m.launch.ContainerNetworkInternal = &next
+				m.launch.Docker.NetworkInternal = next
+				if next {
+					m.status = "Network: internal only — this container CANNOT reach the internet, including the agent's own API, unless routed through a proxy. Requires a Compose service (--service) or this is a no-op."
+					return
+				}
+				m.status = "Network: internal only disabled — outbound access restored."
+			},
+		},
 	}
+}
+
+func displayNetworkInternal(value *bool) string {
+	if config.EffectiveContainerNetworkInternal(value) {
+		return "on"
+	}
+	return "off"
 }
 
 func displayResourceValue(value string) string {

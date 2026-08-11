@@ -56,6 +56,34 @@ func TestRenderCompose(t *testing.T) {
 	}
 }
 
+func TestComposeNetworkInternalRendersWhenTrue(t *testing.T) {
+	file := NewComposeFile()
+	file.Services["agent"] = ComposeService{Build: ".", Networks: []string{"ai-launcher"}}
+	file.Networks["ai-launcher"] = ComposeNetwork{Driver: "bridge", Internal: true}
+
+	rendered, err := RenderCompose(file)
+	if err != nil {
+		t.Fatalf("RenderCompose() error = %v", err)
+	}
+	if !strings.Contains(rendered, "internal: true") {
+		t.Fatalf("rendered compose missing %q:\n%s", "internal: true", rendered)
+	}
+}
+
+func TestComposeNetworkInternalOmittedWhenFalse(t *testing.T) {
+	file := NewComposeFile()
+	file.Services["agent"] = ComposeService{Build: ".", Networks: []string{"ai-launcher"}}
+	file.Networks["ai-launcher"] = ComposeNetwork{Driver: "bridge"}
+
+	rendered, err := RenderCompose(file)
+	if err != nil {
+		t.Fatalf("RenderCompose() error = %v", err)
+	}
+	if strings.Contains(rendered, "internal:") {
+		t.Fatalf("rendered compose must omit internal key when false:\n%s", rendered)
+	}
+}
+
 func TestComposeServiceFromCatalog(t *testing.T) {
 	service := ServiceByIDMust(t, "postgres")
 	got, err := ComposeServiceFromCatalog(service, "shared")

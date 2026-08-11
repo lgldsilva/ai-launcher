@@ -248,10 +248,12 @@ func TestSaveProfilePersistsMergedSelectionWithoutLaunching(t *testing.T) {
 }
 
 func TestProfileFromLaunchPersistsContainerRuntime(t *testing.T) {
+	networkInternal := true
 	profile := profileFromLaunch(launcher.LaunchConfig{
-		Agent:            config.Agent{Command: "claude"},
-		UseDocker:        true,
-		ContainerRuntime: "podman",
+		Agent:                    config.Agent{Command: "claude"},
+		UseDocker:                true,
+		ContainerRuntime:         "podman",
+		ContainerNetworkInternal: &networkInternal,
 		Docker: container.RunConfig{
 			Runtime:      container.PodmanRuntime{},
 			MemoryLimit:  "4g",
@@ -266,6 +268,12 @@ func TestProfileFromLaunchPersistsContainerRuntime(t *testing.T) {
 	}
 	if profile.Options.ContainerMemory != "4g" || profile.Options.ContainerCPUs != "2.0" || profile.Options.ContainerPIDs != 512 || len(profile.Options.ContainerPorts) != 1 || profile.Options.ContainerNetwork != "bridge" {
 		t.Fatalf("profile resources = %#v", profile.Options)
+	}
+	// Regression: --save-profile must not silently drop the raw tri-state
+	// network-isolation choice the way ContainerHostGateway's resolved-only
+	// representation does — see LaunchConfig.ContainerNetworkInternal's doc.
+	if profile.Options.ContainerNetworkInternal == nil || !*profile.Options.ContainerNetworkInternal {
+		t.Fatalf("profile.Options.ContainerNetworkInternal = %#v; want explicit true", profile.Options.ContainerNetworkInternal)
 	}
 }
 

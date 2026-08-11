@@ -37,7 +37,7 @@ func BuildCompose(cfg LaunchConfig) (container.ComposeFile, error) {
 	}
 
 	file := container.NewComposeFile()
-	file.Networks[networkName] = container.ComposeNetwork{Driver: "bridge"}
+	file.Networks[networkName] = container.ComposeNetwork{Driver: "bridge", Internal: run.NetworkInternal}
 	dataDir := filepath.Join(run.ProjectDir, ".ai-launcher", "data")
 	if err := addComposeServices(&file, cfg.Services, cfg.ContainerServicePorts, networkName, dataDir, run); err != nil {
 		return container.ComposeFile{}, err

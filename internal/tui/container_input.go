@@ -9,6 +9,23 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/container"
 )
 
+// toggleOrEditContainerResource routes the row under the cursor by its role:
+// a toggle row flips in place via its closure, a text row opens the editor.
+func (m *Model) toggleOrEditContainerResource() {
+	index := m.cursor - len(m.stackIDs)
+	rows := m.containerResourceRows()
+	if index < 0 || index >= len(rows) {
+		return
+	}
+	if row := rows[index]; row.role == containerRowToggle {
+		if row.toggle != nil {
+			row.toggle(m)
+		}
+		return
+	}
+	m.startContainerResourceInput()
+}
+
 func (m *Model) startContainerResourceInput() {
 	index := m.cursor - len(m.stackIDs)
 	rows := m.containerResourceRows()
@@ -16,7 +33,7 @@ func (m *Model) startContainerResourceInput() {
 		return
 	}
 	row := rows[index]
-	m.textInputKind = string(row.kind)
+	m.textInputKind = newContainerResourceTextInput(row.kind)
 	switch row.kind {
 	case resourceRuntime:
 		m.textInputValue = config.EffectiveContainerRuntime(m.launch.ContainerRuntime)
