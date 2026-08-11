@@ -834,7 +834,7 @@ func TestModelEditsDeclaredParamValues(t *testing.T) {
 		t.Fatalf("cursor = %d; want first param row", model.cursor)
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	if !model.textInputActive || model.textInputKind != "param" {
+	if !model.textInputActive || !model.textInputKind.isParam() {
 		t.Fatal("enter on a param row did not open the param input")
 	}
 	model = applyKey(t, model, runeKey("oi"))
@@ -931,7 +931,7 @@ func TestModelSavesProfileWithCtrlP(t *testing.T) {
 		return nil
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyCtrlP})
-	if !model.textInputActive || model.textInputKind != "profile" {
+	if !model.textInputActive || !model.textInputKind.isProfile() {
 		t.Fatal("ctrl+p did not open the profile name input")
 	}
 	model = applyKey(t, model, runeKey("review"))
@@ -984,5 +984,60 @@ func TestApplyDisplayOptionsSetsColorProfile(t *testing.T) {
 	applyDisplayOptions(&model)
 	if got := lipgloss.ColorProfile(); got != termenv.ANSI256 {
 		t.Fatalf("HighContrast profile = %v; want ANSI256", got)
+	}
+}
+
+// TestCurrentSectionMatchesLegacyIndexHelpers guards currentSection() (the
+// single place that now resolves m.section to a sectionKind) against
+// drifting from containerIndex/servicesIndex/profilesIndex, the low-level
+// helpers it wraps, across every combination of docker/profiles presence.
+func TestCurrentSectionMatchesLegacyIndexHelpers(t *testing.T) {
+	stubWindows(t, false)
+	cases := []struct {
+		name      string
+		useDocker bool
+		profiles  map[string]config.Profile
+	}{
+		{name: "no docker, no profiles", useDocker: false, profiles: nil},
+		{name: "docker, no profiles", useDocker: true, profiles: nil},
+		{name: "no docker, with profiles", useDocker: false, profiles: map[string]config.Profile{"box": {Agent: "claude"}}},
+		{name: "docker, with profiles", useDocker: true, profiles: map[string]config.Profile{"box": {Agent: "claude"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			global := config.DefaultGlobal()
+			global.Profiles = tc.profiles
+			model := NewModel(global, launcher.LaunchConfig{
+				UseDocker:   tc.useDocker,
+				Permissions: map[string]bool{},
+			})
+			containerIdx := model.containerIndex()
+			servicesIdx := model.servicesIndex()
+			profilesIdx := model.profilesIndex()
+			for section := 0; section < model.sectionCount(); section++ {
+				model.section = section
+				want := sectionNone
+				switch section {
+				case 0:
+					want = sectionAgent
+				case 1:
+					want = sectionPermissions
+				case 2:
+					want = sectionMounts
+				case 3:
+					want = sectionOptions
+				case containerIdx:
+					want = sectionContainer
+				case servicesIdx:
+					want = sectionServices
+				case profilesIdx:
+					want = sectionProfiles
+				}
+				if got := model.currentSection(); got != want {
+					t.Fatalf("%s: section %d -> currentSection() = %v, want %v (container=%d services=%d profiles=%d)",
+						tc.name, section, got, want, containerIdx, servicesIdx, profilesIdx)
+				}
+			}
+		})
 	}
 }

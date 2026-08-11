@@ -270,6 +270,91 @@ honest. The checksum-verified installer runs inside the image build itself
 build context), reusing the host installer's verification logic instead of
 reimplementing checksum validation in shell.
 
+## The internal Compose network is all-or-nothing in v1
+
+**Decision.** `options.container_network_internal: true` marks the
+generated Compose network `internal: true` (`internal/container/compose.go`),
+blocking every outbound route for every service on it — including the
+agent's own LLM API calls. There is no selective allowlist: it is either
+"the container backend has the same open egress it always had" or "nothing
+gets out at all." Two pre-flight warnings guard the two ways this surprises
+an operator: `internal-network-blocks-agent` fires whenever the toggle is on
+and a Compose service is selected (the common case), and
+`internal-network-requires-compose` fires when it is on with zero services
+selected — the plain `docker run` backend (`BuildRunCommand`) has no Compose
+network at all, so the toggle is a silent no-op there.
+
+**Why Compose-only.** `internal: true` is a Compose Spec network-level
+attribute; there is no `docker run` equivalent short of a separate
+`docker network create --internal` step outside this launcher's argv
+building. `BuildCompose` already only runs when at least one infrastructure
+service is selected (see "The docker container backend replaces the jail"
+above and `internal/launcher/compose.go`'s service-count guard) — a launch
+with the container backend but no services goes through the plain `docker
+run` path today regardless of this toggle, so the requires-compose warning
+is not hypothetical.
+
+**Why the field is persisted separately from the resolved value.**
+`LaunchConfig.ContainerNetworkInternal *bool` carries the raw tri-state
+operator choice, distinct from the already-resolved
+`LaunchConfig.Docker.NetworkInternal bool` that `BuildCompose`/
+`BuildRunCommand` actually consume. `ContainerHostGateway` originally only
+kept the resolved form, so `--save`/`--save-profile` silently dropped the
+operator's raw choice; that gap was not repeated here on purpose, because
+losing this one is a safety regression (the operator believes egress is
+blocked when the next launch reopens it) rather than a cosmetic default
+drifting back. `ContainerHostGateway` itself has since received the same
+fix (raw tri-state added to `LaunchConfig`, threaded through persistence and
+the TUI's profile load path, which turned out to be missing entirely, not
+just the save side).
+
+## The v2 egress-allowlist proxy
+
+**Decision.** `options.container_network_allowed_domains` activates a
+selective egress proxy when `container_network_internal` is also `true`:
+`BuildCompose` (`internal/launcher/compose.go`'s `addEgressProxy`) injects a
+dual-homed squid service (`internal/container/egressproxy.go`) instead of
+leaving the agent with zero egress. The proxy sits on the existing internal
+network (where the agent and selected services live) and a new
+`<network>-egress` bridge network with real internet access — it is the only
+dual-homed service. The agent gets `HTTP_PROXY`/`HTTPS_PROXY` (and lowercase
+variants) pointing at it. `containerNetworkInternalIssues` softens its
+warning from `internal-network-blocks-agent` to `internal-network-restricts-agent`
+when domains are configured (still a warning — an incomplete allowlist fails
+silently as a blocked connection, not a clear error); a new
+`container-network-allowed-domains-without-internal-network` warning covers
+the inert case (domains configured, internal network off).
+
+**Why squid, not tinyproxy.** Squid's `acl ... dstdomain` supports real
+subdomain-wildcard matching and a `CONNECT`-method ACL for HTTPS tunneling;
+tinyproxy's `Filter` mechanism is a flat regex/substring list with no
+first-class per-domain ACL semantics — the same "run a narrow proxy instead
+of opening the door" philosophy already applied to the *inbound*
+`host.docker.internal` gateway case (see ARCHITECTURE.md's host-gateway
+section: "run a host-side MCP HTTP/SSE proxy... do not use `--network host`
+and do not mount the Docker socket"), now applied outbound.
+
+**Why the proxy is not a catalog `Service`.** The infrastructure catalog
+(`internal/container/services.go`, postgres/redis/etc.) is a user-selectable
+TUI picklist; an auto-injected security proxy does not belong there — it
+never appears as a checkbox. More concretely, `AddInfrastructureServiceWithDataDir`
+resolves its volume mount as a **directory** under `.ai-launcher/data/<service>/`;
+the proxy needs to mount a single **file** (`squid.conf`), so reusing that
+helper would mount a directory over a file path. The proxy gets its own
+constructor (`EgressProxyComposeService`), injected directly into
+`file.Services["egress-proxy"]` at the same tier `file.Services["agent"]`
+already is.
+
+**Why `ComposeFile.GeneratedFiles`.** `BuildCompose` stays pure (no I/O) —
+only `MaterializeCompose` writes to disk. The squid.conf content is computed
+as a string and staged on a new `ComposeFile.GeneratedFiles map[string]string`
+field (`yaml:"-"`, so it never leaks into the rendered Compose document);
+`MaterializeCompose` writes it via a new `writeComposeGeneratedFiles`, reusing
+the same symlink-refusal and atomic-write helpers every other materialized
+artifact gets. This sidesteps `ensureComposeDataDirectories`, which assumes
+every service volume source is a directory and would either `mkdir` where a
+file needs to be or fail outright if the proxy's config path went through it.
+
 ## Why `.ai-launcher/` is a directory
 
 **Decision.** Docker artifacts live in a project-local `.ai-launcher/`

@@ -720,6 +720,41 @@ Feature: Launcher command contract
       allow-tcp-ports-without-lockdown
       """
 
+  Scenario: Warns when the internal network blocks the agent
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /w
+      internal_network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      internal-network-blocks-agent
+      """
+
+  Scenario: Warns when the internal network has no Compose services to apply to
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      workspace: /w
+      internal_network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      internal-network-requires-compose
+      """
+
   Scenario: Rejects a harness ai-memory run does not accept
     Given a validation configuration
       """
@@ -1235,4 +1270,76 @@ Feature: Launcher command contract
       networks:
       ai-launcher:
       /work/.ai-launcher/data/postgres:/var/lib/postgresql
+      """
+
+  Scenario: Renders Compose YAML with an internal network
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /work
+      internal_network: true
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      internal: true
+      """
+
+  Scenario: Renders Compose YAML with an egress-allowlist proxy
+    Given a launch configuration
+      """
+      agent: claude
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /work
+      internal_network: true
+      allowed_domains: [api.anthropic.com]
+      """
+    When the launch command is built
+    Then the Compose YAML contains
+      """
+      egress-proxy
+      ai-launcher-egress
+      HTTP_PROXY
+      """
+
+  Scenario: Warns when allowed domains restrict rather than block the agent
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /w
+      internal_network: true
+      allowed_domains: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      internal-network-restricts-agent
+      """
+
+  Scenario: Warns when allowed domains are configured without the internal network
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      memory: false
+      docker: true
+      stacks: [go]
+      services: [redis]
+      workspace: /w
+      allowed_domains: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      container-network-allowed-domains-without-internal-network
       """

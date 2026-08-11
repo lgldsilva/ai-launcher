@@ -9,6 +9,23 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/container"
 )
 
+// toggleOrEditContainerResource routes the row under the cursor by its role:
+// a toggle row flips in place via its closure, a text row opens the editor.
+func (m *Model) toggleOrEditContainerResource() {
+	index := m.cursor - len(m.stackIDs)
+	rows := m.containerResourceRows()
+	if index < 0 || index >= len(rows) {
+		return
+	}
+	if row := rows[index]; row.role == containerRowToggle {
+		if row.toggle != nil {
+			row.toggle(m)
+		}
+		return
+	}
+	m.startContainerResourceInput()
+}
+
 func (m *Model) startContainerResourceInput() {
 	index := m.cursor - len(m.stackIDs)
 	rows := m.containerResourceRows()
@@ -16,10 +33,12 @@ func (m *Model) startContainerResourceInput() {
 		return
 	}
 	row := rows[index]
-	m.textInputKind = string(row.kind)
+	m.textInputKind = newContainerResourceTextInput(row.kind)
 	switch row.kind {
 	case resourceRuntime:
 		m.textInputValue = config.EffectiveContainerRuntime(m.launch.ContainerRuntime)
+	case resourceNetworkAllowedDomains:
+		m.textInputValue = strings.Join(m.launch.ContainerNetworkAllowedDomains, ",")
 	default:
 		m.textInputValue = containerResourceInputValue(row.kind, m.launch.Docker)
 	}
@@ -180,6 +199,8 @@ func containerResourceLabel(kind containerResourceKind) string {
 		return "Container runtime"
 	case resourceContext:
 		return "Docker context"
+	case resourceNetworkAllowedDomains:
+		return "Allowed domains"
 	default:
 		return string(kind)
 	}
@@ -201,6 +222,8 @@ func containerResourceEditHint(kind containerResourceKind) string {
 		return "auto, docker, podman, or nerdctl; ↑/↓ lists PATH availability"
 	case resourceContext:
 		return "Docker context name; empty = current; list with docker context ls"
+	case resourceNetworkAllowedDomains:
+		return "comma-separated domains, e.g. api.anthropic.com,github.com; empty = none"
 	default:
 		return ""
 	}
@@ -282,6 +305,16 @@ func (m *Model) commitContainerResource(kind containerResourceKind, value string
 		}
 		m.launch.ContainerContext = value
 		updated.Context = value
+	case resourceNetworkAllowedDomains:
+		if value == "" {
+			m.launch.ContainerNetworkAllowedDomains = nil
+		} else {
+			domains, err := container.ParseEgressDomains(value)
+			if err != nil {
+				return err
+			}
+			m.launch.ContainerNetworkAllowedDomains = domains
+		}
 	default:
 		return fmt.Errorf("unknown container resource %q", kind)
 	}

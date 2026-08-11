@@ -72,6 +72,91 @@ func TestTuiRunAutosavesTheConfirmedSelection(t *testing.T) {
 	}
 }
 
+// Regression: --save (autosave included) must not silently drop the raw
+// tri-state network-isolation choice — see
+// LaunchConfig.ContainerNetworkInternal's doc comment for why this field
+// exists separately from the already-resolved Docker.NetworkInternal.
+func TestTuiRunAutosavesContainerNetworkInternal(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobal(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkInternal := true
+	confirmed := launcher.LaunchConfig{
+		Agent:                    config.Agent{Command: "custom-cli"},
+		UseDocker:                true,
+		ContainerNetworkInternal: &networkInternal,
+	}
+	restore := stubRunTUI(t, confirmed)
+	defer restore()
+	req := &launchRequest{
+		opts:         cliOptions{globalPath: globalPath, localPath: localPath},
+		global:       global,
+		local:        local,
+		launchConfig: launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}},
+		errOut:       &bytes.Buffer{},
+	}
+	proceed, err := req.confirmSelection("")
+	if err != nil || !proceed {
+		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
+	}
+	saved, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if saved.Options.ContainerNetworkInternal == nil || !*saved.Options.ContainerNetworkInternal {
+		t.Fatalf("saved container_network_internal = %#v; want explicit true", saved.Options.ContainerNetworkInternal)
+	}
+}
+
+// TestTuiRunAutosavesContainerHostGateway is the regression guard for the
+// persistence gap ContainerNetworkInternal was deliberately built to avoid:
+// before this fix, --save/--save-profile silently dropped an operator's
+// explicit ContainerHostGateway choice because LaunchConfig only carried the
+// already-resolved Docker.AddHostGateway bool, never the raw tri-state.
+func TestTuiRunAutosavesContainerHostGateway(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: false\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobal(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostGateway := false
+	confirmed := launcher.LaunchConfig{
+		Agent:                config.Agent{Command: "custom-cli"},
+		UseDocker:            true,
+		ContainerHostGateway: &hostGateway,
+	}
+	restore := stubRunTUI(t, confirmed)
+	defer restore()
+	req := &launchRequest{
+		opts:         cliOptions{globalPath: globalPath, localPath: localPath},
+		global:       global,
+		local:        local,
+		launchConfig: launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}},
+		errOut:       &bytes.Buffer{},
+	}
+	proceed, err := req.confirmSelection("")
+	if err != nil || !proceed {
+		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
+	}
+	saved, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if saved.Options.ContainerHostGateway == nil || *saved.Options.ContainerHostGateway {
+		t.Fatalf("saved container_host_gateway = %#v; want explicit false", saved.Options.ContainerHostGateway)
+	}
+}
+
 func TestTuiContainerDefaultsWorkspaceToCurrentDirectory(t *testing.T) {
 	dir := t.TempDir()
 	restoreDir := chdir(t, dir)

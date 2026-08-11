@@ -56,6 +56,36 @@ func TestGenerateMaterializesContainerArtifactsWithoutLaunching(t *testing.T) {
 	}
 }
 
+// End-to-end: container_network_internal in the local config flows through
+// generateContainerArtifacts (cmd/ai-launcher/container_flow.go) into the
+// materialized Compose YAML's network block.
+func TestGenerateMaterializesInternalNetworkWhenConfigured(t *testing.T) {
+	sourceDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_SRC_PATH", sourceDir)
+	dir := t.TempDir()
+	restore := chdir(t, dir)
+	defer restore()
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  docker: true\n  memory: false\n  stacks: [go]\n  services: [redis]\n  container_network_internal: true\n")
+	stdout, _, err := runCapture(t, "generate", "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--docker-backend")
+	if err != nil {
+		t.Fatalf("run(generate) error = %v", err)
+	}
+	if !strings.Contains(stdout, "generated .ai-launcher/Dockerfile") {
+		t.Fatalf("stdout = %q; want generated artifact messages", stdout)
+	}
+	compose, err := os.ReadFile(filepath.Join(dir, ".ai-launcher", "docker-compose.yaml")) // #nosec G304 -- dir is a test-owned temporary directory
+	if err != nil {
+		t.Fatalf("docker-compose.yaml was not generated: %v", err)
+	}
+	if !strings.Contains(string(compose), "internal: true") {
+		t.Fatalf("docker-compose.yaml missing %q:\n%s", "internal: true", compose)
+	}
+}
+
 func TestSaveInContainerModeMaterializesArtifactsWithoutRuntime(t *testing.T) {
 	sourceDir, err := os.Getwd()
 	if err != nil {

@@ -1,7 +1,9 @@
 package launcher
 
 import (
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -73,6 +75,104 @@ func TestBuildComposeSelectsAgentAndInfrastructure(t *testing.T) {
 	if !strings.Contains(rendered, "POSTGRES_URL: postgres://custom:5432/app") {
 		t.Fatalf("rendered compose misses custom environment:\n%s", rendered)
 	}
+}
+
+func TestBuildComposeSetsInternalNetworkWhenConfigured(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Services = []string{"redis"}
+	cfg.Docker.NetworkInternal = true
+
+	file, err := BuildCompose(cfg)
+	if err != nil {
+		t.Fatalf("BuildCompose() error = %v", err)
+	}
+	network, ok := file.Networks["ai-launcher"]
+	if !ok || !network.Internal {
+		t.Fatalf("networks = %#v; want ai-launcher internal=true", file.Networks)
+	}
+	rendered, err := container.RenderCompose(file)
+	if err != nil {
+		t.Fatalf("RenderCompose() error = %v", err)
+	}
+	if !strings.Contains(rendered, "internal: true") {
+		t.Fatalf("rendered compose missing %q:\n%s", "internal: true", rendered)
+	}
+}
+
+func TestBuildComposeInjectsEgressProxyWhenDomainsConfigured(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Services = []string{"redis"}
+	cfg.Docker.NetworkInternal = true
+	cfg.ContainerNetworkAllowedDomains = []string{"api.anthropic.com"}
+
+	file, err := BuildCompose(cfg)
+	if err != nil {
+		t.Fatalf("BuildCompose() error = %v", err)
+	}
+
+	egressNetwork, ok := file.Networks["ai-launcher-egress"]
+	if !ok || egressNetwork.Internal {
+		t.Fatalf("networks = %#v; want ai-launcher-egress present and not internal", file.Networks)
+	}
+
+	proxy, ok := file.Services[container.EgressProxyServiceID]
+	if !ok {
+		t.Fatalf("services = %v; want %q present", mapKeys(file.Services), container.EgressProxyServiceID)
+	}
+	wantNetworks := []string{"ai-launcher", "ai-launcher-egress"}
+	if len(proxy.Networks) != len(wantNetworks) || proxy.Networks[0] != wantNetworks[0] || proxy.Networks[1] != wantNetworks[1] {
+		t.Fatalf("proxy.Networks = %v; want %v", proxy.Networks, wantNetworks)
+	}
+
+	agent, ok := file.Services["agent"]
+	if !ok {
+		t.Fatal("services missing \"agent\"")
+	}
+	wantProxyURL := fmt.Sprintf("http://%s:%d", container.EgressProxyServiceID, container.EgressProxyPort)
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if agent.Environment[key] != wantProxyURL {
+			t.Fatalf("agent.Environment[%q] = %q; want %q", key, agent.Environment[key], wantProxyURL)
+		}
+	}
+	if !slices.Contains(agent.DependsOn, container.EgressProxyServiceID) {
+		t.Fatalf("agent.DependsOn = %v; want it to include %q", agent.DependsOn, container.EgressProxyServiceID)
+	}
+
+	var configContent string
+	for path, content := range file.GeneratedFiles {
+		if strings.Contains(path, "egress-proxy") {
+			configContent = content
+		}
+	}
+	if !strings.Contains(configContent, "api.anthropic.com") {
+		t.Fatalf("generated egress-proxy config missing the configured domain:\n%s", configContent)
+	}
+}
+
+func TestBuildComposeIgnoresAllowedDomainsWithoutInternalNetwork(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.Services = []string{"redis"}
+	cfg.ContainerNetworkAllowedDomains = []string{"api.anthropic.com"}
+	// cfg.Docker.NetworkInternal left false.
+
+	file, err := BuildCompose(cfg)
+	if err != nil {
+		t.Fatalf("BuildCompose() error = %v", err)
+	}
+	if _, ok := file.Networks["ai-launcher-egress"]; ok {
+		t.Fatalf("networks = %#v; want no ai-launcher-egress network", file.Networks)
+	}
+	if _, ok := file.Services[container.EgressProxyServiceID]; ok {
+		t.Fatalf("services = %v; want no %q service", mapKeys(file.Services), container.EgressProxyServiceID)
+	}
+}
+
+func mapKeys(m map[string]container.ComposeService) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func hasComposeVolume(volumes []string, want string) bool {

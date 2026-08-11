@@ -16,6 +16,14 @@ type ComposeFile struct {
 	Services map[string]ComposeService `yaml:"services"`
 	Networks map[string]ComposeNetwork `yaml:"networks,omitempty"`
 	Volumes  map[string]ComposeVolume  `yaml:"volumes,omitempty"`
+	// GeneratedFiles maps an absolute host path to content that
+	// MaterializeCompose must write alongside docker-compose.yaml (for
+	// example the egress proxy's squid.conf). yaml:"-" is required: this
+	// must never leak into the rendered Compose document. Builders
+	// (BuildCompose) only ever populate this map — they do no I/O
+	// themselves; MaterializeCompose is the single place these bytes reach
+	// disk.
+	GeneratedFiles map[string]string `yaml:"-"`
 }
 
 // ComposeService is one agent or infrastructure service in the generated
@@ -42,9 +50,16 @@ type ComposeService struct {
 	Healthcheck map[string]any    `yaml:"healthcheck,omitempty"`
 }
 
-// ComposeNetwork describes a named compose network.
+// ComposeNetwork describes a named compose network. Internal, when true, is
+// the Compose Spec's own network-level flag: Docker adds no gateway/route to
+// the host's outbound interface for it, so every service attached only to
+// this network — including the agent's own LLM API calls — loses all
+// internet egress. Compose networks have no domain/IP allowlist primitive;
+// selective access needs a companion dual-homed proxy service (see
+// docs/design-decisions.md).
 type ComposeNetwork struct {
-	Driver string `yaml:"driver,omitempty"`
+	Driver   string `yaml:"driver,omitempty"`
+	Internal bool   `yaml:"internal,omitempty"`
 }
 
 // ComposeVolume describes a named compose volume.

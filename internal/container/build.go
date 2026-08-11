@@ -154,6 +154,9 @@ func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
 	if err := ensureComposeDataDirectories(projectDir, file); err != nil {
 		return "", err
 	}
+	if err := WriteComposeGeneratedFiles(projectDir, file); err != nil {
+		return "", err
+	}
 	dir := filepath.Join(projectDir, containerArtifactDirName)
 	if err := ensureMaterializedDir(dir); err != nil {
 		return "", err
@@ -163,6 +166,28 @@ func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// WriteComposeGeneratedFiles writes any content BuildCompose staged on
+// ComposeFile.GeneratedFiles (for example the egress proxy's squid.conf).
+// BuildCompose stays pure — it only computes content and a path; this is the
+// single place those bytes reach disk, alongside every other Compose
+// artifact, with the same symlink-refusal and atomic-write guarantees.
+// Domain-agnostic: works for any future generated file, not just the proxy.
+func WriteComposeGeneratedFiles(projectDir string, file ComposeFile) error {
+	dataDir := filepath.Join(projectDir, containerArtifactDirName, "data")
+	for path, content := range file.GeneratedFiles {
+		if !pathWithin(dataDir, path) {
+			return fmt.Errorf("generated compose file %s escapes the data directory", path)
+		}
+		if err := ensureMaterializedDir(filepath.Dir(path)); err != nil {
+			return err
+		}
+		if err := writeMaterializedArtifact(path, []byte(content)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureComposeDataDirectories creates only the service data directories
@@ -175,6 +200,16 @@ func ensureComposeDataDirectories(projectDir string, file ComposeFile) error {
 		for _, volume := range service.Volumes {
 			source, _, ok := composeVolumeParts(volume)
 			if !ok || !pathWithin(dataDir, source) {
+				continue
+			}
+			// A GeneratedFiles entry mounts a single FILE (e.g. the egress
+			// proxy's squid.conf), not a directory — MkdirAll-ing its exact
+			// source path here would create a directory where
+			// WriteComposeGeneratedFiles needs to write a file, and the
+			// subsequent write fails with "file exists"/"not a directory".
+			// WriteComposeGeneratedFiles creates the file's parent directory
+			// itself; skip these sources entirely.
+			if _, isGenerated := file.GeneratedFiles[source]; isGenerated {
 				continue
 			}
 			if !found {

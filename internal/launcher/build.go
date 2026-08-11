@@ -31,6 +31,12 @@ type LaunchConfig struct {
 	// argv builder carries it for config/TUI/profile propagation; Compose
 	// materialization consumes it when the container backend is selected.
 	Services []string
+	// ContainerNetworkAllowedDomains activates the v2 egress-allowlist proxy
+	// when ContainerNetworkInternal is also true — see the field's doc
+	// comment there. Compose-only, like ContainerNetworkInternal: never
+	// consumed by container.RunConfig/BuildRunCommand (the plain `docker
+	// run` path has no proxy to inject).
+	ContainerNetworkAllowedDomains []string
 	// ContainerEnvironment overrides the generated service connection
 	// variables in compose. Values are persisted in local/profile config, but
 	// are not used by the single-container backend.
@@ -50,6 +56,17 @@ type LaunchConfig struct {
 	// ContainerContext is the optional Docker context applied to run, build,
 	// image-inspect and Compose commands. Empty uses Docker's current context.
 	ContainerContext string
+	// ContainerNetworkInternal is the raw tri-state operator choice, carried
+	// separately from Docker.NetworkInternal (the already-resolved bool
+	// BuildCompose/BuildRunCommand consume) so --save and --save-profile do
+	// not silently drop this safety-relevant toggle — see
+	// ContainerHostGateway below for the same reasoning.
+	ContainerNetworkInternal *bool
+	// ContainerHostGateway is the raw tri-state operator choice for the host
+	// gateway bridge, carried separately from the already-resolved
+	// Docker.AddHostGateway bool so --save/--save-profile round-trip it
+	// instead of silently dropping it.
+	ContainerHostGateway *bool
 	// Docker holds the inputs the docker argv builder needs: the image
 	// selection (stacks + pinned agents), the mounts to share, and the launch
 	// environment. Zero value means the docker backend was enabled without a

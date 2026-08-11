@@ -114,12 +114,29 @@ func inspectGeneratedArtifact(path, name, generated string) (artifactReview, err
 	return review, nil
 }
 
+// dockerComposeProjectDir resolves the same project directory BuildCompose
+// used internally (prepareDockerRunConfig's firstNonEmpty(cfg.Workspace,
+// cfg.Project, ...)) for the Compose file, its secrets, its approval ledger,
+// and any GeneratedFiles content — all of it must agree with where
+// BuildCompose put service data directories (workspace/.ai-launcher/data/...),
+// or every generated-file write fails its pathWithin() guard whenever the
+// workspace differs from the process cwd. Only call this after BuildCompose
+// has already succeeded for the same cfg — it guarantees at least one of
+// Workspace/Project is non-empty.
+func dockerComposeProjectDir(cfg launcher.LaunchConfig) string {
+	if dir := strings.TrimSpace(cfg.Workspace); dir != "" {
+		return dir
+	}
+	return strings.TrimSpace(cfg.Project)
+}
+
 func inspectComposeArtifact(cfg launcher.LaunchConfig) (composeArtifactReview, error) {
 	compose, err := launcher.BuildCompose(cfg)
 	if err != nil {
 		return composeArtifactReview{}, fmt.Errorf("build compose: %w", err)
 	}
-	compose, err = container.ResolveComposeSecrets(mustGetwd(), compose)
+	projectDir := dockerComposeProjectDir(cfg)
+	compose, err = container.ResolveComposeSecrets(projectDir, compose)
 	if err != nil {
 		return composeArtifactReview{}, fmt.Errorf("resolve compose secrets: %w", err)
 	}
@@ -127,7 +144,7 @@ func inspectComposeArtifact(cfg launcher.LaunchConfig) (composeArtifactReview, e
 	if err != nil {
 		return composeArtifactReview{}, fmt.Errorf("render compose: %w", err)
 	}
-	path := filepath.Join(mustGetwd(), containerArtifactDir, composeArtifactName)
+	path := filepath.Join(projectDir, containerArtifactDir, composeArtifactName)
 	review, err := inspectGeneratedArtifact(path, "Compose", generated)
 	if err != nil {
 		return composeArtifactReview{}, err
@@ -169,8 +186,21 @@ func materializeComposeIfNeeded(cfg launcher.LaunchConfig, choice composeUpdateC
 	if err != nil {
 		return err
 	}
+	projectDir := dockerComposeProjectDir(cfg)
 	writeGenerated := func() error {
-		_, err := container.MaterializeCompose(mustGetwd(), review.Compose)
+		_, err := container.MaterializeCompose(projectDir, review.Compose)
+		return err
+	}
+	// GeneratedFiles (e.g. the egress proxy's squid.conf) carry content that
+	// never appears in the rendered docker-compose.yaml (ComposeFile.GeneratedFiles
+	// is yaml:"-"), so review.Changed — which diffs the rendered YAML text —
+	// cannot detect a domain-allowlist edit: the YAML is byte-identical for
+	// any allowed-domains list. Without this, tightening or changing the
+	// allowlist after the first launch would silently keep enforcing the old
+	// policy. Regenerate unconditionally, decoupled from the YAML approval
+	// flow below (this file is enforcement config, not something an operator
+	// hand-edits — "do not edit by hand" is already in its header comment).
+	if err := container.WriteComposeGeneratedFiles(projectDir, review.Compose); err != nil {
 		return err
 	}
 	relPath := filepath.Join(containerArtifactDir, composeArtifactName)

@@ -71,13 +71,38 @@ const (
 	resourceNetwork containerResourceKind = "container-network"
 	resourceRuntime containerResourceKind = "container-runtime"
 	resourceContext containerResourceKind = "container-context"
+	// resourceNetworkInternal identifies the toggle row for
+	// LaunchConfig.ContainerNetworkInternal. It carries no text-input
+	// behavior (containerRowToggle rows never reach
+	// startContainerResourceInput's switch) — it exists purely so the row
+	// has a stable identity, matching every other row in the model.
+	resourceNetworkInternal containerResourceKind = "container-network-internal"
+	// resourceNetworkAllowedDomains identifies the "Allowed domains" text
+	// row for LaunchConfig.ContainerNetworkAllowedDomains — only meaningful
+	// while resourceNetworkInternal is on, since that's what triggers the
+	// egress-proxy injection in BuildCompose.
+	resourceNetworkAllowedDomains containerResourceKind = "container-network-allowed-domains"
+)
+
+// containerRowRole distinguishes a text-editable resource row (opens
+// startContainerResourceInput) from a toggle row (flips in place via its
+// toggle closure, mirroring optionRow). All resource rows are text today;
+// this exists so a future toggle row (e.g. a network policy switch) is one
+// more case in an already-typed dispatch instead of a new ad-hoc branch.
+type containerRowRole int
+
+const (
+	containerRowText containerRowRole = iota
+	containerRowToggle
 )
 
 type containerResourceRow struct {
-	name  string
-	kind  containerResourceKind
-	value string
-	hint  string
+	name   string
+	kind   containerResourceKind
+	value  string
+	hint   string
+	role   containerRowRole
+	toggle func(m *Model)
 }
 
 type advancedOptionKind string
@@ -159,7 +184,7 @@ type Model struct {
 	mountTyped              bool
 	inputActive             bool
 	textInputActive         bool
-	textInputKind           string
+	textInputKind           textInputKind
 	textInputValue          string
 	composeReview           *ComposeUpdateReview
 	composeReviewOffset     int
@@ -422,13 +447,10 @@ func (m *Model) handleAddMountKey() {
 //   - Profiles: load
 //   - elsewhere: no-op (use r to run)
 func (m *Model) handleEnterKey() {
-	container := m.containerIndex()
-	services := m.servicesIndex()
-	profiles := m.profilesIndex()
-	switch m.section {
-	case 0:
+	switch m.currentSection() {
+	case sectionAgent:
 		m.selectHighlightedAgent()
-	case 3:
+	case sectionOptions:
 		fixed := len(m.optionRows())
 		advanced := len(m.advancedOptionRows())
 		if m.cursor >= fixed && m.cursor < fixed+advanced {
@@ -436,15 +458,15 @@ func (m *Model) handleEnterKey() {
 		} else if m.cursor >= fixed+advanced {
 			m.startParamInput()
 		}
-	case container:
+	case sectionContainer:
 		if m.cursor < len(m.stackIDs) {
 			m.toggleStack()
 		} else {
-			m.startContainerResourceInput()
+			m.toggleOrEditContainerResource()
 		}
-	case services:
+	case sectionServices:
 		m.startServicePortInput()
-	case profiles:
+	case sectionProfiles:
 		if m.cursor < len(m.profileNames) {
 			m.loadProfile(m.profileNames[m.cursor])
 		}
@@ -481,6 +503,49 @@ func (m Model) profilesIndex() int {
 	return 4
 }
 
+// sectionKind identifies the active section independent of its numeric
+// layout position, which shifts depending on whether Docker and profiles
+// are present (see containerIndex/servicesIndex/profilesIndex above).
+type sectionKind int
+
+const (
+	sectionNone sectionKind = iota
+	sectionAgent
+	sectionPermissions
+	sectionMounts
+	sectionOptions
+	sectionContainer
+	sectionServices
+	sectionProfiles
+)
+
+// currentSection resolves m.section to a sectionKind, deriving the
+// conditional Container/Services/Profiles positions once here instead of in
+// every caller that used to re-derive containerIndex/servicesIndex/
+// profilesIndex independently (and shadow the container package while doing
+// it).
+func (m Model) currentSection() sectionKind {
+	switch m.section {
+	case 0:
+		return sectionAgent
+	case 1:
+		return sectionPermissions
+	case 2:
+		return sectionMounts
+	case 3:
+		return sectionOptions
+	}
+	switch m.section {
+	case m.containerIndex():
+		return sectionContainer
+	case m.servicesIndex():
+		return sectionServices
+	case m.profilesIndex():
+		return sectionProfiles
+	}
+	return sectionNone
+}
+
 // sectionHint returns the always-visible footer for the active section so the
 // user does not have to guess which keys apply.
 func (m Model) sectionHint() string {
@@ -488,28 +553,22 @@ func (m Model) sectionHint() string {
 		return "Editing value · Enter apply · Esc cancel · r RUN after closing the editor"
 	}
 	base := "[r] RUN · [?] help · [q] quit"
-	container := m.containerIndex()
-	services := m.servicesIndex()
-	profiles := m.profilesIndex()
-	switch m.section {
-	case 0:
+	switch m.currentSection() {
+	case sectionAgent:
 		return "Agent · ↑/↓ · Space/Enter SELECT · " + base
-	case 1:
+	case sectionPermissions:
 		return "Permissions · Space on/off · Tab next · " + base
-	case 2:
+	case sectionMounts:
 		return "Mounts · a/+// ADD folder · Space ro/rw · Backspace remove · " + base
-	case 3:
+	case sectionOptions:
 		return "Options · Space toggle (Container docker included) · Enter edit scope/workstream/args/params · " + base
+	case sectionContainer:
+		return "Container · Space toggle stacks · Enter edit resources/ports · Tab next · " + base
+	case sectionServices:
+		return "Services · Space add/remove · Enter edit ports · Tab next · " + base
+	case sectionProfiles:
+		return "Profiles · Enter/Space load · " + base
 	default:
-		if m.section == container {
-			return "Container · Space toggle stacks · Enter edit resources/ports · Tab next · " + base
-		}
-		if m.section == services {
-			return "Services · Space add/remove · Enter edit ports · Tab next · " + base
-		}
-		if m.section == profiles {
-			return "Profiles · Enter/Space load · " + base
-		}
 		return base
 	}
 }
@@ -545,7 +604,7 @@ func (m *Model) startProfileInput() {
 		m.status = "Saving profiles is not available in this mode"
 		return
 	}
-	m.textInputKind = "profile"
+	m.textInputKind = newProfileTextInput()
 	m.textInputValue = ""
 	m.textInputActive = true
 	m.status = "Profile name · Enter saves · Esc cancels"
@@ -645,15 +704,6 @@ func (m *Model) advancedOption(kind advancedOptionKind) (advancedOptionRow, bool
 	return advancedOptionRow{}, false
 }
 
-func (m Model) advancedOptionKindActive() bool {
-	switch advancedOptionKind(m.textInputKind) {
-	case advancedNewWorkstream, advancedWorkstream, advancedWorkspace, advancedProject, advancedExtraArgs:
-		return true
-	default:
-		return false
-	}
-}
-
 // formatExtraArgs produces an editable representation that round-trips
 // through launcher.SplitArgs while keeping ordinary flags compact.
 func formatExtraArgs(args []string) string {
@@ -676,21 +726,18 @@ func formatExtraArgs(args []string) string {
 
 func (m *Model) moveCursor(delta int) {
 	limit := len(m.agents) + 1 // +1 for the "continue last session" row
-	container := m.containerIndex()
-	services := m.servicesIndex()
-	profiles := m.profilesIndex()
-	switch m.section {
-	case 1:
+	switch m.currentSection() {
+	case sectionPermissions:
 		limit = len(m.permissionIDs)
-	case 2:
+	case sectionMounts:
 		limit = len(m.launch.Mounts)
-	case 3:
+	case sectionOptions:
 		limit = len(m.optionRows()) + len(m.advancedOptionRows()) + len(m.launch.Agent.Params)
-	case container:
+	case sectionContainer:
 		limit = len(m.stackIDs) + len(m.containerResourceRows())
-	case services:
+	case sectionServices:
 		limit = len(m.serviceIDs)
-	case profiles:
+	case sectionProfiles:
 		limit = len(m.profileNames)
 	}
 	if limit == 0 {
@@ -714,13 +761,10 @@ func (m *Model) togglePermission() {
 }
 
 func (m *Model) toggleCurrent() {
-	container := m.containerIndex()
-	services := m.servicesIndex()
-	profiles := m.profilesIndex()
-	switch m.section {
-	case 1:
+	switch m.currentSection() {
+	case sectionPermissions:
 		m.togglePermission()
-	case 2:
+	case sectionMounts:
 		if m.cursor < len(m.launch.Mounts) {
 			if strings.EqualFold(m.launch.Mounts[m.cursor].Mode, modeReadOnlyID) || strings.EqualFold(m.launch.Mounts[m.cursor].Mode, modeReadOnly) {
 				m.launch.Mounts[m.cursor].Mode = modeReadWriteID
@@ -729,17 +773,17 @@ func (m *Model) toggleCurrent() {
 			}
 			m.status = "Mount mode toggled"
 		}
-	case 3:
+	case sectionOptions:
 		m.toggleOption()
-	case container:
+	case sectionContainer:
 		if m.cursor < len(m.stackIDs) {
 			m.toggleStack()
 		} else {
-			m.startContainerResourceInput()
+			m.toggleOrEditContainerResource()
 		}
-	case services:
+	case sectionServices:
 		m.toggleService()
-	case profiles:
+	case sectionProfiles:
 		if m.cursor < len(m.profileNames) {
 			m.loadProfile(m.profileNames[m.cursor])
 		}
@@ -808,7 +852,7 @@ func (m *Model) startServicePortInput() {
 	if !ok {
 		return
 	}
-	m.textInputKind = "service-ports:" + id
+	m.textInputKind = newServicePortTextInput(id)
 	m.textInputValue = servicePortInputValue(service, m.launch.ContainerServicePorts)
 	m.textInputActive = true
 	m.status = "Editing " + service.Name + " ports · " + servicePortEditHint() + " · Enter confirms · Esc cancels"
@@ -851,7 +895,7 @@ func (m *Model) startParamInput() {
 		return
 	}
 	m.paramTarget = params[index]
-	m.textInputKind = "param"
+	m.textInputKind = newParamTextInput()
 	m.textInputValue = m.launch.ParamValues[m.paramTarget.Name]
 	m.textInputActive = true
 	m.status = "Editing " + m.paramTarget.Name + " (" + m.paramTarget.Flag + ") · Enter confirms · Esc cancels"
@@ -866,7 +910,7 @@ func (m *Model) startAdvancedOptionInput() {
 		return
 	}
 	row := rows[index]
-	m.textInputKind = string(row.kind)
+	m.textInputKind = newAdvancedTextInput(row.kind)
 	m.textInputValue = row.value
 	m.textInputActive = true
 	m.status = "Editing " + row.name + " · Enter confirms · Esc cancels"

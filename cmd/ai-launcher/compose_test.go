@@ -146,6 +146,54 @@ func TestEnsureComposeArtifactsRefreshesStaleNativeArguments(t *testing.T) {
 	}
 }
 
+// TestMaterializeComposeIfNeededUsesWorkspaceNotCwd is the regression guard
+// for a bug caught by independent review: materializeComposeIfNeeded always
+// materialized against os.Getwd(), while BuildCompose (via
+// prepareDockerRunConfig) derives GeneratedFiles paths from
+// cfg.Workspace/cfg.Project. Any launch where the workspace differs from the
+// process cwd — the normal case for `ai-launcher --workspace /some/other/dir`
+// — made every generated-file write fail its pathWithin(dataDir, ...) guard
+// with "escapes the data directory", aborting the whole compose generation.
+func TestMaterializeComposeIfNeededUsesWorkspaceNotCwd(t *testing.T) {
+	cwdDir := t.TempDir()
+	restore := chdir(t, cwdDir)
+	defer restore()
+	workspaceDir := t.TempDir()
+	if workspaceDir == cwdDir {
+		t.Fatal("test setup requires two distinct directories")
+	}
+
+	selection := container.Selection{
+		Stacks: []string{"go"},
+		Agents: []container.AgentInstall{{
+			Command: "claude", Kind: container.InstallRelease, Version: "2.1.0",
+		}},
+	}
+	cfg := launcher.LaunchConfig{
+		Agent:                          config.Agent{Command: "claude"},
+		UseDocker:                      true,
+		Workspace:                      workspaceDir,
+		Services:                       []string{"redis"},
+		ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
+		Docker: container.RunConfig{
+			Selection:       selection,
+			NetworkInternal: true,
+		},
+	}
+
+	if err := materializeComposeIfNeeded(cfg, composeUpdateReplace, &bytes.Buffer{}); err != nil {
+		t.Fatalf("materializeComposeIfNeeded() error = %v", err)
+	}
+
+	wantConfig := filepath.Join(workspaceDir, ".ai-launcher", "data", "egress-proxy", "squid.conf")
+	if _, err := os.Stat(wantConfig); err != nil {
+		t.Fatalf("Stat(%s) error = %v; want the config materialized under the workspace, not cwd", wantConfig, err)
+	}
+	if _, err := os.Stat(filepath.Join(cwdDir, ".ai-launcher")); !os.IsNotExist(err) {
+		t.Fatalf("compose artifacts leaked into cwd %s: %v", cwdDir, err)
+	}
+}
+
 func TestComposeUpdateReviewPreservesManualChangesAndRemembersDecision(t *testing.T) {
 	dir := t.TempDir()
 	restore := chdir(t, dir)

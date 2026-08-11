@@ -26,11 +26,14 @@ func saveIfRequestedResult(save bool, path string, local config.Local, launch la
 	local.Options.ContainerContext = strings.TrimSpace(launch.ContainerContext)
 	local.Options.Stacks = launch.Docker.Selection.Stacks
 	local.Options.Services = append([]string(nil), launch.Services...)
+	local.Options.ContainerNetworkAllowedDomains = append([]string(nil), launch.ContainerNetworkAllowedDomains...)
 	local.Options.ContainerMemory = launch.Docker.MemoryLimit
 	local.Options.ContainerCPUs = launch.Docker.CPULimit
 	local.Options.ContainerPIDs = launch.Docker.PIDsLimit
 	local.Options.ContainerPorts = append([]config.PortMapping(nil), launch.Docker.ExposedPorts...)
 	local.Options.ContainerNetwork = launch.Docker.NetworkName
+	local.Options.ContainerNetworkInternal = launch.ContainerNetworkInternal
+	local.Options.ContainerHostGateway = launch.ContainerHostGateway
 	local.Options.ContainerEnvironment = cloneStringMap(launch.ContainerEnvironment)
 	local.Options.ContainerServicePorts = cloneServicePortMappings(launch.ContainerServicePorts)
 	local.Options.ContainerDependencies = launch.ContainerDependencies.Clone()

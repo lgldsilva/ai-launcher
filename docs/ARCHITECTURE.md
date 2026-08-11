@@ -227,13 +227,25 @@ read and is migrated to the new path on the first save): `agent`,
 `extra_args`, `param_values`, and the Docker backend keys `docker`, `stacks`,
 `services`, `container_runtime`, `container_memory`, `container_cpus`,
 `container_pids`, `container_ports`, `container_network`, and
-`container_context`, `container_host_gateway`, `container_environment`,
+`container_context`, `container_host_gateway`, `container_network_internal`,
+`container_network_allowed_domains`,
+`container_environment`,
 `container_service_ports`, and
 `container_dependencies`, and `container_tmux` (`enabled`, `config`,
 `local_config`, `oh_my_tmux_dir`, `additional_paths`).
 `container_host_gateway` is optional and defaults
 to true for backward compatibility; set it to false to prevent host-network
-reachability and loopback MCP rewriting.
+reachability and loopback MCP rewriting. `container_network_internal` is
+optional and defaults to false (open egress); set it to true to mark the
+generated Compose network `internal: true`, blocking ALL outbound traffic
+from every Compose service including the agent's own API calls —
+Compose-only (see "The internal Compose network is all-or-nothing in v1" in
+design-decisions.md), and only meaningful with at least one service
+selected. `container_network_allowed_domains` is an optional list of
+domains; when set alongside `container_network_internal: true`, a squid
+proxy is injected on a second `<network>-egress` bridge network instead of
+blocking all outbound traffic, restricting the agent to just those domains
+(see "The v2 egress-allowlist proxy" in design-decisions.md).
 
 ### Docker container backend
 
@@ -364,6 +376,15 @@ services without changing their internal service ports. `container_network`
 selects a named network. A host network cannot be combined with published
 ports, and Compose services require a bridge network. Collisions are rejected
 unless the affected services are explicitly remapped.
+`container_network_internal: true` marks that network `internal: true`
+(Compose-only, all-or-nothing — see design-decisions.md), blocking every
+outbound route including the agent's own API calls; pre-flight warns
+whenever it is set. `container_network_allowed_domains` softens that: a
+squid proxy on a second, non-internal `<network>-egress` network is injected
+instead, and only the listed domains (plus subdomains) are reachable — the
+same "narrow proxy instead of an open door" pattern the host-gateway section
+below uses for inbound MCP reachability, applied outbound (see "The v2
+egress-allowlist proxy" in design-decisions.md).
 
 `container_context` selects a Docker context without changing the process
 environment. The launcher places it before `run`, `build`, image inspection,

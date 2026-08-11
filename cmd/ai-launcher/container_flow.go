@@ -131,41 +131,45 @@ func generateContainerArtifacts(local config.Local, agent config.Agent, global c
 		return fmt.Errorf("generate container tools: %w", err)
 	}
 	launchConfig := launcher.LaunchConfig{
-		Agent:                 agent,
-		Executable:            agent.Path,
-		HomeDir:               home,
-		UseDocker:             true,
-		Services:              append([]string(nil), local.Options.Services...),
-		ContainerEnvironment:  cloneStringMap(local.Options.ContainerEnvironment),
-		ContainerServicePorts: cloneServicePortMappings(local.Options.ContainerServicePorts),
-		ContainerDependencies: config.MergeDependencySettings(global.ContainerDependencies, local.Options.ContainerDependencies),
-		ContainerTmux:         local.Options.ContainerTmux,
-		UseMemory:             local.Options.Memory,
-		Fresh:                 local.Options.Fresh,
-		NewWorkstream:         local.Options.NewWorkstream,
-		Workstream:            local.Options.Workstream,
-		Workspace:             local.Options.Workspace,
-		Project:               local.Options.Project,
-		Yolo:                  local.Options.Yolo,
-		ExtraArgs:             append([]string(nil), local.Options.ExtraArgs...),
-		ParamValues:           cloneStringMap(local.Options.ParamValues),
+		Agent:                          agent,
+		Executable:                     agent.Path,
+		HomeDir:                        home,
+		UseDocker:                      true,
+		Services:                       append([]string(nil), local.Options.Services...),
+		ContainerNetworkAllowedDomains: append([]string(nil), local.Options.ContainerNetworkAllowedDomains...),
+		ContainerEnvironment:           cloneStringMap(local.Options.ContainerEnvironment),
+		ContainerServicePorts:          cloneServicePortMappings(local.Options.ContainerServicePorts),
+		ContainerDependencies:          config.MergeDependencySettings(global.ContainerDependencies, local.Options.ContainerDependencies),
+		ContainerTmux:                  local.Options.ContainerTmux,
+		UseMemory:                      local.Options.Memory,
+		Fresh:                          local.Options.Fresh,
+		NewWorkstream:                  local.Options.NewWorkstream,
+		Workstream:                     local.Options.Workstream,
+		Workspace:                      local.Options.Workspace,
+		Project:                        local.Options.Project,
+		Yolo:                           local.Options.Yolo,
+		ExtraArgs:                      append([]string(nil), local.Options.ExtraArgs...),
+		ParamValues:                    cloneStringMap(local.Options.ParamValues),
 		Docker: container.RunConfig{
-			Selection:      selection,
-			Context:        strings.TrimSpace(local.Options.ContainerContext),
-			HomeDir:        home,
-			ProjectDir:     mustGetwd(),
-			UID:            os.Getuid(),
-			GID:            os.Getgid(),
-			AgentCommands:  []string{agent.Command},
-			Env:            composeMemoryEnv(local.Options.Memory, agent, global),
-			AddHostGateway: effectiveContainerHostGateway(local.Options.ContainerHostGateway),
-			MemoryLimit:    local.Options.ContainerMemory,
-			CPULimit:       local.Options.ContainerCPUs,
-			PIDsLimit:      local.Options.ContainerPIDs,
-			ExposedPorts:   append([]container.PortMapping(nil), local.Options.ContainerPorts...),
-			NetworkName:    local.Options.ContainerNetwork,
+			Selection:       selection,
+			Context:         strings.TrimSpace(local.Options.ContainerContext),
+			HomeDir:         home,
+			ProjectDir:      mustGetwd(),
+			UID:             os.Getuid(),
+			GID:             os.Getgid(),
+			AgentCommands:   []string{agent.Command},
+			Env:             composeMemoryEnv(local.Options.Memory, agent, global),
+			AddHostGateway:  effectiveContainerHostGateway(local.Options.ContainerHostGateway),
+			MemoryLimit:     local.Options.ContainerMemory,
+			CPULimit:        local.Options.ContainerCPUs,
+			PIDsLimit:       local.Options.ContainerPIDs,
+			ExposedPorts:    append([]container.PortMapping(nil), local.Options.ContainerPorts...),
+			NetworkName:     local.Options.ContainerNetwork,
+			NetworkInternal: config.EffectiveContainerNetworkInternal(local.Options.ContainerNetworkInternal),
 		},
-		Permissions: copyPermissions(local.Permissions),
+		ContainerNetworkInternal: local.Options.ContainerNetworkInternal,
+		ContainerHostGateway:     local.Options.ContainerHostGateway,
+		Permissions:              copyPermissions(local.Permissions),
 	}
 	launchConfig.Docker.AddHostGateway = effectiveContainerHostGateway(local.Options.ContainerHostGateway)
 	launchConfig = ensureDockerWorkspace(launchConfig)
@@ -300,9 +304,10 @@ func selectionNeedsLauncherBinary(selection container.Selection) bool {
 // trusted global/profile or explicitly trusted local YAML to turn off host
 // network reachability. Disabling it also disables loopback URL rewriting and
 // MCP overlays, so a local MCP server fails visibly instead of being pointed
-// at an unexpected address.
+// at an unexpected address. Delegates to config.EffectiveContainerHostGateway,
+// which internal/tui also uses (it cannot import this package).
 func effectiveContainerHostGateway(value *bool) bool {
-	return value == nil || *value
+	return config.EffectiveContainerHostGateway(value)
 }
 
 func ensureComposeArtifacts(launchConfig launcher.LaunchConfig, global config.Global, out, errOut io.Writer, choices ...composeUpdateChoice) error {
