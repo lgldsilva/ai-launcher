@@ -32,6 +32,7 @@ func saveIfRequestedResult(save bool, path string, local config.Local, launch la
 	local.Options.ContainerPorts = append([]config.PortMapping(nil), launch.Docker.ExposedPorts...)
 	local.Options.ContainerNetwork = launch.Docker.NetworkName
 	local.Options.ContainerNetworkInternal = launch.ContainerNetworkInternal
+	local.Options.ContainerHostGateway = launch.ContainerHostGateway
 	local.Options.ContainerEnvironment = cloneStringMap(launch.ContainerEnvironment)
 	local.Options.ContainerServicePorts = cloneServicePortMappings(launch.ContainerServicePorts)
 	local.Options.ContainerDependencies = launch.ContainerDependencies.Clone()

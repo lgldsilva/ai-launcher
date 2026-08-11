@@ -53,9 +53,14 @@ type LaunchConfig struct {
 	// ContainerNetworkInternal is the raw tri-state operator choice, carried
 	// separately from Docker.NetworkInternal (the already-resolved bool
 	// BuildCompose/BuildRunCommand consume) so --save and --save-profile do
-	// not silently drop this safety-relevant toggle the way
-	// ContainerHostGateway's resolved-only representation does today.
+	// not silently drop this safety-relevant toggle — see
+	// ContainerHostGateway below for the same reasoning.
 	ContainerNetworkInternal *bool
+	// ContainerHostGateway is the raw tri-state operator choice for the host
+	// gateway bridge, carried separately from the already-resolved
+	// Docker.AddHostGateway bool so --save/--save-profile round-trip it
+	// instead of silently dropping it.
+	ContainerHostGateway *bool
 	// Docker holds the inputs the docker argv builder needs: the image
 	// selection (stacks + pinned agents), the mounts to share, and the launch
 	// environment. Zero value means the docker backend was enabled without a

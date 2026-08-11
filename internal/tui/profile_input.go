@@ -67,6 +67,8 @@ func (m *Model) loadProfile(name string) {
 		m.launch.Docker.NetworkName = profile.Options.ContainerNetwork
 		m.launch.ContainerNetworkInternal = profile.Options.ContainerNetworkInternal
 		m.launch.Docker.NetworkInternal = config.EffectiveContainerNetworkInternal(profile.Options.ContainerNetworkInternal)
+		m.launch.ContainerHostGateway = profile.Options.ContainerHostGateway
+		m.launch.Docker.AddHostGateway = config.EffectiveContainerHostGateway(profile.Options.ContainerHostGateway)
 		m.launch.Docker.Selection.Agents = []container.AgentInstall{
 			planDockerAgentInstall(m.launch.HomeDir, m.launch.Agent, m.launch.Executable),
 		}
@@ -271,6 +273,7 @@ func (m *Model) saveProfileAs(name string) {
 			ContainerPorts:           append([]config.PortMapping(nil), m.launch.Docker.ExposedPorts...),
 			ContainerNetwork:         m.launch.Docker.NetworkName,
 			ContainerNetworkInternal: m.launch.ContainerNetworkInternal,
+			ContainerHostGateway:     m.launch.ContainerHostGateway,
 			Memory:                   m.launch.UseMemory,
 			Yolo:                     m.launch.Yolo,
 			Fresh:                    m.launch.Fresh,

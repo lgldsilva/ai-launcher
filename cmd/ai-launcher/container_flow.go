@@ -167,6 +167,7 @@ func generateContainerArtifacts(local config.Local, agent config.Agent, global c
 			NetworkInternal: config.EffectiveContainerNetworkInternal(local.Options.ContainerNetworkInternal),
 		},
 		ContainerNetworkInternal: local.Options.ContainerNetworkInternal,
+		ContainerHostGateway:     local.Options.ContainerHostGateway,
 		Permissions:              copyPermissions(local.Permissions),
 	}
 	launchConfig.Docker.AddHostGateway = effectiveContainerHostGateway(local.Options.ContainerHostGateway)
@@ -302,9 +303,10 @@ func selectionNeedsLauncherBinary(selection container.Selection) bool {
 // trusted global/profile or explicitly trusted local YAML to turn off host
 // network reachability. Disabling it also disables loopback URL rewriting and
 // MCP overlays, so a local MCP server fails visibly instead of being pointed
-// at an unexpected address.
+// at an unexpected address. Delegates to config.EffectiveContainerHostGateway,
+// which internal/tui also uses (it cannot import this package).
 func effectiveContainerHostGateway(value *bool) bool {
-	return value == nil || *value
+	return config.EffectiveContainerHostGateway(value)
 }
 
 func ensureComposeArtifacts(launchConfig launcher.LaunchConfig, global config.Global, out, errOut io.Writer, choices ...composeUpdateChoice) error {

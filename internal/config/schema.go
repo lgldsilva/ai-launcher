@@ -335,6 +335,15 @@ func EffectiveContainerNetworkInternal(value *bool) bool {
 	return value != nil && *value
 }
 
+// EffectiveContainerHostGateway resolves the tri-state ContainerHostGateway
+// preference: the host bridge is on by default, so nil or explicit true both
+// mean on; only an explicit false turns it off. Lives here (not in
+// cmd/ai-launcher, where an equivalent used to be package-local) because
+// internal/tui also needs it and cannot import cmd/ai-launcher.
+func EffectiveContainerHostGateway(value *bool) bool {
+	return value == nil || *value
+}
+
 // UnmarshalYAML accepts both the current lossless list form and the scalar
 // form used by the original launcher documentation (for example,
 // extra_args: "--model sonnet"). SaveLocal always emits the list form.

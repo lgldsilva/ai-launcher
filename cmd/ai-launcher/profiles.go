@@ -96,6 +96,7 @@ func profileFromLaunch(launch launcher.LaunchConfig) config.Profile {
 			ContainerPorts:           append([]config.PortMapping(nil), launch.Docker.ExposedPorts...),
 			ContainerNetwork:         launch.Docker.NetworkName,
 			ContainerNetworkInternal: launch.ContainerNetworkInternal,
+			ContainerHostGateway:     launch.ContainerHostGateway,
 			Memory:                   launch.UseMemory,
 			Yolo:                     launch.Yolo,
 			Fresh:                    launch.Fresh,

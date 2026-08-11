@@ -121,6 +121,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		ContainerRuntime:         config.EffectiveContainerRuntime(inputs.local.Options.ContainerRuntime),
 		ContainerContext:         strings.TrimSpace(inputs.local.Options.ContainerContext),
 		ContainerNetworkInternal: inputs.local.Options.ContainerNetworkInternal,
+		ContainerHostGateway:     inputs.local.Options.ContainerHostGateway,
 		Services:                 append([]string(nil), inputs.local.Options.Services...),
 		ContainerEnvironment:     cloneStringMap(inputs.local.Options.ContainerEnvironment),
 		ContainerServicePorts:    cloneServicePortMappings(inputs.local.Options.ContainerServicePorts),
