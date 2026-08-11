@@ -154,7 +154,7 @@ func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
 	if err := ensureComposeDataDirectories(projectDir, file); err != nil {
 		return "", err
 	}
-	if err := writeComposeGeneratedFiles(projectDir, file); err != nil {
+	if err := WriteComposeGeneratedFiles(projectDir, file); err != nil {
 		return "", err
 	}
 	dir := filepath.Join(projectDir, containerArtifactDirName)
@@ -168,13 +168,13 @@ func MaterializeCompose(projectDir string, file ComposeFile) (string, error) {
 	return path, nil
 }
 
-// writeComposeGeneratedFiles writes any content BuildCompose staged on
+// WriteComposeGeneratedFiles writes any content BuildCompose staged on
 // ComposeFile.GeneratedFiles (for example the egress proxy's squid.conf).
 // BuildCompose stays pure — it only computes content and a path; this is the
 // single place those bytes reach disk, alongside every other Compose
 // artifact, with the same symlink-refusal and atomic-write guarantees.
 // Domain-agnostic: works for any future generated file, not just the proxy.
-func writeComposeGeneratedFiles(projectDir string, file ComposeFile) error {
+func WriteComposeGeneratedFiles(projectDir string, file ComposeFile) error {
 	dataDir := filepath.Join(projectDir, containerArtifactDirName, "data")
 	for path, content := range file.GeneratedFiles {
 		if !pathWithin(dataDir, path) {
@@ -200,6 +200,16 @@ func ensureComposeDataDirectories(projectDir string, file ComposeFile) error {
 		for _, volume := range service.Volumes {
 			source, _, ok := composeVolumeParts(volume)
 			if !ok || !pathWithin(dataDir, source) {
+				continue
+			}
+			// A GeneratedFiles entry mounts a single FILE (e.g. the egress
+			// proxy's squid.conf), not a directory — MkdirAll-ing its exact
+			// source path here would create a directory where
+			// WriteComposeGeneratedFiles needs to write a file, and the
+			// subsequent write fails with "file exists"/"not a directory".
+			// WriteComposeGeneratedFiles creates the file's parent directory
+			// itself; skip these sources entirely.
+			if _, isGenerated := file.GeneratedFiles[source]; isGenerated {
 				continue
 			}
 			if !found {

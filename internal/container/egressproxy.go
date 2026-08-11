@@ -3,6 +3,7 @@ package container
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -15,21 +16,36 @@ const (
 	// generated squid.conf and in the HTTP_PROXY/HTTPS_PROXY URL injected
 	// into the agent's environment.
 	EgressProxyPort = 3128
-	// EgressProxyImage is the pinned proxy image.
-	//
-	// TODO(security): confirm the current stable tag before merge. Canonical's
-	// ubuntu/squid Docker Hub repo does not currently publish a tag outside
-	// "latest"/"edge"/"*_beta" — 6.6-24.04_beta was the most specific
-	// (squid 6.6, Ubuntu 24.04) available at the time this was written, but it
-	// is still a beta channel, not a released-stable one. Re-verify against
-	// https://hub.docker.com/r/ubuntu/squid/tags before this ships.
-	EgressProxyImage = "ubuntu/squid:6.6-24.04_beta"
+	// EgressProxyImage is the pinned proxy image, pinned by digest rather
+	// than tag: Canonical's ubuntu/squid Docker Hub repo does not publish a
+	// tag outside "latest"/"edge"/"*_beta" — and the "6.6-24.04_beta" tag
+	// this used to be pinned to is itself misleading (the image running
+	// under it reports "Squid Cache: Version 6.13", not 6.6). A tag with
+	// that mismatch, on a floating beta channel, gives zero reproducibility
+	// for the one component whose entire job is enforcing egress policy.
+	// Verified directly: `docker pull` this digest, `docker manifest
+	// inspect ubuntu/squid:6.6-24.04_beta` to re-resolve if it ever needs
+	// bumping.
+	EgressProxyImage = "ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029"
 )
 
-// egressDomainInjectionChars are rejected in a domain because each one can
-// break out of the single ACL line the domain is emitted into, or has no
-// legitimate place in a hostname.
-const egressDomainInjectionChars = " \t\r\n#\"';"
+// egressDomainPattern is an allowlist, not a denylist, for hostname shape: an
+// optional leading "." (squid's own explicit-subdomain-wildcard notation,
+// e.g. ".npmjs.org" — GenerateEgressProxyConfig also auto-prefixes a bare
+// domain the same way, so both spellings are accepted as equivalent), then
+// at least two labels of 1-63 chars of letters/digits/hyphens each (never
+// leading or trailing with a hyphen). A character-denylist approach (reject
+// known-bad chars) was tried first and caught real injection attempts, but
+// independent review found it silently let through non-hostnames that still
+// parse as valid squid ACL entries — most importantly a bare TLD like "com",
+// which as a dstdomain ACL matches (and thus allows egress to) every ".com"
+// domain on the internet, the opposite of what "allowed domain: com" would
+// look like it means. Requiring ≥2 labels rejects that; the character class
+// rejects "*", "..", "/", ":", and non-ASCII/IDN homograph tricks
+// (punycode-encode if genuinely needed).
+var egressDomainPattern = regexp.MustCompile(
+	`^\.?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$`,
+)
 
 // EgressProxyConfigPath returns the host path where the generated squid.conf
 // for this project is written and mounted read-only into the proxy
@@ -41,22 +57,20 @@ func EgressProxyConfigPath(dataDir string) string {
 	return filepath.Join(dataDir, EgressProxyServiceID, "squid.conf")
 }
 
-// ValidateEgressDomains rejects an empty list and any entry that is empty,
-// whitespace-only, or contains a character that could break out of a single
-// squid ACL line in the generated config (defense against config injection —
-// a domain string here becomes a raw line in a file mounted into a
-// container).
+// ValidateEgressDomains rejects an empty list and any entry that isn't a
+// plausible multi-label hostname per egressDomainPattern — see its comment
+// for why an allowlist regex replaced an earlier denylist-of-bad-characters
+// approach (defense against config injection: a domain string here becomes
+// a raw line in a file mounted into a container, so malformed input is
+// rejected outright rather than partially sanitized).
 func ValidateEgressDomains(domains []string) error {
 	if len(domains) == 0 {
 		return fmt.Errorf("at least one allowed domain is required")
 	}
 	for _, domain := range domains {
 		trimmed := strings.TrimSpace(domain)
-		if trimmed == "" {
-			return fmt.Errorf("allowed domain entry is empty")
-		}
-		if strings.ContainsAny(trimmed, egressDomainInjectionChars) {
-			return fmt.Errorf("allowed domain %q contains a disallowed character", domain)
+		if !egressDomainPattern.MatchString(trimmed) {
+			return fmt.Errorf("allowed domain %q is not a valid hostname (need at least two labels, letters/digits/hyphens only)", domain)
 		}
 	}
 	return nil
@@ -123,12 +137,14 @@ func EgressProxyComposeService(configPath, internalNetwork, egressNetwork string
 		// established convention here to diverge from.
 		Restart: "no",
 		Healthcheck: map[string]any{
-			// squidclient ships with the squid package (present in ubuntu/squid);
-			// mgr:info is squid's own cache-manager status report, so this
-			// confirms the proxy process is actually accepting requests, not
-			// just that the port is open.
-			"test": []string{composeHealthcheckShell,
-				fmt.Sprintf("squidclient -h localhost -p %d mgr:info >/dev/null 2>&1", EgressProxyPort)},
+			// squidclient is NOT present in the ubuntu/squid image (verified
+			// against the running container — a prior version of this
+			// healthcheck used it and never once passed). "squid -k check"
+			// is squid's own built-in self-check subcommand, shipped in the
+			// same binary that runs the daemon, so it's always available:
+			// it validates the running instance's config/PID without
+			// needing any extra tooling in the image.
+			"test": []string{composeHealthcheckShell, "squid -k check"},
 		},
 	}, nil
 }

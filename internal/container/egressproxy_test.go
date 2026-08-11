@@ -65,6 +65,47 @@ func TestGenerateEgressProxyConfig(t *testing.T) {
 			domains: []string{`api.anthropic.com"`},
 			wantErr: true,
 		},
+		// Regression cases for a finding from independent review: a
+		// character-denylist validator let non-hostname entries through.
+		// The one with real blast radius is a bare TLD — "com" as a squid
+		// dstdomain ACL matches (and thus opens egress to) every ".com"
+		// domain on the internet, silently far broader than what an
+		// operator typing "allowed domain: com" would expect.
+		{
+			name:    "bare TLD is rejected",
+			domains: []string{"com"},
+			wantErr: true,
+		},
+		{
+			name:    "single label is rejected",
+			domains: []string{"localhost"},
+			wantErr: true,
+		},
+		{
+			name:    "wildcard character is rejected",
+			domains: []string{"*"},
+			wantErr: true,
+		},
+		{
+			name:    "double dot is rejected",
+			domains: []string{"a..com"},
+			wantErr: true,
+		},
+		{
+			name:    "domain with port suffix is rejected",
+			domains: []string{"api.anthropic.com:80"},
+			wantErr: true,
+		},
+		{
+			name:    "domain with path suffix is rejected",
+			domains: []string{"api.anthropic.com/evil"},
+			wantErr: true,
+		},
+		{
+			name:    "non-ASCII domain is rejected",
+			domains: []string{"évil.com"},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

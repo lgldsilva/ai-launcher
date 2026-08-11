@@ -312,6 +312,92 @@ func TestMaterializeComposeCreatesOnlyServiceDataDirectories(t *testing.T) {
 	}
 }
 
+// TestMaterializeComposeWritesGeneratedFiles is the regression guard for a
+// real bug caught by independent review: ensureComposeDataDirectories
+// MkdirAll'd the egress proxy's squid.conf volume source as a directory
+// (every service volume under dataDir was treated as one), so
+// WriteComposeGeneratedFiles then failed writing the file — "file exists" or
+// "not a directory" depending on call order. This exercises the actual write
+// path (MaterializeCompose in a t.TempDir()), which the pure-generator tests
+// in egressproxy_test.go and the in-memory-model tests in
+// internal/launcher/compose_test.go never did.
+func TestMaterializeComposeWritesGeneratedFiles(t *testing.T) {
+	project := t.TempDir()
+	dataDir := filepath.Join(project, ".ai-launcher", "data")
+	configPath := EgressProxyConfigPath(dataDir)
+
+	content, err := GenerateEgressProxyConfig([]string{"api.anthropic.com"})
+	if err != nil {
+		t.Fatalf("GenerateEgressProxyConfig() error = %v", err)
+	}
+	proxy, err := EgressProxyComposeService(configPath, "ai-launcher", "ai-launcher-egress")
+	if err != nil {
+		t.Fatalf("EgressProxyComposeService() error = %v", err)
+	}
+
+	file := NewComposeFile()
+	file.Networks["ai-launcher"] = ComposeNetwork{Driver: "bridge", Internal: true}
+	file.Networks["ai-launcher-egress"] = ComposeNetwork{Driver: "bridge"}
+	file.Services["agent"] = ComposeService{Build: ".", Networks: []string{"ai-launcher"}}
+	file.Services[EgressProxyServiceID] = proxy
+	file.GeneratedFiles = map[string]string{configPath: content}
+
+	if _, err := MaterializeCompose(project, file); err != nil {
+		t.Fatalf("MaterializeCompose() error = %v", err)
+	}
+
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", configPath, err)
+	}
+	if info.IsDir() {
+		t.Fatalf("%s materialized as a directory; want a regular file", configPath)
+	}
+	written, err := os.ReadFile(configPath) // #nosec G304 -- path under t.TempDir(), constructed by the test itself.
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", configPath, err)
+	}
+	if string(written) != content {
+		t.Fatalf("written config = %q; want %q", written, content)
+	}
+}
+
+// TestMaterializeComposeRewritesGeneratedFilesOnEveryCall guards the second
+// bug from the same review: GeneratedFiles content is invisible to the
+// rendered docker-compose.yaml (yaml:"-"), so a caller that only regenerates
+// on YAML-diff (like cmd/ai-launcher's materializeComposeIfNeeded) would
+// silently keep serving a stale squid.conf after the domain allowlist
+// changes. MaterializeCompose itself must always rewrite GeneratedFiles
+// unconditionally — this locks that in at the container-package level, below
+// any caller-side change-detection.
+func TestMaterializeComposeRewritesGeneratedFilesOnEveryCall(t *testing.T) {
+	project := t.TempDir()
+	dataDir := filepath.Join(project, ".ai-launcher", "data")
+	configPath := EgressProxyConfigPath(dataDir)
+
+	first := NewComposeFile()
+	first.Services["agent"] = ComposeService{Build: "."}
+	first.GeneratedFiles = map[string]string{configPath: "first"}
+	if _, err := MaterializeCompose(project, first); err != nil {
+		t.Fatalf("MaterializeCompose(first) error = %v", err)
+	}
+
+	second := NewComposeFile()
+	second.Services["agent"] = ComposeService{Build: "."}
+	second.GeneratedFiles = map[string]string{configPath: "second"}
+	if _, err := MaterializeCompose(project, second); err != nil {
+		t.Fatalf("MaterializeCompose(second) error = %v", err)
+	}
+
+	written, err := os.ReadFile(configPath) // #nosec G304 -- path under t.TempDir(), constructed by the test itself.
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", configPath, err)
+	}
+	if string(written) != "second" {
+		t.Fatalf("written config = %q; want %q (stale content was not overwritten)", written, "second")
+	}
+}
+
 func TestRenderComposeRejectsInvalidService(t *testing.T) {
 	file := NewComposeFile()
 	file.Services["broken"] = ComposeService{}
