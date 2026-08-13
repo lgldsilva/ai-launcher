@@ -72,6 +72,45 @@ func TestMemoryExecutableDirectoryIsMapped(t *testing.T) {
 	}
 }
 
+func TestContinueUsesResolvedMemoryExecutable(t *testing.T) {
+	got, err := Build(LaunchConfig{
+		ContinueSession:  true,
+		UseJail:          true,
+		UseMemory:        true,
+		MemoryExecutable: "/opt/mem/bin/ai-memory",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ai-jail", "--no-docker",
+		"--map", "/opt/mem/bin",
+		"/opt/mem/bin/ai-memory", "run",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v; want %#v", got, want)
+	}
+}
+
+func TestResolveHostBinariesFillsMemoryAfterJailToggle(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "ai-memory")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o755); err != nil { // #nosec G306 -- PATH stub must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	empty := ResolveHostBinaries(LaunchConfig{UseJail: false, UseMemory: true})
+	if empty.MemoryExecutable != "" {
+		t.Fatalf("memory path filled without jail: %q", empty.MemoryExecutable)
+	}
+
+	got := ResolveHostBinaries(LaunchConfig{UseJail: true, UseMemory: true})
+	if got.MemoryExecutable != stub {
+		t.Fatalf("MemoryExecutable = %q; want %q", got.MemoryExecutable, stub)
+	}
+}
+
 func TestLiveJailRunsGrokHelp(t *testing.T) {
 	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" || os.Getenv("MUTATION_BASE") != "" {
 		t.Skip("live jail exec is host-only")

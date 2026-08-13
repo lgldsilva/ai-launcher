@@ -56,6 +56,35 @@ func TestReloadConfigPreservesSelection(t *testing.T) {
 	}
 }
 
+func TestPreviewMapsMemoryAfterJailAndMemoryToggle(t *testing.T) {
+	stubWindows(t, false)
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "ai-memory")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o755); err != nil { // #nosec G306 -- PATH stub must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:       config.Agent{Command: "codex"},
+		UseJail:     false,
+		UseMemory:   false,
+		Permissions: map[string]bool{},
+	})
+	if strings.Contains(model.View(), "--map "+dir) {
+		t.Fatal("preview must not map memory while jail is off")
+	}
+	model.launch.UseJail = true
+	model.launch.UseMemory = true
+	view := model.View()
+	if !strings.Contains(view, "--map "+dir) {
+		t.Fatalf("preview after toggle must map memory dir, got %s", view)
+	}
+	if !strings.Contains(view, stub) {
+		t.Fatalf("preview after toggle must use resolved memory, got %s", view)
+	}
+}
+
 func TestModelRendersAndNavigatesAllSections(t *testing.T) {
 	stubWindows(t, false)
 	launch := launcher.LaunchConfig{

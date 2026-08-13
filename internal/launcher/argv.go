@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -21,7 +22,7 @@ func buildContinue(cfg LaunchConfig) ([]string, error) {
 	if cfg.UseJail {
 		command = appendJailArgs(command, cfg)
 	}
-	command = append(command, aiMemoryCommand, "run")
+	command = append(command, memoryCommand(cfg), "run")
 	command = appendMemoryScope(command, cfg)
 	command = appendWorkstreamSelection(command, cfg)
 	return appendYoloFlag(command, cfg), nil
@@ -148,6 +149,42 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 // the argv pointed at a binary the agent could not reach and operators worked
 // around it by hand (the .ai-jail in this repo carries /opt/homebrew for
 // exactly that reason). Read-only is enough: the agent runs it, never writes it.
+// memoryCommand is the argv token for the wrapper. Inside the jail it must
+// be the resolved host path so --map and exec agree; without a jail the
+// contract stays the bare PATH name.
+func memoryCommand(cfg LaunchConfig) string {
+	if cfg.UseJail {
+		if resolved := resolveHostPath(cfg.MemoryExecutable); resolved != "" {
+			return resolved
+		}
+	}
+	return aiMemoryCommand
+}
+
+// ResolveHostBinaries follows harness and ai-memory symlinks so jail --map
+// points at the real directories. CLI finalize and the TUI call this before
+// Build so the builder stays I/O-free. Memory is resolved only when both
+// jail and memory are on, so a later TUI toggle still fills MemoryExecutable.
+func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
+	if path := strings.TrimSpace(cfg.Executable); path != "" {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+			cfg.Executable = resolved
+		}
+	}
+	if !cfg.UseJail || !cfg.UseMemory || strings.TrimSpace(cfg.MemoryExecutable) != "" {
+		return cfg
+	}
+	path, err := exec.LookPath(aiMemoryCommand)
+	if err != nil {
+		return cfg
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+		path = resolved
+	}
+	cfg.MemoryExecutable = path
+	return cfg
+}
+
 func resolveHostPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {

@@ -16,9 +16,11 @@ class of failure hit `ai-memory run` when the wrapper itself was not on a
 mapped path inside the jail.
 
 **How.** `resolveHostPath` / `appendHostDirMount` in `internal/launcher/argv.go`
-keep Build I/O-free. `finalizeLaunchConfig` does the LookPath + symlink
-walk and fills `LaunchConfig.MemoryExecutable`. Contract tests that do not
-set that field keep emitting bare `ai-memory`.
+keep Build I/O-free. `ResolveHostBinaries` does the LookPath + symlink walk
+and fills `LaunchConfig.MemoryExecutable` when jail and memory are both on.
+`finalizeLaunchConfig` and the TUI (preview and run) call it so a toggle after
+startup still maps the wrapper. Contract tests that do not set that field keep
+emitting bare `ai-memory`.
 
 **Trade-offs.** One extra `--map` per resolved tool. The alternative is a
 launch that only works after the operator hand-edits `.ai-jail`.

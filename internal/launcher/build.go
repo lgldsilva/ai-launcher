@@ -17,8 +17,9 @@ type LaunchConfig struct {
 	Agent      config.Agent
 	Executable string
 	// MemoryExecutable is the host path of the ai-memory binary. Build stays
-	// I/O-free: the CLI/TUI resolve LookPath and pass the result here so the
-	// jail can --map that directory (ai-memory runs *inside* the sandbox).
+	// I/O-free: ResolveHostBinaries (CLI finalize and the TUI before Build)
+	// fills it so the jail can --map that directory (ai-memory runs inside
+	// the sandbox). Without a jail, Build still emits the bare PATH name.
 	MemoryExecutable string
 	HomeDir          string
 	MemoryServerURL  string
@@ -116,11 +117,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		command = appendJailArgs(command, cfg)
 	}
 	if cfg.UseMemory {
-		memoryBin := aiMemoryCommand
-		if resolved := resolveHostPath(cfg.MemoryExecutable); resolved != "" {
-			memoryBin = resolved
-		}
-		command = append(command, memoryBin, "run")
+		command = append(command, memoryCommand(cfg), "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
 		if cfg.Fresh {

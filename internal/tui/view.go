@@ -292,7 +292,7 @@ func (m Model) previewView(b *strings.Builder) {
 		b.WriteString(lineBreak)
 		return
 	}
-	preview, err := launcher.Build(m.launch)
+	preview, err := launcher.Build(launcher.ResolveHostBinaries(m.launch))
 	if err != nil {
 		return
 	}
