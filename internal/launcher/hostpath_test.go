@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,7 +171,9 @@ func requireRealCLI(t *testing.T, name, needle string) string {
 			t.Skip(name + " is a test stub")
 		}
 	}
-	out, err := exec.Command(path, "--help").CombinedOutput() // #nosec G204 -- path is LookPath of a fixed tool name
+	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--help").CombinedOutput() // #nosec G204 -- path is LookPath of a fixed tool name
 	if err != nil || !strings.Contains(strings.ToLower(string(out)), strings.ToLower(needle)) {
 		t.Skip(name + " is not the real CLI")
 	}
