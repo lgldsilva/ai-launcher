@@ -153,6 +153,7 @@ func (m *Model) confirmRun(dryRun bool) bool {
 		}
 	}
 	m.launch = ensureDockerWorkspace(m.launch)
+	m.launch = launcher.ResolveHostBinaries(m.launch)
 	argv, err := launcher.Build(m.launch)
 	if err != nil {
 		m.status = "Error: " + err.Error()

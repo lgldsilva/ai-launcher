@@ -88,6 +88,10 @@ func finalizeLaunchConfig(launchConfig launcher.LaunchConfig, global config.Glob
 	if launchConfig.UseJail {
 		launchConfig = applyJailAutoDetection(launchConfig, home, errOut)
 	}
+	// Resolve after platform/jail constraints so a TUI that later toggles
+	// jail+memory is not the only caller that fills MemoryExecutable. The
+	// TUI also calls ResolveHostBinaries before each Build.
+	launchConfig = launcher.ResolveHostBinaries(launchConfig)
 	if launchConfig.UseDocker && worktreePassthroughEnabled(launchConfig) {
 		launchConfig = applyDockerWorktreeDiscovery(launchConfig, errOut)
 	}

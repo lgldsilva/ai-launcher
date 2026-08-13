@@ -20,6 +20,20 @@ func TestDecideLaunchAction(t *testing.T) {
 	}
 }
 
+func TestFinalizeResolvesMemoryWhenJailAndMemoryOn(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "ai-memory")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o755); err != nil { // #nosec G306 -- PATH stub must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var errOut bytes.Buffer
+	got := finalizeLaunchConfig(launcher.LaunchConfig{UseJail: true, UseMemory: true}, config.DefaultGlobal(), t.TempDir(), &errOut)
+	if got.MemoryExecutable != stub {
+		t.Fatalf("MemoryExecutable = %q; want %q", got.MemoryExecutable, stub)
+	}
+}
+
 func TestContinueFlagBuildsHarnessLessAiMemoryRun(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: false\n  memory: true\n")
 	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--continue", "--no-jail", "--dry-run")

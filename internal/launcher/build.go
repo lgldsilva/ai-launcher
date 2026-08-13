@@ -14,12 +14,17 @@ import (
 // LaunchConfig carries every input needed to build and validate the argv used
 // to start an agent, without performing any I/O.
 type LaunchConfig struct {
-	Agent           config.Agent
-	Executable      string
-	HomeDir         string
-	MemoryServerURL string
-	MemoryAuthToken string
-	UseJail         bool
+	Agent      config.Agent
+	Executable string
+	// MemoryExecutable is the host path of the ai-memory binary. Build stays
+	// I/O-free: ResolveHostBinaries (CLI finalize and the TUI before Build)
+	// fills it so the jail can --map that directory (ai-memory runs inside
+	// the sandbox). Without a jail, Build still emits the bare PATH name.
+	MemoryExecutable string
+	HomeDir          string
+	MemoryServerURL  string
+	MemoryAuthToken  string
+	UseJail          bool
 	// UseDocker selects the docker container backend: when true, Build emits
 	// `docker run ...` instead of `ai-jail ...`. UseDocker and UseJail are
 	// mutually exclusive — the container replaces the jail (design decision 25).
@@ -112,7 +117,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		command = appendJailArgs(command, cfg)
 	}
 	if cfg.UseMemory {
-		command = append(command, aiMemoryCommand, "run")
+		command = append(command, memoryCommand(cfg), "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
 		if cfg.Fresh {
@@ -121,13 +126,13 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
-		if cfg.Executable != "" {
-			command = append(command, "--executable", cfg.Executable)
+		if resolved := resolveHostPath(cfg.Executable); resolved != "" {
+			command = append(command, "--executable", resolved)
 		}
 	} else {
 		executable := cfg.Agent.Command
-		if cfg.Executable != "" {
-			executable = cfg.Executable
+		if resolved := resolveHostPath(cfg.Executable); resolved != "" {
+			executable = resolved
 		}
 		command = append(command, executable)
 	}
