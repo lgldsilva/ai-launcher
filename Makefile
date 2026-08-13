@@ -25,7 +25,7 @@ MUTATION_EFFICACY_MIN ?= 70
 MUTATION_COVERAGE_MIN ?= 90
 MUTATION_OUTPUT ?= .mutation/gremlins.json
 
-.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec sec-static sec-vuln test-unit test-property test-gherkin test-race test-coverage test-mutation test-all
+.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec sec-static sec-vuln test-unit test-property test-gherkin test-race test-coverage test-mutation-script test-mutation test-all
 
 build:
 	$(GO) build -buildvcs=false $(LDFLAGS) -o bin/ai-launcher ./cmd/ai-launcher
@@ -74,8 +74,8 @@ lint-full:
 # the release config that ships the binaries. shellcheck comes from the host
 # (preinstalled on the CI runners); shfmt and goreleaser run via `go run`.
 lint-dist:
-	shellcheck install.sh scripts/mutation.sh
-	$(SHFMT) -i 2 -ci -d install.sh scripts/mutation.sh
+	shellcheck install.sh scripts/mutation.sh scripts/mutation_test.sh
+	$(SHFMT) -i 2 -ci -d install.sh scripts/mutation.sh scripts/mutation_test.sh
 	$(GORELEASER) check
 
 # The two halves are separate targets because CI runs them as separate jobs:
@@ -117,7 +117,10 @@ test-coverage:
 # Mutation testing runs in the pinned Gremlins container. The wrapper provisions
 # hermetic command stubs for catalog discovery and forwards the host UID/GID so
 # tests that inspect the launch identity remain meaningful.
-test-mutation:
+test-mutation-script:
+	./scripts/mutation_test.sh
+
+test-mutation: test-mutation-script
 	MUTATION_IMAGE="$(MUTATION_IMAGE)" \
 	MUTATION_BASE="$(MUTATION_BASE)" \
 	MUTATION_EFFICACY_MIN="$(MUTATION_EFFICACY_MIN)" \

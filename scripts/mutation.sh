@@ -21,6 +21,22 @@ fi
 mutation_output_dir=$(dirname -- "$mutation_output")
 mkdir -p "$mutation_output_dir"
 
+# A diff that only changes workflows, documentation, commands, or other files
+# outside the mutation scope has no mutants to generate. Treating that case as
+# a zero-percent mutation result turns a non-applicable gate into a failure.
+mutation_scope=$(git diff --name-only "$mutation_base"... -- internal | awk '
+  /^internal\/.*\.go$/ &&
+  $0 !~ /^internal\/(tui|installer|selfupdate|cmd)\// &&
+  $0 !~ /^internal\/launcher\/(executor|replace_.*)\.go$/ {
+    print
+  }
+')
+if [ -z "$mutation_scope" ]; then
+  printf 'SKIP: no mutation-eligible Go files changed relative to %s; mutation thresholds are not applicable.\n' "$mutation_base"
+  printf '%s\n' '{"status":"skipped","reason":"no mutation-eligible Go files changed"}' >"$mutation_output"
+  exit 0
+fi
+
 # Gremlins reports the thresholds but does not fail the run when they are
 # missed (verified empirically: 89.00% mcover with a 90 minimum exits 0), so
 # this script captures the summary and enforces the minimums itself.
