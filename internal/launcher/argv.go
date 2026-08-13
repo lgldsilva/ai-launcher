@@ -124,6 +124,9 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	command = appendDockerDecision(command, cfg)
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
+	if cfg.UseMemory {
+		command = appendHostDirMount(command, cfg.MemoryExecutable, cfg.Mounts)
+	}
 	command = appendExecutableMount(command, cfg)
 	for _, mount := range cfg.Mounts {
 		path := strings.TrimSpace(mount.Path)
@@ -145,17 +148,37 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 // the argv pointed at a binary the agent could not reach and operators worked
 // around it by hand (the .ai-jail in this repo carries /opt/homebrew for
 // exactly that reason). Read-only is enough: the agent runs it, never writes it.
+func resolveHostPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+		return resolved
+	}
+	return path
+}
+
 func appendExecutableMount(command []string, cfg LaunchConfig) []string {
-	executable := strings.TrimSpace(cfg.Executable)
-	if executable == "" || !filepath.IsAbs(executable) {
+	return appendHostDirMount(command, cfg.Executable, cfg.Mounts)
+}
+
+func appendHostDirMount(command []string, path string, mounts []config.Mount) []string {
+	path = resolveHostPath(path)
+	if path == "" || !filepath.IsAbs(path) {
 		return command
 	}
-	dir := filepath.Dir(executable)
+	dir := filepath.Dir(path)
 	if dir == "" || dir == string(filepath.Separator) {
 		return command
 	}
-	if coveredByMounts(dir, cfg.Mounts) {
+	if coveredByMounts(dir, mounts) {
 		return command
+	}
+	for i := 0; i < len(command)-1; i++ {
+		if command[i] == "--map" && command[i+1] == dir {
+			return command
+		}
 	}
 	return append(command, "--map", dir)
 }

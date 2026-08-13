@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -87,11 +88,35 @@ func finalizeLaunchConfig(launchConfig launcher.LaunchConfig, global config.Glob
 	}
 	if launchConfig.UseJail {
 		launchConfig = applyJailAutoDetection(launchConfig, home, errOut)
+		launchConfig = resolveJailHostBinaries(launchConfig)
 	}
 	if launchConfig.UseDocker && worktreePassthroughEnabled(launchConfig) {
 		launchConfig = applyDockerWorktreeDiscovery(launchConfig, errOut)
 	}
 	return launchConfig
+}
+
+// resolveJailHostBinaries follows symlinks on the harness path and locates
+// ai-memory on PATH. Both binaries run inside the sandbox, so Build needs
+// the real directories to emit --map. Build itself stays I/O-free.
+func resolveJailHostBinaries(cfg launcher.LaunchConfig) launcher.LaunchConfig {
+	if path := strings.TrimSpace(cfg.Executable); path != "" {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+			cfg.Executable = resolved
+		}
+	}
+	if !cfg.UseMemory || strings.TrimSpace(cfg.MemoryExecutable) != "" {
+		return cfg
+	}
+	path, err := exec.LookPath(config.AIMemoryCommand)
+	if err != nil {
+		return cfg
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+		path = resolved
+	}
+	cfg.MemoryExecutable = path
+	return cfg
 }
 
 func worktreePassthroughEnabled(cfg launcher.LaunchConfig) bool {

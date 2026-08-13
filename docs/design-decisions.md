@@ -3,6 +3,26 @@
 Thematic decisions, not numbered ADRs. Each one follows **Decision → Why →
 How → Trade-offs**, anchored on the concrete incident that forced it.
 
+## Resolve jail host binaries through symlinks
+
+**Decision.** The path passed as `--executable` and the `ai-memory` wrapper
+are followed through `EvalSymlinks`, and each real directory is `--map`'d
+into the sandbox.
+
+**Why.** On both Linux and macOS `grok` is a symlink
+(`~/.grok/bin/grok` → `downloads/grok-…`). Mapping only the symlink's
+directory made `ai-jail` fail with `No such file or directory`. The same
+class of failure hit `ai-memory run` when the wrapper itself was not on a
+mapped path inside the jail.
+
+**How.** `resolveHostPath` / `appendHostDirMount` in `internal/launcher/argv.go`
+keep Build I/O-free. `finalizeLaunchConfig` does the LookPath + symlink
+walk and fills `LaunchConfig.MemoryExecutable`. Contract tests that do not
+set that field keep emitting bare `ai-memory`.
+
+**Trade-offs.** One extra `--map` per resolved tool. The alternative is a
+launch that only works after the operator hand-edits `.ai-jail`.
+
 ## Orchestrate upstream ai-jail/ai-memory instead of reimplementing
 
 **Decision.** The launcher never forks or embeds sandbox or memory: it
