@@ -27,6 +27,7 @@ make test-property   # property-based tests (rapid)
 make test-gherkin    # executable launcher-contract scenarios
 make test-race       # full suite with -race -shuffle=on
 make test-coverage   # atomic coverage profile + 90% gate on the logic
+make test-mutation-script # regression test for the mutation wrapper
 make test-mutation   # containerized Gremlins mutation gate
 make test-all        # all deterministic checks, including mutation
 ```
@@ -63,9 +64,11 @@ stubs for catalog discovery, so host-installed agent CLIs do not change the
 result.
 
 The default command compares the checkout with `origin/main`, enforces 70%
-test efficacy and 90% mutator coverage, and writes the detailed report to
-`.mutation/gremlins.json` (ignored by Git). Override the base or thresholds
-only for diagnosis, for example:
+test efficacy and 90% mutator coverage when mutation-eligible Go files changed,
+and writes the detailed report to `.mutation/gremlins.json` (ignored by Git).
+Workflow-only, documentation-only, and other diffs outside the mutation scope
+are reported as a successful `SKIP` with a JSON report because no mutants exist
+to measure. Override the base or thresholds only for diagnosis, for example:
 
 ```bash
 MUTATION_BASE=HEAD~1 make test-mutation
@@ -73,9 +76,9 @@ MUTATION_EFFICACY_MIN=80 make test-mutation
 ```
 
 CI fetches the complete history because the diff base is part of the test
-contract. A missing Docker daemon or base ref is a hard failure; mutation
-testing never reports a successful skip. Worktrees are supported by mounting
-the common Git directory read-only and supplying the worktree `.git` file.
+contract. A missing Docker daemon or base ref is a hard failure when mutation
+is applicable. Worktrees are supported by mounting the common Git directory
+read-only and supplying the worktree `.git` file.
 
 ## Known regression expectations
 

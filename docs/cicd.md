@@ -14,7 +14,7 @@ Triggers: push to `main` and every pull request. All jobs run on
 | Job | What it does | Fails the build when |
 | --- | --- | --- |
 | `test` | `go build`, `go test -race -shuffle=on ./...`, coverage gate | Filtered coverage < 90% (`COVERAGE_MIN`) |
-| `mutation` | Containerized Gremlins mutation testing against `origin/main` | Efficacy < 70% or mutator coverage < 90% |
+| `mutation` | Containerized Gremlins mutation testing against `origin/main` | When applicable, efficacy < 70% or mutator coverage < 90% |
 | `lint` | `gofmt -l`, `go vet`, `golangci-lint` v2.12 | Any formatting/lint issue pending |
 | `dist` | `make lint-dist`: ShellCheck + `shfmt -i 2 -ci -d` on `install.sh`, `goreleaser check` | Any issue in the install script or the release config |
 | `gosec` | `make sec-static`: gosec SAST over our own code | Any gosec finding, including a `#nosec` annotation that no longer holds |
@@ -36,8 +36,11 @@ boundary as the `COVERAGE_EXCLUDE` regex in `.ai-standards.env` — details in
 The `mutation` job uses the same `make test-mutation` target as local
 validation. It checks out full history so Gremlins can calculate the diff from
 `origin/main`, and uploads `.mutation/gremlins.json` for inspection even when
-the gate fails. The mutator itself is pinned by image digest in the Makefile;
-Docker is therefore an explicit prerequisite rather than a host installation.
+the gate fails. If the PR changes no mutation-eligible Go files, the wrapper
+records a successful `SKIP` and does not require Docker because there are no
+mutants to execute. The mutator itself is pinned by image digest in the
+Makefile; Docker remains an explicit prerequisite whenever mutation is
+applicable.
 
 The `sonar` job is **gated on the `SONAR_TOKEN` secret**: every step skips
 cleanly while the secret does not exist, so forks and early setup stay green.
