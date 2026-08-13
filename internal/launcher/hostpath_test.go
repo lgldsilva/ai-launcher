@@ -112,6 +112,62 @@ func TestResolveHostBinariesFillsMemoryAfterJailToggle(t *testing.T) {
 	}
 }
 
+func TestResolveHostBinariesFollowsExecutableSymlink(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "downloads")
+	if err := os.MkdirAll(realDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(realDir, "grok")
+	if err := os.WriteFile(real, []byte("ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "grok")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	got := ResolveHostBinaries(LaunchConfig{Executable: link})
+	if got.Executable != real {
+		t.Fatalf("Executable = %q; want resolved %q", got.Executable, real)
+	}
+}
+
+func TestResolveHostBinariesFollowsMemorySymlink(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "real")
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(realDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(binDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(realDir, "ai-memory")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil { // #nosec G306 -- PATH stub must be executable
+		t.Fatal(err)
+	}
+	link := filepath.Join(binDir, "ai-memory")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	got := ResolveHostBinaries(LaunchConfig{UseJail: true, UseMemory: true})
+	if got.MemoryExecutable != real {
+		t.Fatalf("MemoryExecutable = %q; want resolved %q", got.MemoryExecutable, real)
+	}
+}
+
+func TestResolveHostBinariesKeepsPresetMemoryPath(t *testing.T) {
+	got := ResolveHostBinaries(LaunchConfig{
+		UseJail:          true,
+		UseMemory:        true,
+		MemoryExecutable: "/already/resolved/ai-memory",
+	})
+	if got.MemoryExecutable != "/already/resolved/ai-memory" {
+		t.Fatalf("preset MemoryExecutable rewritten: %q", got.MemoryExecutable)
+	}
+}
+
 func TestLiveJailRunsGrokHelp(t *testing.T) {
 	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" || os.Getenv("MUTATION_BASE") != "" {
 		t.Skip("live jail exec is host-only")
