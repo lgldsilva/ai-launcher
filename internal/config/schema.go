@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/goccy/go-yaml"
-	"github.com/lgldsilva/ai-launcher/internal/shlex"
 )
 
 // Agent describes a launchable AI agent CLI and its optional integrations.
@@ -455,7 +454,7 @@ func splitScalarExtraArgs(value string) ([]string, error) {
 	if value == "" {
 		return nil, nil
 	}
-	args, err := shlex.Split(value)
+	args, err := SplitArgs(value)
 	if err != nil {
 		return nil, fmt.Errorf("extra_args: %w", err)
 	}

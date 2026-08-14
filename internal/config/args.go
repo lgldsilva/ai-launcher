@@ -1,25 +1,24 @@
-// Package shlex parses shell-style argument strings with quoting and escaping.
-package shlex
+package config
 
 import (
 	"errors"
 	"strings"
 )
 
-// Split parses a shell-style argument string. It supports whitespace
-// separation, single and double quotes, and backslash escaping outside single
-// quotes.
-func Split(input string) ([]string, error) {
-	parser := &parser{}
+// SplitArgs parses shell-style arguments used by configuration fields such as
+// extra_args. It supports whitespace separation, single and double quotes,
+// and backslash escaping outside single quotes.
+func SplitArgs(input string) ([]string, error) {
+	parser := &argParser{}
 	for _, r := range input {
 		parser.feed(r)
 	}
 	return parser.finish()
 }
 
-// parser holds the state of a Split scan: the accumulated words, the word
-// being built, and the quoting/escaping mode.
-type parser struct {
+// argParser holds the state of a SplitArgs scan: the accumulated words, the
+// word being built, and the quoting/escaping mode.
+type argParser struct {
 	result    []string
 	current   strings.Builder
 	quote     rune
@@ -28,7 +27,7 @@ type parser struct {
 }
 
 // feed consumes one rune in the current scanning mode.
-func (p *parser) feed(r rune) {
+func (p *argParser) feed(r rune) {
 	if p.escaped {
 		p.write(r)
 		p.escaped = false
@@ -43,7 +42,7 @@ func (p *parser) feed(r rune) {
 
 // feedQuoted consumes one rune inside a quoted section. A backslash only
 // escapes inside double quotes; inside single quotes it is literal.
-func (p *parser) feedQuoted(r rune) {
+func (p *argParser) feedQuoted(r rune) {
 	switch {
 	case r == p.quote:
 		p.quote = 0
@@ -55,7 +54,7 @@ func (p *parser) feedQuoted(r rune) {
 }
 
 // feedBare consumes one rune outside any quoting.
-func (p *parser) feedBare(r rune) {
+func (p *argParser) feedBare(r rune) {
 	switch r {
 	case '\'', '"':
 		p.quote = r
@@ -71,13 +70,13 @@ func (p *parser) feedBare(r rune) {
 }
 
 // write appends a rune to the word being built.
-func (p *parser) write(r rune) {
+func (p *argParser) write(r rune) {
 	p.current.WriteRune(r)
 	p.haveValue = true
 }
 
 // flush closes the word being built, if any.
-func (p *parser) flush() {
+func (p *argParser) flush() {
 	if p.haveValue {
 		p.result = append(p.result, p.current.String())
 		p.current.Reset()
@@ -86,7 +85,7 @@ func (p *parser) flush() {
 }
 
 // finish validates the end state and returns the accumulated words.
-func (p *parser) finish() ([]string, error) {
+func (p *argParser) finish() ([]string, error) {
 	if p.escaped {
 		return nil, errors.New("trailing escape")
 	}
