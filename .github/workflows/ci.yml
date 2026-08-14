@@ -122,8 +122,9 @@ jobs:
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
           # The action defaults to "stable", which can pick a toolchain with
-          # unfixed stdlib CVEs unrelated to this project. Use the project's
-          # go.mod Go line so the scan is deterministic.
+          # unfixed stdlib CVEs unrelated to this project. Clear the explicit
+          # version so setup-go falls back to go-version-file (go.mod).
+          go-version-input: ""
           go-version-file: go.mod
 
   # trivy-action tags < 0.35.0 were force-pushed to malware in March 2026
