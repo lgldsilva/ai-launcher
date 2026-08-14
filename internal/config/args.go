@@ -43,14 +43,15 @@ func (p *argParser) feed(r rune) {
 // feedQuoted consumes one rune inside a quoted section. A backslash only
 // escapes inside double quotes; inside single quotes it is literal.
 func (p *argParser) feedQuoted(r rune) {
-	switch {
-	case r == p.quote:
+	if r == p.quote {
 		p.quote = 0
-	case p.quote != '\'' && r == '\\':
-		p.escaped = true
-	default:
-		p.write(r)
+		return
 	}
+	if p.quote != '\'' && r == '\\' {
+		p.escaped = true
+		return
+	}
+	p.write(r)
 }
 
 // feedBare consumes one rune outside any quoting.
