@@ -206,15 +206,19 @@ func reportInfoFlags(opts cliOptions, out io.Writer) (bool, error) {
 // processes, and the TUI event loop never blocks on them.
 func reportDoctor(out io.Writer) error {
 	_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
+	var blocked []string
 	stale := false
 	for _, status := range launcher.UpstreamReport(nil, "") {
 		switch {
 		case status.Missing:
+			blocked = append(blocked, status.Command)
 			_, _ = fmt.Fprintf(out, "%-10s not found in PATH (required >= %s)\n", status.Command, status.Minimum)
 		case status.Version == "":
+			blocked = append(blocked, status.Command)
 			_, _ = fmt.Fprintf(out, "%-10s %s (version unreadable; required >= %s)\n", status.Command, status.Path, status.Minimum)
 		case status.TooOld:
 			stale = true
+			blocked = append(blocked, status.Command)
 			_, _ = fmt.Fprintf(out, "%-10s %s is older than the required %s; upgrade with --upgrade\n", status.Command, status.Version, status.Minimum)
 		default:
 			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
@@ -222,6 +226,9 @@ func reportDoctor(out io.Writer) error {
 	}
 	if stale {
 		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits.")
+	}
+	if len(blocked) > 0 {
+		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))
 	}
 	return nil
 }

@@ -122,7 +122,7 @@ func managedNativeRunnerPath(home string) string {
 // "Not configured" has to mean "not set".
 func upsertEnv(env []string, key, value string) []string {
 	prefix := key + "="
-	filtered := env[:0]
+	filtered := make([]string, 0, len(env))
 	for _, entry := range env {
 		if strings.HasPrefix(entry, prefix) {
 			continue

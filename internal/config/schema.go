@@ -409,6 +409,10 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 	if err := yaml.Unmarshal(data, &scalar); err != nil {
 		return listErr
 	}
+	extraArgs, err := splitScalarExtraArgs(scalar.ExtraArgs)
+	if err != nil {
+		return err
+	}
 	*o = Options{
 		Jail:                           scalar.Jail,
 		Memory:                         scalar.Memory,
@@ -435,11 +439,26 @@ func (o *Options) UnmarshalYAML(data []byte) error {
 		Workspace:                      scalar.Workspace,
 		Project:                        scalar.Project,
 		JailFlags:                      scalar.JailFlags,
-		ExtraArgs:                      strings.Fields(scalar.ExtraArgs),
+		ExtraArgs:                      extraArgs,
 		ParamValues:                    scalar.ParamValues,
 	}
 	applyOptionDefaults(o, declaredKeys(data))
 	return nil
+}
+
+// splitScalarExtraArgs parses a scalar extra_args string using the same
+// quote-aware rules as the --extra-args CLI flag, so values containing spaces
+// survive when quoted.
+func splitScalarExtraArgs(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	args, err := SplitArgs(value)
+	if err != nil {
+		return nil, fmt.Errorf("extra_args: %w", err)
+	}
+	return args, nil
 }
 
 // applyOptionDefaults turns the safe defaults back on for the toggles the

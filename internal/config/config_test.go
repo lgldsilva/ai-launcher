@@ -412,6 +412,70 @@ func TestLoadLocalAcceptsDocumentedScalarExtraArgs(t *testing.T) {
 	}
 }
 
+func TestLoadLocalScalarExtraArgsRespectsQuotes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "local.yaml")
+	contents := []byte("options:\n  extra_args: '--model \"claude 3.5\" --verbose'\n")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadLocal(path)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	want := []string{"--model", "claude 3.5", "--verbose"}
+	if !reflect.DeepEqual(got.Options.ExtraArgs, want) {
+		t.Fatalf("quoted scalar extra args = %#v; want %#v", got.Options.ExtraArgs, want)
+	}
+}
+
+func TestLoadLocalScalarExtraArgsRejectsUnterminatedQuote(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "local.yaml")
+	contents := []byte("options:\n  extra_args: '--model \"claude\n")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadLocal(path)
+	if err == nil {
+		t.Fatal("LoadLocal() = nil; want error for unterminated quote in extra_args")
+	}
+}
+
+func TestLoadLocalScalarExtraArgsWithDoubleQuotes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "local.yaml")
+	contents := []byte("options:\n  extra_args: --model \"claude 3.5\" --verbose\n")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadLocal(path)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	want := []string{"--model", "claude 3.5", "--verbose"}
+	if !reflect.DeepEqual(got.Options.ExtraArgs, want) {
+		t.Fatalf("double-quoted scalar extra args = %#v; want %#v", got.Options.ExtraArgs, want)
+	}
+}
+
+func TestLoadLocalScalarExtraArgsWithEscapedDoubleQuotes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "local.yaml")
+	contents := []byte("options:\n  extra_args: --message \"say \\\"hi\\\"\"\n")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadLocal(path)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	want := []string{"--message", `say "hi"`}
+	if !reflect.DeepEqual(got.Options.ExtraArgs, want) {
+		t.Fatalf("escaped double-quote scalar extra args = %#v; want %#v", got.Options.ExtraArgs, want)
+	}
+}
+
 // Regression: the persisted YAML distinguishes explicitly false values from
 // an omitted options block. Saving must therefore be lossless for both flags.
 func TestSaveLoadLocalPreservesExplicitDisabledOptions(t *testing.T) {

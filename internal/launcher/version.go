@@ -26,7 +26,7 @@ var runVersionCommand = func(path string) ([]byte, error) {
 	return exec.CommandContext(ctx, path, "--version").CombinedOutput() // #nosec G204 -- path comes from LookPath of a fixed tool name
 }
 
-var semverPattern = regexp.MustCompile(`\d+\.\d+\.\d+`)
+var semverPattern = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
 
 // UpstreamStatus is what the doctor surface found for one upstream dependency.
 // Version is empty when the binary is missing or its output carries no version
