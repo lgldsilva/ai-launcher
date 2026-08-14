@@ -70,6 +70,23 @@ func TestUpstreamReportAcceptsCurrentOrNewerInstalls(t *testing.T) {
 	}
 }
 
+// Two-segment semver outputs such as "2.0" must be detected, not discarded as
+// unparseable.
+func TestUpstreamReportDetectsTwoSegmentSemver(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail version 2.0",
+		"/bin/ai-memory": "ai-memory 2.0",
+	}, nil)
+	for _, status := range UpstreamReport(lookPathAll, "linux") {
+		if status.Version != "2.0" {
+			t.Errorf("%s Version = %q; want \"2.0\"", status.Command, status.Version)
+		}
+		if status.TooOld {
+			t.Errorf("%s TooOld = true for %q; the floor is met", status.Command, status.Version)
+		}
+	}
+}
+
 // A probe that cannot answer must never be reported as too old: availability is
 // the LookPath-based pre-flight check's job, and an unreadable version is not
 // evidence of an outdated one.
