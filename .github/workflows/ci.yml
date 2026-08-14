@@ -120,6 +120,11 @@ jobs:
           cache: true
       - name: govulncheck
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          # "stable" currently resolves to a 1.26.5 image with unfixed stdlib
+          # CVEs; pin to the latest 1.26 patch so the scan reports real project
+          # vulnerabilities rather than the runner's Go toolchain.
+          go-version-input: "1.26.x"
 
   # trivy-action tags < 0.35.0 were force-pushed to malware in March 2026
   # (CVE-2026-33634); this pins the v0.36.0 commit SHA, never a mutable tag.
