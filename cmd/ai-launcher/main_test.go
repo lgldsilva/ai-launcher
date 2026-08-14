@@ -363,6 +363,49 @@ func TestVersionFlagPrintsBuildMetadata(t *testing.T) {
 	}
 }
 
+func TestDoctorReturnsErrorWhenUpstreamIsMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := runDryRun(t, "--doctor")
+	if err == nil {
+		t.Fatal("run(--doctor) = nil; want error when upstream tools are missing")
+	}
+}
+
+func TestDoctorReturnsErrorWhenUpstreamIsTooOld(t *testing.T) {
+	binDir := t.TempDir()
+	for _, name := range []string{"ai-jail", "ai-memory"} {
+		path := filepath.Join(binDir, name)
+		script := "#!/bin/sh\necho \"" + name + " version 1.0.0\"\n"
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil { // #nosec G306 -- test stub
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err := runDryRun(t, "--doctor")
+	if err == nil {
+		t.Fatal("run(--doctor) = nil; want error when upstream tools are below the floor")
+	}
+}
+
+func TestDoctorSucceedsWhenUpstreamMeetsFloor(t *testing.T) {
+	binDir := t.TempDir()
+	for _, name := range []string{"ai-jail", "ai-memory"} {
+		path := filepath.Join(binDir, name)
+		script := "#!/bin/sh\necho \"" + name + " version 99.0.0\"\n"
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil { // #nosec G306 -- test stub
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := runDryRun(t, "--doctor")
+	if err != nil {
+		t.Fatalf("run(--doctor) error = %v; want success when upstream tools meet the floor", err)
+	}
+	if !strings.Contains(out, "99.0.0") {
+		t.Fatalf("--doctor output = %q; want the detected upstream version", out)
+	}
+}
+
 func TestLaunchFailureHintWorkstreamConflict(t *testing.T) {
 	got := launchFailureHint(`server returned 409 Conflict: {"error":"workstream is already active: owned by host:1 until 2099"}`)
 	if !strings.Contains(got, "workstream") || !strings.Contains(got, "--new") {
