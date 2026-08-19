@@ -174,3 +174,61 @@ func TestCompareVersions(t *testing.T) {
 		}
 	}
 }
+
+// The floor only ever looked down, so an upstream that keeps every flag while
+// changing what they mean — ai-jail 1.18.0 — read as healthy in --doctor at the
+// exact moment the composed argv stopped working. The ceiling is the report for
+// that class; it warns and never blocks, because a newer upstream is not
+// automatically broken.
+func TestUpstreamReportFlagsInstallsAboveTheTestedCeiling(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail " + config.UntestedAIJailVersion,
+		"/bin/ai-memory": "ai-memory " + config.UntestedAIMemoryVersion,
+	}, nil)
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 2 {
+		t.Fatalf("report = %#v; want both tools", report)
+	}
+	for _, status := range report {
+		if !status.TooNew {
+			t.Errorf("%s TooNew = false; %s is at the untested bound %s", status.Command, status.Version, status.Untested)
+		}
+		if status.TooOld {
+			t.Errorf("%s TooOld = true; a newer install is not stale", status.Command)
+		}
+	}
+	if report[0].UntestedCode != "ai-jail-version-untested" || report[1].UntestedCode != "ai-memory-version-untested" {
+		t.Fatalf("untested codes = %q, %q", report[0].UntestedCode, report[1].UntestedCode)
+	}
+}
+
+// The bound is exclusive, so the last validated version is still clean. Without
+// this the report would cry wolf on every install the launcher does support.
+func TestUpstreamReportAcceptsTheVersionJustBelowTheCeiling(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail 1.17.9",
+		"/bin/ai-memory": "ai-memory 1.28.1",
+	}, nil)
+	for _, status := range UpstreamReport(lookPathAll, "linux") {
+		if status.TooNew {
+			t.Errorf("%s TooNew = true for %q; the ceiling %s is exclusive", status.Command, status.Version, status.Untested)
+		}
+		if status.TooOld {
+			t.Errorf("%s TooOld = true for %q; it is within range", status.Command, status.Version)
+		}
+	}
+}
+
+// An unreadable probe stays silent in both directions: the launcher reports
+// what it measured, and it measured nothing.
+func TestUpstreamReportLeavesAnUnreadableVersionUnjudged(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "no version here",
+		"/bin/ai-memory": "no version here",
+	}, nil)
+	for _, status := range UpstreamReport(lookPathAll, "linux") {
+		if status.TooOld || status.TooNew {
+			t.Errorf("%s judged %#v with no readable version", status.Command, status)
+		}
+	}
+}
