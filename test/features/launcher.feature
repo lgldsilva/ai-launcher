@@ -785,6 +785,25 @@ Feature: Launcher command contract
       permission-without-jail
       """
 
+  # The unrelated permission issue is deliberate: an empty expectation would
+  # also pass if preflight never ran, so the scenario asserts a known issue is
+  # present while memory-harness-unsupported is absent.
+  Scenario: Accepts the Kiro harness ai-memory gained in 1.24
+    Given a validation configuration
+      """
+      agent: kiro-cli
+      goos: linux
+      jail: false
+      memory: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """
+
   Scenario: Remaps a wrapper command to the ai-memory harness name
     Given a launch configuration
       """
