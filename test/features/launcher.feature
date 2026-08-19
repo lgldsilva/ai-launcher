@@ -1116,6 +1116,21 @@ Feature: Launcher command contract
       docker-selection-invalid
       """
 
+  Scenario: Reports a relative container project directory in preflight
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      docker: true
+      stacks: [go]
+      workspace: meu-time
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      docker-project-dir-not-absolute
+      """
+
   Scenario: Runs docker with resource limits, published ports, and a network
     Given a launch configuration
       """

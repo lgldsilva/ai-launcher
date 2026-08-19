@@ -174,6 +174,19 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 	return container.BuildRunCommand(run)
 }
 
+// EffectiveProjectDir is the directory the container backend mounts and uses as
+// WORKDIR. Pre-flight and Build must agree on it, so the resolution lives in
+// one exported place instead of being repeated by each caller.
+//
+// Workspace and Project are read here for historical reasons: they are the
+// ai-memory scope names, and the container backend borrowed them as a
+// directory. That overload is what lets a legitimate scope name reach Docker
+// as a mount source; ValidateProjectDir is the guard until the fields are
+// separated.
+func EffectiveProjectDir(cfg LaunchConfig) string {
+	return firstNonEmpty(cfg.Workspace, cfg.Project, cfg.Docker.ProjectDir)
+}
+
 // prepareDockerRunConfig resolves the shared container inputs once so the
 // single-container and compose backends mount the same project, credentials,
 // toolchain caches and host binaries. It performs no filesystem or runtime
@@ -187,9 +200,9 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 		run.Context = contextName
 	}
 	run.HomeDir = cfg.HomeDir
-	run.ProjectDir = firstNonEmpty(cfg.Workspace, cfg.Project, run.ProjectDir)
-	if run.ProjectDir == "" {
-		return container.RunConfig{}, errors.New("docker backend requires a workspace directory")
+	run.ProjectDir = EffectiveProjectDir(cfg)
+	if err := container.ValidateProjectDir(run.ProjectDir); err != nil {
+		return container.RunConfig{}, err
 	}
 	run.AgentCommands = agentDockerCommands(cfg)
 	run.UseMemory = cfg.UseMemory
