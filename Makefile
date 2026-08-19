@@ -105,8 +105,15 @@ test-gherkin:
 test-race:
 	$(GO) test -race -shuffle=on ./...
 
+# -count=1 is load-bearing, not a habit: without it `go test` merges cached
+# per-package coverage results into the combined profile, and a cached result
+# carries the block coordinates of the source it ran against. Edit a file and
+# the blocks below the edit shift, so the profile ends up holding two versions
+# of the same package — the denominator inflates with blocks that no longer
+# exist and the reported number collapses (91.8% -> 76.6% on the same tree).
+# The gate then fails, or passes, according to what happens to be in the cache.
 test-coverage:
-	$(GO) test -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
+	$(GO) test -count=1 -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
 	@logic_profile=$$(mktemp); \
 	trap 'rm -f "$$logic_profile"' EXIT; \
 	awk 'NR == 1 || $$1 !~ /internal\/launcher\/(executor.*|replace_.*)\.go:/' $(COVERAGE_FILE) > "$$logic_profile"; \
