@@ -22,10 +22,10 @@ func dockerLaunchConfig(t *testing.T) LaunchConfig {
 		t.Fatalf("Normalize() error = %v", err)
 	}
 	return LaunchConfig{
-		Agent:     config.Agent{Command: "claude"},
-		UseDocker: true,
-		Workspace: "/home/lgldsilva/work",
-		HomeDir:   "/home/lgldsilva",
+		Agent:      config.Agent{Command: "claude"},
+		UseDocker:  true,
+		ProjectDir: "/home/lgldsilva/work",
+		HomeDir:    "/home/lgldsilva",
 		Docker: container.RunConfig{
 			Selection: selection,
 		},
@@ -190,12 +190,15 @@ func TestBuildDockerRunHostBinaryUsesHostPath(t *testing.T) {
 	}
 }
 
-func TestBuildDockerRunRequiresWorkspace(t *testing.T) {
+func TestBuildDockerRunRequiresProjectDir(t *testing.T) {
 	cfg := dockerLaunchConfig(t)
-	cfg.Workspace = ""
-	cfg.Project = ""
+	cfg.ProjectDir = ""
+	cfg.Docker.ProjectDir = ""
+	// The ai-memory scopes are not a fallback: they are names, not paths.
+	cfg.Workspace = "acme"
+	cfg.Project = "billing"
 	if _, err := Build(cfg); err == nil {
-		t.Fatal("Build() with docker and no workspace should error")
+		t.Fatal("Build() with docker and no project directory should error")
 	}
 }
 

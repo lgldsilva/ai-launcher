@@ -152,7 +152,7 @@ func (m *Model) confirmRun(dryRun bool) bool {
 			return false
 		}
 	}
-	m.launch = ensureDockerWorkspace(m.launch)
+	m.launch = ensureDockerProjectDir(m.launch)
 	m.launch = launcher.ResolveHostBinaries(m.launch)
 	argv, err := launcher.Build(m.launch)
 	if err != nil {
@@ -233,15 +233,15 @@ func (m *Model) acceptComposeReview(choice ComposeUpdateChoice) bool {
 	return m.confirmRun(false)
 }
 
-// ensureDockerWorkspace keeps the TUI's in-memory selection launchable when
+// ensureDockerProjectDir keeps the TUI's in-memory selection launchable when
 // Docker is enabled interactively. The CLI applies the same default around
 // the TUI, but the model can switch backends after that point.
-func ensureDockerWorkspace(cfg launcher.LaunchConfig) launcher.LaunchConfig {
-	if !cfg.UseDocker || strings.TrimSpace(cfg.Workspace) != "" || strings.TrimSpace(cfg.Project) != "" {
+func ensureDockerProjectDir(cfg launcher.LaunchConfig) launcher.LaunchConfig {
+	if !cfg.UseDocker || strings.TrimSpace(cfg.ProjectDir) != "" {
 		return cfg
 	}
-	if workspace, err := os.Getwd(); err == nil && strings.TrimSpace(workspace) != "" {
-		cfg.Workspace = workspace
+	if dir, err := os.Getwd(); err == nil && strings.TrimSpace(dir) != "" {
+		cfg.ProjectDir = dir
 	}
 	return cfg
 }

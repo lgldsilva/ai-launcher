@@ -105,10 +105,13 @@ func worktreePassthroughEnabled(cfg launcher.LaunchConfig) bool {
 	return cfg.JailFlags.Worktree != nil && *cfg.JailFlags.Worktree
 }
 
+// worktreeSearchRoots lists the directories to ask Git about, most specific
+// first. It reads the container project directory and the process cwd — never
+// the ai-memory Workspace/Project scopes, which are names and not paths.
 func worktreeSearchRoots(cfg launcher.LaunchConfig) []string {
-	seen := make(map[string]struct{}, 3)
-	roots := make([]string, 0, 3)
-	for _, candidate := range []string{cfg.Workspace, cfg.Project, mustGetwd()} {
+	seen := make(map[string]struct{}, 2)
+	roots := make([]string, 0, 2)
+	for _, candidate := range []string{cfg.ProjectDir, mustGetwd()} {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue

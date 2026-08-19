@@ -157,11 +157,18 @@ func TestTuiRunAutosavesContainerHostGateway(t *testing.T) {
 	}
 }
 
-func TestTuiContainerDefaultsWorkspaceToCurrentDirectory(t *testing.T) {
+// Selecting the container backend in the TUI has to leave a concrete project
+// directory behind — Docker needs the same-path mount and WORKDIR explicitly,
+// where the jail gets the cwd implicitly. What it must NOT do is write that
+// derived path into options.workspace: that is an ai-memory scope name, and a
+// saved absolute path there came back on the next jail launch as
+// `ai-memory run --workspace /abs/path`, minting a path-shaped phantom
+// workspace in the memory database.
+func TestTuiContainerDefaultsProjectDirToCurrentDirectory(t *testing.T) {
 	dir := t.TempDir()
 	restoreDir := chdir(t, dir)
 	defer restoreDir()
-	wantWorkspace := mustGetwd()
+	wantProjectDir := mustGetwd()
 
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
 	local, err := config.LoadLocal(localPath)
@@ -190,15 +197,18 @@ func TestTuiContainerDefaultsWorkspaceToCurrentDirectory(t *testing.T) {
 	if err != nil || !proceed {
 		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
 	}
-	if req.launchConfig.Workspace != wantWorkspace {
-		t.Fatalf("workspace = %q; want current directory %q", req.launchConfig.Workspace, wantWorkspace)
+	if req.launchConfig.ProjectDir != wantProjectDir {
+		t.Fatalf("project dir = %q; want current directory %q", req.launchConfig.ProjectDir, wantProjectDir)
+	}
+	if req.launchConfig.Workspace != "" {
+		t.Fatalf("workspace = %q; the container project directory must not become an ai-memory scope", req.launchConfig.Workspace)
 	}
 	saved, err := config.LoadLocal(localPath)
 	if err != nil {
 		t.Fatalf("LoadLocal() after container selection: %v", err)
 	}
-	if saved.Options.Workspace != wantWorkspace {
-		t.Fatalf("saved workspace = %q; want current directory %q", saved.Options.Workspace, wantWorkspace)
+	if saved.Options.Workspace != "" {
+		t.Fatalf("saved workspace = %q; want the derived project directory left unpersisted", saved.Options.Workspace)
 	}
 }
 

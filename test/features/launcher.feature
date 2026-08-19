@@ -729,7 +729,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [redis]
-      workspace: /w
+      project_dir: /w
       internal_network: true
       """
     When launcher preflight is checked
@@ -746,7 +746,7 @@ Feature: Launcher command contract
       memory: false
       docker: true
       stacks: [go]
-      workspace: /w
+      project_dir: /w
       internal_network: true
       """
     When launcher preflight is checked
@@ -916,7 +916,7 @@ Feature: Launcher command contract
       agent: claude
       docker: true
       memory: false
-      workspace: /work/project
+      project_dir: /work/project
       stacks: [go]
       worktree_mounts:
         - /outside/feature
@@ -999,7 +999,7 @@ Feature: Launcher command contract
       home: /home/tester
       docker: true
       stacks: [go, python]
-      workspace: /home/tester/proj
+      project_dir: /home/tester/proj
       """
     When the launch command is built
     Then the command equals
@@ -1044,7 +1044,7 @@ Feature: Launcher command contract
       home: /home/tester
       docker: true
       stacks: [rust]
-      workspace: /w
+      project_dir: /w
       permissions:
         ssh: true
         gh: true
@@ -1092,7 +1092,7 @@ Feature: Launcher command contract
       goos: linux
       docker: true
       stacks: [go]
-      workspace: /w
+      project_dir: /w
       missing_commands: [docker]
       """
     When launcher preflight is checked
@@ -1108,12 +1108,55 @@ Feature: Launcher command contract
       goos: linux
       docker: true
       stacks: [cobol]
-      workspace: /w
+      project_dir: /w
       """
     When launcher preflight is checked
     Then issue codes equal
       """
       docker-selection-invalid
+      """
+
+  Scenario: An ai-memory scope name is never the container project directory
+    Given a launch configuration
+      """
+      agent: claude
+      home: /home/tester
+      docker: true
+      stacks: [go]
+      workspace: acme
+      project: billing
+      project_dir: /work/checkout
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      docker
+      run
+      --rm
+      -it
+      -e
+      HOME=/home/tester
+      -w
+      /work/checkout
+      -v
+      /work/checkout:/work/checkout
+      -v
+      /home/tester/.claude:/home/tester/.claude
+      -v
+      /home/tester/.claude.json:/home/tester/.claude.json
+      -v
+      /home/tester/.claude/projects:/home/tester/.claude/projects
+      -v
+      /home/tester/.cache/go-build:/home/ai-launcher/.cache/go-build:rw
+      -v
+      /home/tester/go/pkg/mod:/home/ai-launcher/go/pkg/mod:rw
+      -e
+      GOCACHE=/home/ai-launcher/.cache/go-build
+      -e
+      GOMODCACHE=/home/ai-launcher/go/pkg/mod
+      --add-host=host.docker.internal:host-gateway
+      ai-launcher-box:000000000000
+      claude
       """
 
   Scenario: Reports a relative container project directory in preflight
@@ -1123,7 +1166,7 @@ Feature: Launcher command contract
       goos: linux
       docker: true
       stacks: [go]
-      workspace: meu-time
+      project_dir: meu-time
       """
     When launcher preflight is checked
     Then issue codes equal
@@ -1137,7 +1180,7 @@ Feature: Launcher command contract
       agent: claude
       docker: true
       stacks: [go]
-      workspace: /work
+      project_dir: /work
       container_memory: 4g
       cpus: "2.0"
       pids: 512
@@ -1176,7 +1219,7 @@ Feature: Launcher command contract
       agent: claude
       docker: true
       stacks: [go]
-      workspace: /work
+      project_dir: /work
       network: host
       """
     When the launch command is built
@@ -1204,7 +1247,7 @@ Feature: Launcher command contract
       docker: true
       runtime: podman
       stacks: [go]
-      workspace: /work
+      project_dir: /work
       """
     When the launch command is built
     Then the command equals
@@ -1229,7 +1272,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [postgres, redis]
-      workspace: /work
+      project_dir: /work
       """
     When the launch command is built
     Then the Compose YAML contains
@@ -1256,7 +1299,7 @@ Feature: Launcher command contract
         model: qwen-token-plan
       stacks: [go]
       services: [redis]
-      workspace: /work
+      project_dir: /work
       """
     When the launch command is built
     Then the Compose YAML contains
@@ -1277,7 +1320,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [postgres]
-      workspace: /work
+      project_dir: /work
       """
     When the launch command is built
     Then the Compose YAML contains
@@ -1294,7 +1337,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [redis]
-      workspace: /work
+      project_dir: /work
       internal_network: true
       """
     When the launch command is built
@@ -1310,7 +1353,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [redis]
-      workspace: /work
+      project_dir: /work
       internal_network: true
       allowed_domains: [api.anthropic.com]
       """
@@ -1331,7 +1374,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [redis]
-      workspace: /w
+      project_dir: /w
       internal_network: true
       allowed_domains: [api.anthropic.com]
       """
@@ -1350,7 +1393,7 @@ Feature: Launcher command contract
       docker: true
       stacks: [go]
       services: [redis]
-      workspace: /w
+      project_dir: /w
       allowed_domains: [api.anthropic.com]
       """
     When launcher preflight is checked

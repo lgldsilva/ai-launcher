@@ -55,6 +55,7 @@ type launchSpec struct {
 	NewWorkstream     string            `yaml:"new_workstream"`
 	Workstream        string            `yaml:"workstream"`
 	Workspace         string            `yaml:"workspace"`
+	ProjectDir        string            `yaml:"project_dir"`
 	Project           string            `yaml:"project"`
 	Permissions       map[string]bool   `yaml:"permissions"`
 	DockerSocketGroup int               `yaml:"docker_socket_group"`
@@ -288,6 +289,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		Fresh:                          spec.Fresh,
 		NewWorkstream:                  spec.NewWorkstream,
 		Workstream:                     spec.Workstream,
+		ProjectDir:                     spec.ProjectDir,
 		Workspace:                      spec.Workspace,
 		Project:                        spec.Project,
 		Permissions:                    spec.Permissions,
@@ -324,7 +326,7 @@ func dockerRunConfig(spec launchSpec) container.RunConfig {
 		},
 		Interactive:          true,
 		AddHostGateway:       true,
-		ProjectDir:           spec.Workspace,
+		ProjectDir:           spec.ProjectDir,
 		MemoryLimit:          spec.ContainerMemory,
 		CPULimit:             spec.CPUs,
 		PIDsLimit:            spec.PIDs,
