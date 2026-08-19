@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -230,5 +231,62 @@ func TestUpstreamReportLeavesAnUnreadableVersionUnjudged(t *testing.T) {
 		if status.TooOld || status.TooNew {
 			t.Errorf("%s judged %#v with no readable version", status.Command, status)
 		}
+	}
+}
+
+// resetJailVersionCache clears the memoized probe so a test can drive it.
+func resetJailVersionCache(t *testing.T) {
+	t.Helper()
+	jailVersionCache.once = sync.Once{}
+	jailVersionCache.value = ""
+	t.Cleanup(func() {
+		jailVersionCache.once = sync.Once{}
+		jailVersionCache.value = ""
+	})
+}
+
+// The TUI rebuilds its argv preview through ResolveHostBinaries on every
+// keystroke and throws the result away, so an un-memoized probe would exec
+// ai-jail once per rendered frame — the cost ARCHITECTURE keeps out of the
+// event loop on purpose.
+func TestDetectJailVersionProbesAtMostOncePerProcess(t *testing.T) {
+	resetJailVersionCache(t)
+	calls := 0
+	original := runVersionCommand
+	runVersionCommand = func(string) ([]byte, error) {
+		calls++
+		return []byte("ai-jail 1.16.0"), nil
+	}
+	defer func() { runVersionCommand = original }()
+
+	for i := 0; i < 5; i++ {
+		if got := DetectJailVersion(); got != "1.16.0" {
+			t.Fatalf("DetectJailVersion() = %q; want 1.16.0", got)
+		}
+	}
+	if calls > 1 {
+		t.Errorf("probed %d times; the result is memoized for the process", calls)
+	}
+}
+
+// A failed probe is remembered as "unknown", not retried on every frame, and
+// never mistaken for an old version.
+func TestDetectJailVersionCachesAFailedProbe(t *testing.T) {
+	resetJailVersionCache(t)
+	calls := 0
+	original := runVersionCommand
+	runVersionCommand = func(string) ([]byte, error) {
+		calls++
+		return nil, errors.New("boom")
+	}
+	defer func() { runVersionCommand = original }()
+
+	for i := 0; i < 3; i++ {
+		if got := DetectJailVersion(); got != "" {
+			t.Fatalf("DetectJailVersion() = %q; want empty for a failed probe", got)
+		}
+	}
+	if calls > 1 {
+		t.Errorf("probed %d times after a failure; want the outcome memoized", calls)
 	}
 }

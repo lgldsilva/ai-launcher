@@ -32,6 +32,12 @@ type LaunchConfig struct {
 	// launch works on every platform that has a docker daemon, including
 	// Windows.
 	UseDocker bool
+	// JailVersion is the ai-jail version detected on this host, or "" when the
+	// jail is off or the probe failed. It is filled by ResolveHostBinaries —
+	// which already does I/O and already runs before Build in both the CLI and
+	// the TUI — so Build stays pure and Validator.Validate stays hermetic: the
+	// validator reads a string, it never execs anything.
+	JailVersion string
 	// ProjectDir is the host directory the container backend bind-mounts at the
 	// identical path and sets as WORKDIR. It is deliberately separate from
 	// Workspace and Project, which are ai-memory *scope names*: the container
