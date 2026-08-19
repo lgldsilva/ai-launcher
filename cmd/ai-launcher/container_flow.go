@@ -118,7 +118,7 @@ const generatedGitignore = "# build context temp\n.context/\n# image cache\n.ima
 // whether the cross-compiled launcher must be rebuilt.
 const launcherBinaryFileName = "ai-launcher"
 
-func generateContainerArtifacts(local config.Local, agent config.Agent, global config.Global, home string, in io.Reader, out io.Writer, choice composeUpdateChoice, interactive bool) error {
+func generateContainerArtifacts(local config.Local, agent config.Agent, global config.Global, home, projectDir string, in io.Reader, out io.Writer, choice composeUpdateChoice, interactive bool) error {
 	if !local.Options.Docker {
 		return errors.New("generate requires container mode; pass --docker-backend or set options.docker: true")
 	}
@@ -145,6 +145,7 @@ func generateContainerArtifacts(local config.Local, agent config.Agent, global c
 		Fresh:                          local.Options.Fresh,
 		NewWorkstream:                  local.Options.NewWorkstream,
 		Workstream:                     local.Options.Workstream,
+		ProjectDir:                     projectDir,
 		Workspace:                      local.Options.Workspace,
 		Project:                        local.Options.Project,
 		Yolo:                           local.Options.Yolo,
@@ -172,7 +173,7 @@ func generateContainerArtifacts(local config.Local, agent config.Agent, global c
 		Permissions:              copyPermissions(local.Permissions),
 	}
 	launchConfig.Docker.AddHostGateway = effectiveContainerHostGateway(local.Options.ContainerHostGateway)
-	launchConfig = ensureDockerWorkspace(launchConfig)
+	launchConfig = ensureDockerProjectDir(launchConfig)
 	launchConfig = finalizeLaunchConfig(launchConfig, global, home, out)
 	if choice == composeUpdatePrompt {
 		var err error

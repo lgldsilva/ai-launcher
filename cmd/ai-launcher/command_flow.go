@@ -63,7 +63,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		}
 		generateLocal := cloneLocal(inputs.local)
 		generateLocal.Permissions = copyPermissions(inputs.permissions)
-		return generateContainerArtifacts(generateLocal, inputs.status.Agent, inputs.global, home, in, out, composeUpdate, interactiveLaunch(opts))
+		return generateContainerArtifacts(generateLocal, inputs.status.Agent, inputs.global, home, opts.projectDir, in, out, composeUpdate, interactiveLaunch(opts))
 	}
 	disableMemoryIfUnsupported(inputs.status.Agent, inputs.resolved, &inputs.local.Options.Memory, errOut)
 	disableYoloIfUnsupported(inputs.status.Agent, inputs.resolved, &inputs.local.Options.Yolo, errOut)
@@ -134,6 +134,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		JailExec:                       len(args) > 0,
 		NewWorkstream:                  inputs.local.Options.NewWorkstream,
 		Workstream:                     inputs.local.Options.Workstream,
+		ProjectDir:                     opts.projectDir,
 		Workspace:                      inputs.local.Options.Workspace,
 		Project:                        inputs.local.Options.Project,
 		JailFlags:                      inputs.local.Options.JailFlags,
@@ -147,7 +148,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	// The docker backend mounts the current project; default the workspace to
 	// the working directory when neither workspace nor project were configured
 	// (the jail gets the cwd implicitly, docker needs it explicitly — M6).
-	launchConfig = ensureDockerWorkspace(launchConfig)
+	launchConfig = ensureDockerProjectDir(launchConfig)
 	launchConfig = finalizeLaunchConfig(launchConfig, global, home, errOut)
 	if composeCommand {
 		return runComposeCommand(composeArgs, launchConfig, global, opts, in, out, errOut)

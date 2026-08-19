@@ -114,20 +114,14 @@ func inspectGeneratedArtifact(path, name, generated string) (artifactReview, err
 	return review, nil
 }
 
-// dockerComposeProjectDir resolves the same project directory BuildCompose
-// used internally (prepareDockerRunConfig's firstNonEmpty(cfg.Workspace,
-// cfg.Project, ...)) for the Compose file, its secrets, its approval ledger,
-// and any GeneratedFiles content — all of it must agree with where
-// BuildCompose put service data directories (workspace/.ai-launcher/data/...),
-// or every generated-file write fails its pathWithin() guard whenever the
-// workspace differs from the process cwd. Only call this after BuildCompose
-// has already succeeded for the same cfg — it guarantees at least one of
-// Workspace/Project is non-empty.
+// dockerComposeProjectDir resolves the project directory BuildCompose used
+// internally for the Compose file, its secrets, its approval ledger, and any
+// GeneratedFiles content — all of it must agree with where BuildCompose put
+// service data directories (<project>/.ai-launcher/data/...), or every
+// generated-file write fails its pathWithin() guard whenever the project
+// directory differs from the process cwd.
 func dockerComposeProjectDir(cfg launcher.LaunchConfig) string {
-	if dir := strings.TrimSpace(cfg.Workspace); dir != "" {
-		return dir
-	}
-	return strings.TrimSpace(cfg.Project)
+	return strings.TrimSpace(launcher.EffectiveProjectDir(cfg))
 }
 
 func inspectComposeArtifact(cfg launcher.LaunchConfig) (composeArtifactReview, error) {

@@ -32,6 +32,16 @@ type LaunchConfig struct {
 	// launch works on every platform that has a docker daemon, including
 	// Windows.
 	UseDocker bool
+	// ProjectDir is the host directory the container backend bind-mounts at the
+	// identical path and sets as WORKDIR. It is deliberately separate from
+	// Workspace and Project, which are ai-memory *scope names*: the container
+	// backend used to borrow whichever of those was set, so a legitimate
+	// `--workspace acme` reached Docker as a mount source and a docker launch
+	// wrote the current directory back into options.workspace, where the next
+	// jail launch passed it to `ai-memory run --workspace` as a path-shaped
+	// scope name. Defaults to the working directory; never persisted, because
+	// it is derived from where the launcher was invoked.
+	ProjectDir string
 	// Services is the validated infrastructure-service selection. The current
 	// argv builder carries it for config/TUI/profile propagation; Compose
 	// materialization consumes it when the container backend is selected.
@@ -175,16 +185,11 @@ func buildDockerRun(cfg LaunchConfig) ([]string, error) {
 }
 
 // EffectiveProjectDir is the directory the container backend mounts and uses as
-// WORKDIR. Pre-flight and Build must agree on it, so the resolution lives in
-// one exported place instead of being repeated by each caller.
-//
-// Workspace and Project are read here for historical reasons: they are the
-// ai-memory scope names, and the container backend borrowed them as a
-// directory. That overload is what lets a legitimate scope name reach Docker
-// as a mount source; ValidateProjectDir is the guard until the fields are
-// separated.
+// WORKDIR. Pre-flight, Build and the Compose artifact writers must all agree on
+// it, so the resolution lives in one exported place instead of being repeated
+// by each caller.
 func EffectiveProjectDir(cfg LaunchConfig) string {
-	return firstNonEmpty(cfg.Workspace, cfg.Project, cfg.Docker.ProjectDir)
+	return firstNonEmpty(cfg.ProjectDir, cfg.Docker.ProjectDir)
 }
 
 // prepareDockerRunConfig resolves the shared container inputs once so the

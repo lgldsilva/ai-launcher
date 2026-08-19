@@ -481,7 +481,7 @@ func TestComposeReviewIsShownInsideTUIBeforeRun(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "custom-cli"},
 		UseDocker:   true,
-		Workspace:   "/workspace",
+		ProjectDir:  "/workspace",
 		Services:    []string{"redis"},
 		Permissions: map[string]bool{},
 		Docker: container.RunConfig{Selection: container.Selection{Agents: []container.AgentInstall{{

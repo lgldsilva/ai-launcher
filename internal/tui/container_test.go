@@ -85,12 +85,12 @@ func TestBackendToggleSwitchesJailAndContainer(t *testing.T) {
 	if model.launch.UseJail {
 		t.Fatal("enabling the container must disable the jail (mutually exclusive)")
 	}
-	workspace, err := os.Getwd()
+	projectDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.launch.Workspace != workspace {
-		t.Fatalf("container workspace = %q; want current directory %q", model.launch.Workspace, workspace)
+	if model.launch.ProjectDir != projectDir {
+		t.Fatalf("container project dir = %q; want current directory %q", model.launch.ProjectDir, projectDir)
 	}
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
 	if model.launch.UseDocker {
@@ -123,7 +123,7 @@ func TestOptionsToggleContainerTmux(t *testing.T) {
 	t.Fatal("Container tmux option not found")
 }
 
-func TestContainerRunUsesCurrentDirectoryWhenWorkspaceIsEmpty(t *testing.T) {
+func TestContainerRunUsesCurrentDirectoryWhenProjectDirIsEmpty(t *testing.T) {
 	stubWindows(t, false)
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "claude"},
@@ -139,18 +139,18 @@ func TestContainerRunUsesCurrentDirectoryWhenWorkspaceIsEmpty(t *testing.T) {
 		},
 	})
 
-	workspace, err := os.Getwd()
+	projectDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if model.confirmRun(true) {
 		t.Fatal("dry-run confirmRun should keep the TUI open")
 	}
-	if model.launch.Workspace != workspace {
-		t.Fatalf("workspace = %q; want current directory %q", model.launch.Workspace, workspace)
+	if model.launch.ProjectDir != projectDir {
+		t.Fatalf("project dir = %q; want current directory %q", model.launch.ProjectDir, projectDir)
 	}
-	if strings.Contains(model.status, "docker backend requires a workspace directory") {
-		t.Fatalf("confirmRun still rejected the implicit workspace: %q", model.status)
+	if strings.Contains(model.status, "project directory is required") {
+		t.Fatalf("confirmRun still rejected the implicit project directory: %q", model.status)
 	}
 }
 

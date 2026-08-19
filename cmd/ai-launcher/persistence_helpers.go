@@ -43,6 +43,11 @@ func saveIfRequestedResult(save bool, path string, local config.Local, launch la
 	local.Options.Fresh = launch.Fresh
 	local.Options.NewWorkstream = launch.NewWorkstream
 	local.Options.Workstream = launch.Workstream
+	// Workspace and Project are ai-memory scope names the operator chose, so
+	// they round-trip. ProjectDir deliberately does not: it defaults to the
+	// working directory, and persisting that derived value is what wrote an
+	// absolute path into options.workspace, which the next jail launch then
+	// forwarded to `ai-memory run --workspace` as a path-shaped scope name.
 	local.Options.Workspace = launch.Workspace
 	local.Options.Project = launch.Project
 	local.Options.JailFlags = launch.JailFlags
