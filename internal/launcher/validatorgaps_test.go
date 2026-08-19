@@ -372,3 +372,70 @@ func TestMemoryScopePathIssuesRequireMemory(t *testing.T) {
 		t.Errorf("issue = %v; without memory there is no scope to warn about", issue)
 	}
 }
+
+// jailVersionConfig is a minimal jail launch whose only variable is the
+// detected ai-jail version.
+func jailVersionConfig(version string) LaunchConfig {
+	return LaunchConfig{
+		Agent:       config.Agent{Command: "claude"},
+		UseJail:     true,
+		JailVersion: version,
+	}
+}
+
+func jailVersionValidate(cfg LaunchConfig) []Issue {
+	return Validator{
+		LookPath: func(command string) (string, error) { return "/bin/" + command, nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+		GOOS:     "linux",
+	}.Validate(cfg)
+}
+
+// Below the floor the launcher emits flags the installed ai-jail rejects with
+// "unknown option", raised inside the wrapper where it reads as the launcher
+// being broken. Pre-flight names the real problem instead.
+func TestJailVersionIssuesRejectAnInstallBelowTheFloor(t *testing.T) {
+	issue, ok := issueByCode(jailVersionValidate(jailVersionConfig("1.14.2")), "jail-version-too-old")
+	if !ok {
+		t.Fatal("preflight accepted an ai-jail below the floor")
+	}
+	if issue.Warning {
+		t.Error("the issue is a warning; the composed argv cannot run on this build")
+	}
+	if !strings.Contains(issue.Message, "1.14.2") || !strings.Contains(issue.Message, "--no-jail") {
+		t.Errorf("message = %q; want the detected version and a way forward", issue.Message)
+	}
+}
+
+// Above the tested bound the launch proceeds: a newer upstream may work, and
+// refusing would strand every operator the day a release lands.
+func TestJailVersionIssuesWarnAboveTheTestedBound(t *testing.T) {
+	issue, ok := issueByCode(jailVersionValidate(jailVersionConfig(config.UntestedAIJailVersion)), "jail-version-untested")
+	if !ok {
+		t.Fatal("preflight said nothing about an ai-jail above the validated range")
+	}
+	if !issue.Warning {
+		t.Error("the issue is fatal; a newer ai-jail must warn, not block")
+	}
+}
+
+// A version inside the range, an unreadable probe, and a jail-less launch are
+// all silent — the last two because "unknown" is not evidence of anything.
+func TestJailVersionIssuesStaySilentWhenThereIsNothingToSay(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  LaunchConfig
+	}{
+		{"inside the range", jailVersionConfig(config.MinAIJailVersion)},
+		{"probe failed", jailVersionConfig("")},
+		{"jail disabled", LaunchConfig{Agent: config.Agent{Command: "claude"}, JailVersion: "1.14.2"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, issue := range jailVersionValidate(tt.cfg) {
+				if strings.HasPrefix(issue.Code, "jail-version-") {
+					t.Errorf("issue = %v; want no version judgement", issue)
+				}
+			}
+		})
+	}
+}

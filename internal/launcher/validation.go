@@ -138,7 +138,50 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues = append(issues, continueIssues(cfg)...)
 	issues = append(issues, freshIssues(cfg)...)
 	issues = append(issues, memoryScopePathIssues(cfg, stat)...)
+	issues = append(issues, jailVersionIssues(cfg)...)
 	return issues
+}
+
+// jailVersionIssues judges the ai-jail version ResolveHostBinaries detected.
+// It reads cfg.JailVersion and execs nothing, so pre-flight stays hermetic.
+//
+// Below the floor is fatal. The launcher composes one dialect of the ai-jail
+// flag surface, and an older build rejects flags it does not know with
+// "unknown option" — raised inside the wrapper, where an operator reads it as
+// the launcher being broken. Failing here names the actual problem.
+//
+// At or above the untested bound is a warning, not a refusal: a newer upstream
+// may work perfectly, and blocking would strand everyone the day a release
+// lands. `--doctor` carries the detail; this is the reminder at launch time.
+//
+// An empty version means the probe could not read one. That is not evidence of
+// anything, so it is left alone.
+func jailVersionIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail {
+		return nil
+	}
+	version := strings.TrimSpace(cfg.JailVersion)
+	if version == "" {
+		return nil
+	}
+	if compareVersions(version, config.MinAIJailVersion) < 0 {
+		return []Issue{{
+			Code: "jail-version-too-old",
+			Message: fmt.Sprintf(
+				"ai-jail %s is older than the required %s; the launcher emits flags this build rejects — upgrade ai-jail, or launch with --no-jail",
+				version, config.MinAIJailVersion),
+		}}
+	}
+	if compareVersions(version, config.UntestedAIJailVersion) >= 0 {
+		return []Issue{{
+			Code: "jail-version-untested",
+			Message: fmt.Sprintf(
+				"ai-jail %s is newer than the validated range (>= %s, < %s); run `ai-launcher --doctor` for what changed",
+				version, config.MinAIJailVersion, config.UntestedAIJailVersion),
+			Warning: true,
+		}}
+	}
+	return nil
 }
 
 // memoryScopePathIssues warns when an ai-memory scope looks like a filesystem

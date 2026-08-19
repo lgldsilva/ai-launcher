@@ -56,6 +56,7 @@ type launchSpec struct {
 	Workstream        string            `yaml:"workstream"`
 	Workspace         string            `yaml:"workspace"`
 	ProjectDir        string            `yaml:"project_dir"`
+	JailVersion       string            `yaml:"jail_version"`
 	Project           string            `yaml:"project"`
 	Permissions       map[string]bool   `yaml:"permissions"`
 	DockerSocketGroup int               `yaml:"docker_socket_group"`
@@ -290,6 +291,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		NewWorkstream:                  spec.NewWorkstream,
 		Workstream:                     spec.Workstream,
 		ProjectDir:                     spec.ProjectDir,
+		JailVersion:                    spec.JailVersion,
 		Workspace:                      spec.Workspace,
 		Project:                        spec.Project,
 		Permissions:                    spec.Permissions,
