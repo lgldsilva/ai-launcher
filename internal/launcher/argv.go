@@ -172,6 +172,9 @@ func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
 			cfg.Executable = resolved
 		}
 	}
+	if cfg.UseJail && strings.TrimSpace(cfg.JailVersion) == "" {
+		cfg.JailVersion = DetectJailVersion()
+	}
 	if !cfg.UseJail || !cfg.UseMemory || strings.TrimSpace(cfg.MemoryExecutable) != "" {
 		return cfg
 	}

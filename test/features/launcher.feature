@@ -788,6 +788,36 @@ Feature: Launcher command contract
   # The unrelated permission issue is deliberate: an empty expectation would
   # also pass if preflight never ran, so the scenario asserts a known issue is
   # present while memory-harness-unsupported is absent.
+  Scenario: Refuses an ai-jail below the supported floor in preflight
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: 1.14.2
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-version-too-old
+      """
+
+  Scenario: Warns about an ai-jail above the validated range
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: 1.18.2
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-version-untested
+      """
+
   Scenario: Accepts the Kiro harness ai-memory gained in 1.24
     Given a validation configuration
       """

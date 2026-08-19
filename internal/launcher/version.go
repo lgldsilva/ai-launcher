@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -71,6 +72,42 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
 		"ai-memory-version-too-old", "ai-memory-version-untested"))
 	return report
+}
+
+// jailVersionCache memoizes the ai-jail probe for the life of the process.
+// The cache is not an optimization detail, it is what keeps the probe out of
+// the TUI event loop: the TUI rebuilds its argv preview through
+// ResolveHostBinaries on every keystroke and discards the result, so an
+// un-memoized probe would exec ai-jail once per rendered frame. An operator's
+// ai-jail does not change mid-session, so one probe per process is also the
+// correct answer, not merely the cheap one.
+var jailVersionCache struct {
+	once  sync.Once
+	value string
+}
+
+// DetectJailVersion reads the installed ai-jail version, or returns "" when
+// ai-jail is absent or its output carries no version token. The probe runs at
+// most once per process and never from the validator, which stays hermetic.
+//
+// An unreadable probe returns "" on purpose. "Version unknown" has to stay
+// distinguishable from "version too old", or a host where the probe merely
+// failed would be refused a launch it can perfectly well perform.
+func DetectJailVersion() string {
+	jailVersionCache.once.Do(func() { jailVersionCache.value = probeJailVersion() })
+	return jailVersionCache.value
+}
+
+func probeJailVersion() string {
+	path, err := exec.LookPath(config.AIJailCommand)
+	if err != nil {
+		return ""
+	}
+	output, err := runVersionCommand(path)
+	if err != nil {
+		return ""
+	}
+	return semverPattern.FindString(string(output))
 }
 
 // probeUpstream resolves one tool and reads its --version output. untested is
