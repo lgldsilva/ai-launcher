@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -136,6 +137,44 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues = append(issues, catalogBooleanParamIssues(cfg)...)
 	issues = append(issues, continueIssues(cfg)...)
 	issues = append(issues, freshIssues(cfg)...)
+	issues = append(issues, memoryScopePathIssues(cfg, stat)...)
+	return issues
+}
+
+// memoryScopePathIssues warns when an ai-memory scope looks like a filesystem
+// path. `ai-memory run --workspace` takes a *name*, but the container backend
+// used to borrow Workspace as its project directory and the autosave wrote the
+// working directory back into options.workspace. A workspace saved by that
+// path keeps launching — it just creates a phantom, path-shaped workspace in
+// the memory database, splitting the project's history in two without ever
+// failing. The launcher no longer writes it; this is how an operator finds the
+// one already in their file.
+func memoryScopePathIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {
+	if !cfg.UseMemory {
+		return nil
+	}
+	var issues []Issue
+	for _, scope := range []struct{ flag, value string }{
+		{"workspace", cfg.Workspace},
+		{"project", cfg.Project},
+	} {
+		value := strings.TrimSpace(scope.value)
+		if value == "" || !filepath.IsAbs(value) {
+			continue
+		}
+		if _, err := stat(value); err != nil {
+			continue
+		}
+		issues = append(issues, Issue{
+			Code: "memory-scope-looks-like-a-path",
+			Message: fmt.Sprintf(
+				"%s %q is an existing directory, but `ai-memory run --%s` takes a name; "+
+					"an earlier docker launch could have saved the working directory here — "+
+					"remove it from options.%s and use --project-dir for the container directory",
+				scope.flag, value, scope.flag, scope.flag),
+			Warning: true,
+		})
+	}
 	return issues
 }
 

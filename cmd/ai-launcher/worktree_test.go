@@ -28,11 +28,12 @@ func TestFinalizeDockerWorktreePermissionDiscoversExternalWorktree(t *testing.T)
 	runGitTestCommand(t, repo, "worktree", "add", "--detach", worktree)
 
 	var errOut bytes.Buffer
-	workspace := t.TempDir()
 	cfg := launcher.LaunchConfig{
-		UseDocker:   true,
-		Workspace:   workspace,
-		Project:     repo,
+		UseDocker:  true,
+		ProjectDir: repo,
+		// An ai-memory scope name is not a search root: discovery asks Git
+		// about the project directory and the cwd, never about a scope.
+		Project:     "billing",
 		Permissions: map[string]bool{config.PermissionWorktree: true},
 		Docker:      container.RunConfig{ProjectDir: repo},
 	}

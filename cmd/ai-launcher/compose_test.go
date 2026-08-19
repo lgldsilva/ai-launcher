@@ -124,11 +124,11 @@ func TestEnsureComposeArtifactsRefreshesStaleNativeArguments(t *testing.T) {
 		}},
 	}
 	cfg := launcher.LaunchConfig{
-		Agent:     config.Agent{Command: "pi", SupportsYolo: true, YoloFlag: "--approve"},
-		UseDocker: true,
-		Yolo:      true,
-		Workspace: dir,
-		Services:  []string{"redis"},
+		Agent:      config.Agent{Command: "pi", SupportsYolo: true, YoloFlag: "--approve"},
+		UseDocker:  true,
+		Yolo:       true,
+		ProjectDir: dir,
+		Services:   []string{"redis"},
 		Docker: container.RunConfig{
 			Selection:  selection,
 			ProjectDir: dir,
@@ -172,7 +172,7 @@ func TestMaterializeComposeIfNeededUsesWorkspaceNotCwd(t *testing.T) {
 	cfg := launcher.LaunchConfig{
 		Agent:                          config.Agent{Command: "claude"},
 		UseDocker:                      true,
-		Workspace:                      workspaceDir,
+		ProjectDir:                     workspaceDir,
 		Services:                       []string{"redis"},
 		ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
 		Docker: container.RunConfig{
@@ -199,10 +199,10 @@ func TestComposeUpdateReviewPreservesManualChangesAndRemembersDecision(t *testin
 	restore := chdir(t, dir)
 	defer restore()
 	cfg := launcher.LaunchConfig{
-		Agent:     config.Agent{Command: "custom-cli"},
-		UseDocker: true,
-		Workspace: dir,
-		Services:  []string{"redis"},
+		Agent:      config.Agent{Command: "custom-cli"},
+		UseDocker:  true,
+		ProjectDir: dir,
+		Services:   []string{"redis"},
 		Docker: container.RunConfig{Selection: container.Selection{Agents: []container.AgentInstall{{
 			Command: "custom-cli",
 			Kind:    container.InstallScript,
@@ -270,10 +270,10 @@ func TestComposeGeneratedSecretIsStableAcrossInspections(t *testing.T) {
 	restore := chdir(t, dir)
 	defer restore()
 	cfg := launcher.LaunchConfig{
-		Agent:     config.Agent{Command: "custom-cli"},
-		UseDocker: true,
-		Workspace: dir,
-		Services:  []string{"authentik"},
+		Agent:      config.Agent{Command: "custom-cli"},
+		UseDocker:  true,
+		ProjectDir: dir,
+		Services:   []string{"authentik"},
 		Docker: container.RunConfig{Selection: container.Selection{Agents: []container.AgentInstall{{
 			Command: "custom-cli",
 			Kind:    container.InstallScript,
@@ -536,10 +536,10 @@ func TestLaunchComposeRefreshesArtifactsForCurrentSelection(t *testing.T) {
 		global:        global,
 		composeUpdate: composeUpdateReplace,
 		launchConfig: launcher.LaunchConfig{
-			Agent:     config.Agent{Command: "custom-cli"},
-			UseDocker: true,
-			Workspace: dir,
-			Services:  []string{"redis"},
+			Agent:      config.Agent{Command: "custom-cli"},
+			UseDocker:  true,
+			ProjectDir: dir,
+			Services:   []string{"redis"},
 			Docker: container.RunConfig{
 				Runtime:    composeTestRuntime{command: runtimePath},
 				Selection:  selection,

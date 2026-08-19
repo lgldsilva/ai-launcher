@@ -30,6 +30,7 @@ type cliOptions struct {
 	addCommand, addDescription     string
 	newWorkstream, workstream      string
 	workspace, project             string
+	projectDir                     string
 	profile, saveProfile           string
 	deleteProfile                  string
 	workstreamSearch               string
@@ -101,6 +102,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.workstream, "workstream", "", "resume an existing ai-memory workstream by name")
 	flags.StringVar(&o.workspace, "workspace", "", "ai-memory workspace name (forwarded to ai-memory run)")
 	flags.StringVar(&o.project, "project", "", "ai-memory project name (forwarded to ai-memory run)")
+	flags.StringVar(&o.projectDir, "project-dir", "", "host directory the container backend mounts and uses as WORKDIR (default: current directory)")
 	flags.BoolVar(&o.continueSession, "continue", false, "continue the most recent ai-memory session of this checkout (ai-memory run without a harness)")
 	flags.Var(&o.mounts, "mount", "read-only mount, optionally with :ro or :rw")
 	flags.Var(&o.mounts, "map", "alias for --mount")

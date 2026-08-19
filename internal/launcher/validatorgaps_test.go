@@ -266,10 +266,10 @@ func dockerValidatorConfig(t *testing.T, workspace string) LaunchConfig {
 		t.Fatalf("Normalize() error = %v", err)
 	}
 	return LaunchConfig{
-		Agent:     config.Agent{Command: "claude"},
-		UseDocker: true,
-		Workspace: workspace,
-		Docker:    container.RunConfig{Selection: selection},
+		Agent:      config.Agent{Command: "claude"},
+		UseDocker:  true,
+		ProjectDir: workspace,
+		Docker:     container.RunConfig{Selection: selection},
 	}
 }
 
@@ -303,5 +303,72 @@ func TestDockerIssuesRejectARelativeProjectDir(t *testing.T) {
 func TestDockerIssuesAcceptAnAbsoluteProjectDir(t *testing.T) {
 	if issue, ok := issueByCode(dockerValidatorIssues(dockerValidatorConfig(t, "/work")), "docker-project-dir-not-absolute"); ok {
 		t.Fatalf("issue = %v; an absolute project directory must be accepted", issue)
+	}
+}
+
+// A workspace saved by the old docker autosave keeps launching: ai-memory
+// accepts any string as a scope name, so the only symptom is a phantom,
+// path-shaped workspace splitting the project's history. The warning is how an
+// operator finds the one already sitting in their config.
+func TestMemoryScopePathIssuesWarnAboutAPathShapedScope(t *testing.T) {
+	dir := t.TempDir()
+	cfg := LaunchConfig{
+		Agent:     config.Agent{Command: "claude"},
+		UseMemory: true,
+		Workspace: dir,
+	}
+	issues := Validator{
+		LookPath: func(string) (string, error) { return "/usr/bin/" + aiMemoryCommand, nil },
+		Stat:     os.Stat,
+		GOOS:     "linux",
+	}.Validate(cfg)
+
+	issue, ok := issueByCode(issues, "memory-scope-looks-like-a-path")
+	if !ok {
+		t.Fatalf("issues = %v; want memory-scope-looks-like-a-path", issues)
+	}
+	if !issue.Warning {
+		t.Error("the issue is fatal; a path-shaped scope still launches and must not block")
+	}
+	if !strings.Contains(issue.Message, dir) {
+		t.Errorf("message = %q; want it naming the offending value", issue.Message)
+	}
+}
+
+// An ordinary scope name, a relative string, and a path that does not exist are
+// all left alone: only an existing absolute directory is evidence of the bug.
+func TestMemoryScopePathIssuesIgnoreOrdinaryScopes(t *testing.T) {
+	for _, name := range []string{"acme", "billing/eu", "/no/such/directory/here"} {
+		cfg := LaunchConfig{
+			Agent:     config.Agent{Command: "claude"},
+			UseMemory: true,
+			Workspace: name,
+		}
+		issues := Validator{
+			LookPath: func(string) (string, error) { return "/usr/bin/" + aiMemoryCommand, nil },
+			Stat:     os.Stat,
+			GOOS:     "linux",
+		}.Validate(cfg)
+		if issue, ok := issueByCode(issues, "memory-scope-looks-like-a-path"); ok {
+			t.Errorf("workspace %q produced %v; want no warning", name, issue)
+		}
+	}
+}
+
+// The check belongs to the memory integration: without it there is no scope.
+func TestMemoryScopePathIssuesRequireMemory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := LaunchConfig{
+		Agent:     config.Agent{Command: "claude"},
+		UseMemory: false,
+		Workspace: dir,
+	}
+	issues := Validator{
+		LookPath: func(string) (string, error) { return "/usr/bin/claude", nil },
+		Stat:     os.Stat,
+		GOOS:     "linux",
+	}.Validate(cfg)
+	if issue, ok := issueByCode(issues, "memory-scope-looks-like-a-path"); ok {
+		t.Errorf("issue = %v; without memory there is no scope to warn about", issue)
 	}
 }

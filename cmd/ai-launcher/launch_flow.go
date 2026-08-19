@@ -256,7 +256,7 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 	// The operator can switch from Jail to Docker inside the TUI after the
 	// initial CLI-side defaults were resolved. Apply the same cwd fallback here
 	// so that selecting Container never leaves Docker without a project mount.
-	r.launchConfig = ensureDockerWorkspace(confirmed)
+	r.launchConfig = ensureDockerProjectDir(confirmed)
 	// Autosave: running a selection means wanting it back on the next open —
 	// with provenance recorded, or the trust boundary would refuse the file
 	// the launcher itself wrote. Best-effort: a failed save never blocks a
@@ -267,13 +267,13 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 	return true, nil
 }
 
-// ensureDockerWorkspace gives Docker a concrete project directory whenever
-// the operator did not configure workspace or project explicitly. Jail gets
-// the current directory implicitly, but Docker needs the same-path mount and
-// WORKDIR to be present in its run configuration.
-func ensureDockerWorkspace(cfg launcher.LaunchConfig) launcher.LaunchConfig {
-	if cfg.UseDocker && strings.TrimSpace(cfg.Workspace) == "" && strings.TrimSpace(cfg.Project) == "" {
-		cfg.Workspace = mustGetwd()
+// ensureDockerProjectDir gives Docker a concrete project directory when the
+// operator did not name one with --project-dir. Jail gets the current
+// directory implicitly, but Docker needs the same-path mount and WORKDIR to be
+// present in its run configuration.
+func ensureDockerProjectDir(cfg launcher.LaunchConfig) launcher.LaunchConfig {
+	if cfg.UseDocker && strings.TrimSpace(cfg.ProjectDir) == "" {
+		cfg.ProjectDir = mustGetwd()
 	}
 	return cfg
 }

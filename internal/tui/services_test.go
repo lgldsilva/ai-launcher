@@ -56,7 +56,7 @@ func TestComposePreviewRendersWhenServicesAreSelected(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "custom-cli"},
 		UseDocker:   true,
-		Workspace:   project,
+		ProjectDir:  project,
 		HomeDir:     project,
 		Services:    []string{"redis"},
 		Permissions: map[string]bool{},
@@ -78,7 +78,7 @@ func TestComposePreviewReportsErrorsInsteadOfFallingBackToDockerRun(t *testing.T
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "custom-cli"},
 		UseDocker:   true,
-		Workspace:   project,
+		ProjectDir:  project,
 		Services:    []string{"redis"},
 		Permissions: map[string]bool{},
 		Docker: container.RunConfig{
@@ -159,7 +159,7 @@ func TestServicePortEditorUpdatesOverrideAndPreview(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "custom-cli"},
 		UseDocker:   true,
-		Workspace:   project,
+		ProjectDir:  project,
 		Services:    []string{"wiremock"},
 		Permissions: map[string]bool{},
 		Docker: container.RunConfig{
