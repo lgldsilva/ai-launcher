@@ -50,7 +50,11 @@ func DefaultGlobal() Global {
 			{Name: "Qwen Code", Command: "qwen", Aliases: []string{"qwen-code"}, SupportsMemory: false, SupportsYolo: true, Description: "Alibaba Qwen Code CLI", YoloFlag: flagYolo, NpmPackage: "@qwen-code/qwen-code"},
 			{Name: "Aider", Command: "aider", SupportsMemory: false, SupportsYolo: true, Description: "Aider CLI", YoloFlag: "--yes-always"},
 			{Name: "Goose", Command: "goose", SupportsMemory: false, SupportsYolo: false, Description: "Block Goose CLI"},
-			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: false, SupportsYolo: false, Description: "Kiro CLI"},
+			// Kiro reaches ai-memory as "kiro-cli": that is what `install-mcp
+			// --client` and `install-hooks --agent` are named upstream, and
+			// `ai-memory run` takes it as an alias of "kiro".
+			{Name: "Kiro CLI", Command: "kiro-cli", Aliases: []string{"kiro"}, SupportsMemory: true, SupportsYolo: true, Description: "Amazon Kiro CLI", YoloFlag: "--trust-all-tools", Memory: memoryFor("kiro-cli")},
+			{Name: "Command Code", Command: "command-code", Aliases: []string{"commandcode", "cmdc", "cmd"}, SupportsMemory: true, SupportsYolo: true, Description: "Command Code CLI", YoloFlag: flagYolo, Memory: memoryFor("command-code")},
 			{Name: "OpenClaw", Command: "openclaw", SupportsMemory: false, SupportsYolo: false, Description: "OpenClaw CLI", NpmPackage: "openclaw", Memory: mcpOnlyMemoryIntegration("openclaw")},
 			{Name: "Hermes Agent", Command: "hermes", SupportsMemory: false, SupportsYolo: true, Description: "Hermes Agent CLI", YoloFlag: flagYolo},
 			{Name: "Cline", Command: "cline", SupportsMemory: false, SupportsYolo: true, Description: "Cline CLI", YoloFlag: flagYolo, NpmPackage: "cline"},

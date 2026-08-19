@@ -91,12 +91,22 @@ var LoadableVersions = []string{"1", "1.0", "2.0", CurrentVersion}
 const DefaultMemoryServerURL = ""
 
 // memoryRunHarnesses is the fixed set of names `ai-memory run <HARNESS>`
-// accepts, verified against ai-memory 1.19.0. Anything else is rejected by
+// accepts, verified against ai-memory 1.25.0. Anything else is rejected by
 // clap with an opaque "invalid value for '[HARNESS]'" — raised inside the jail,
 // where the user never sees it. This list is the single source of truth: a
 // catalog agent either resolves to one of these (directly or through
 // Memory.RunHarness) or declares SupportsMemory false.
-var memoryRunHarnesses = []string{"claude", "codex", "opencode", "pi", "crush", "omp", "kimi", "grok", "antigravity"}
+//
+// Aliases count: clap accepts them exactly like the canonical name, and the
+// catalog reaches ai-memory through Agent.Command, which spells Kiro
+// "kiro-cli". Listing only the canonical "kiro" would make pre-flight refuse a
+// harness the installed ai-memory accepts.
+var memoryRunHarnesses = []string{
+	"claude", "codex", "opencode", "pi", "crush", "omp", "kimi",
+	"command-code", "commandcode", "cmdc", "cmd",
+	"kiro", "kiro-cli",
+	"grok", "antigravity",
+}
 
 // createTempFile is an indirection over os.CreateTemp so tests can force the
 // temporary-file creation step to fail deterministically — a chmod-based
@@ -129,9 +139,14 @@ func SupportsMemoryRunHarness(name string) bool {
 // emitted. The argv fix (an explicit --no-docker, see appendDockerDecision)
 // covers 1.15.x hosts too; the floor is what tells an operator to stop
 // relying on a build that had no way to say no.
+// ai-memory 1.25.0 is a feature floor: `ai-memory run kiro` arrived in 1.24.0
+// and `ai-memory run command-code` in 1.25.0. The catalog offers both as
+// memory-capable agents, and memoryRunHarnesses promises pre-flight will let
+// them through — against an older ai-memory that promise turns into the opaque
+// clap rejection raised inside the jail that invariant 6b exists to prevent.
 const (
 	MinAIJailVersion   = "1.16.0"
-	MinAIMemoryVersion = "1.19.0"
+	MinAIMemoryVersion = "1.25.0"
 )
 
 // Shared catalog names and platform identifiers. Keeping these values in the

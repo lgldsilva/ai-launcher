@@ -3,6 +3,8 @@ package launcher
 import (
 	"errors"
 	"testing"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 // stubVersionCommand replaces the upstream --version probe seam with canned
@@ -48,18 +50,19 @@ func TestUpstreamReportFlagsInstallsBelowTheSupportedFloor(t *testing.T) {
 	}
 	// --doctor prints the detected version against the floor, so both have to
 	// survive the probe.
-	if report[0].Version != "1.14.2" || report[0].Minimum != "1.16.0" {
+	if report[0].Version != "1.14.2" || report[0].Minimum != config.MinAIJailVersion {
 		t.Errorf("ai-jail status = %#v; want the detected version and the supported floor", report[0])
 	}
-	if report[1].Version != "1.18.0" || report[1].Minimum != "1.19.0" {
+	if report[1].Version != "1.18.0" || report[1].Minimum != config.MinAIMemoryVersion {
 		t.Errorf("ai-memory status = %#v; want the detected version and the supported floor", report[1])
 	}
 }
 
 func TestUpstreamReportAcceptsCurrentOrNewerInstalls(t *testing.T) {
 	for _, outputs := range []map[string]string{
-		{"/bin/ai-jail": "ai-jail 1.16.0 (abc123)", "/bin/ai-memory": "ai-memory 1.19.0"},
-		{"/bin/ai-jail": "v2.0.0", "/bin/ai-memory": "ai-memory 1.20.1"},
+		// Exactly at the floor, and comfortably above it.
+		{"/bin/ai-jail": "ai-jail " + config.MinAIJailVersion + " (abc123)", "/bin/ai-memory": "ai-memory " + config.MinAIMemoryVersion},
+		{"/bin/ai-jail": "v2.0.0", "/bin/ai-memory": "ai-memory 1.28.1"},
 	} {
 		stubVersionCommand(t, outputs, nil)
 		for _, status := range UpstreamReport(lookPathAll, "linux") {
