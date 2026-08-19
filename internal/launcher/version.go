@@ -21,6 +21,12 @@ const versionProbeTimeout = 5 * time.Second
 // runVersionCommand executes "<path> --version" and returns its combined
 // output. It is a seam so tests can stub upstream CLIs without spawning
 // processes.
+// lookPathCommand is a seam over exec.LookPath, paired with runVersionCommand:
+// stubbing only the exec half left the probe's tests depending on whether the
+// machine running them happened to have ai-jail installed, which passes on a
+// developer box and fails in CI.
+var lookPathCommand = exec.LookPath
+
 var runVersionCommand = func(path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
 	defer cancel()
@@ -99,7 +105,7 @@ func DetectJailVersion() string {
 }
 
 func probeJailVersion() string {
-	path, err := exec.LookPath(config.AIJailCommand)
+	path, err := lookPathCommand(config.AIJailCommand)
 	if err != nil {
 		return ""
 	}
