@@ -964,6 +964,39 @@ func TestSupportsMemoryRunHarnessTrimsAndScansTheWholeList(t *testing.T) {
 	}
 }
 
+// Every catalog agent that claims memory support has to resolve to a name
+// `ai-memory run` accepts — directly through Command or via Memory.RunHarness.
+// Invariant 6b turns this list into a pre-flight gate, so a mismatch is not a
+// cosmetic drift: it either refuses a harness ai-memory would have run, or
+// emits an argv clap rejects with an opaque error raised inside the jail,
+// where the operator never sees it.
+func TestEveryMemoryCapableAgentResolvesToAnAcceptedHarness(t *testing.T) {
+	for _, agent := range DefaultGlobal().Agents {
+		if !agent.SupportsMemory {
+			continue
+		}
+		harness := agent.Command
+		if agent.Memory != nil && strings.TrimSpace(agent.Memory.RunHarness) != "" {
+			harness = agent.Memory.RunHarness
+		}
+		if !SupportsMemoryRunHarness(harness) {
+			t.Errorf("agent %q resolves to harness %q, which `ai-memory run` does not accept", agent.Name, harness)
+		}
+	}
+}
+
+// The harnesses ai-memory gained after the previous floor. Kiro reaches
+// ai-memory as "kiro-cli" (its Command in the catalog), which upstream accepts
+// as an alias of "kiro" — so the alias has to be in the list, not just the
+// canonical spelling.
+func TestSupportsMemoryRunHarnessAcceptsKiroAndCommandCode(t *testing.T) {
+	for _, name := range []string{"kiro", "kiro-cli", "command-code", "commandcode", "cmdc", "cmd"} {
+		if !SupportsMemoryRunHarness(name) {
+			t.Errorf("SupportsMemoryRunHarness(%q) = false; ai-memory %s accepts it", name, MinAIMemoryVersion)
+		}
+	}
+}
+
 // The MRU cap is a literal contract: the list must hold exactly 32 entries,
 // newest first, with the oldest evicted beyond that.
 func TestTouchRecentAgentCapsAtExactly32Entries(t *testing.T) {
