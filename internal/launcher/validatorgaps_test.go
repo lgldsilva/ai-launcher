@@ -252,3 +252,56 @@ func TestWithPermissionsOverridesTheBuiltInPlatformRules(t *testing.T) {
 		t.Errorf("base.Permissions = %#v; WithPermissions must not mutate its receiver", base.Permissions)
 	}
 }
+
+// dockerValidatorConfig is a minimal docker-backend launch whose only variable
+// is the project directory under test.
+func dockerValidatorConfig(t *testing.T, workspace string) LaunchConfig {
+	t.Helper()
+	selection, err := container.Normalize(
+		[]string{"go"},
+		[]container.AgentInstall{{Command: "claude", Kind: container.InstallRelease, Version: "2.1.0"}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	return LaunchConfig{
+		Agent:     config.Agent{Command: "claude"},
+		UseDocker: true,
+		Workspace: workspace,
+		Docker:    container.RunConfig{Selection: selection},
+	}
+}
+
+func dockerValidatorIssues(cfg LaunchConfig) []Issue {
+	return Validator{
+		LookPath: func(string) (string, error) { return "/usr/bin/docker", nil },
+		Stat:     func(string) (os.FileInfo, error) { return nil, nil },
+		GOOS:     "linux",
+	}.Validate(cfg)
+}
+
+// The container backend borrows Workspace as a directory, so an ai-memory scope
+// name reaches Docker as a mount source. Until the fields are separated,
+// pre-flight is what turns that into a refusal the operator can act on instead
+// of an opaque daemon error about an invalid mount.
+func TestDockerIssuesRejectARelativeProjectDir(t *testing.T) {
+	issue, ok := issueByCode(dockerValidatorIssues(dockerValidatorConfig(t, "meu-time")), "docker-project-dir-not-absolute")
+	if !ok {
+		t.Fatal("preflight accepted a relative container project directory")
+	}
+	if issue.Warning {
+		t.Error("the issue is a warning; a launch that cannot mount the project must not proceed")
+	}
+	if !strings.Contains(issue.Message, "meu-time") {
+		t.Errorf("message = %q; want it naming the offending value", issue.Message)
+	}
+}
+
+// The same configuration with an absolute directory is clean, so the check
+// cannot be passing for an unrelated reason.
+func TestDockerIssuesAcceptAnAbsoluteProjectDir(t *testing.T) {
+	if issue, ok := issueByCode(dockerValidatorIssues(dockerValidatorConfig(t, "/work")), "docker-project-dir-not-absolute"); ok {
+		t.Fatalf("issue = %v; an absolute project directory must be accepted", issue)
+	}
+}

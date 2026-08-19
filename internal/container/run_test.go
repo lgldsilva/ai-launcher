@@ -684,3 +684,45 @@ func TestStackCacheMountSpecsSkipsMissing(t *testing.T) {
 		t.Fatalf("stackCacheMountSpecs() = %#v; want %#v", got, want)
 	}
 }
+
+// A relative project directory produced "-v meu-time:meu-time", which Docker
+// reads as a named volume with a relative destination and refuses with an
+// opaque daemon error — after the launcher had already decided the launch was
+// fine. The refusal belongs here, naming the value.
+func TestValidateProjectDirRequiresAnAbsolutePath(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		dir     string
+		wantErr bool
+	}{
+		{"absolute", "/work", false},
+		{"absolute with spaces", "/work/my project", false},
+		{"empty", "", true},
+		{"blank", "   ", true},
+		{"relative", "meu-time", true},
+		{"dot relative", "./work", true},
+		{"parent relative", "../work", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateProjectDir(tt.dir)
+			if tt.wantErr != (err != nil) {
+				t.Fatalf("ValidateProjectDir(%q) error = %v; wantErr %t", tt.dir, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBuildRunCommandRejectsARelativeProjectDir(t *testing.T) {
+	cfg := RunConfig{
+		Selection:       testSelection(t),
+		ProjectDir:      "meu-time",
+		AgentExecutable: "claude",
+	}
+	_, err := BuildRunCommand(cfg)
+	if err == nil {
+		t.Fatal("BuildRunCommand() = nil; a relative project directory must be refused")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error = %v; want it explaining the path must be absolute", err)
+	}
+}

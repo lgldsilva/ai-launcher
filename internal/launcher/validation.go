@@ -228,6 +228,12 @@ func dockerIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Iss
 	if strings.TrimSpace(cfg.Docker.Selection.AgentExecutable()) == "" {
 		return []Issue{{Code: "docker-no-agent", Message: "docker backend is enabled but no agent is selected for the image"}}
 	}
+	if err := container.ValidateProjectDir(EffectiveProjectDir(cfg)); err != nil {
+		return []Issue{{
+			Code:    "docker-project-dir-not-absolute",
+			Message: fmt.Sprintf("%v; the container mounts it at the identical path and Docker reads a relative source as a named volume", err),
+		}}
+	}
 	socketRequested := cfg.Docker.MountDockerSocket || cfg.Permissions[config.PermissionDocker]
 	if socketRequested && strings.TrimSpace(cfg.Docker.DockerSocketPath) == "" && runtime.SocketPath() == "" {
 		return []Issue{{

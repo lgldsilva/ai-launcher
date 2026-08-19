@@ -342,8 +342,8 @@ func ComposeServiceFromRunConfig(cfg RunConfig, command []string, networkName st
 	if err := ValidateRunResources(cfg); err != nil {
 		return ComposeService{}, err
 	}
-	if strings.TrimSpace(cfg.ProjectDir) == "" {
-		return ComposeService{}, fmt.Errorf("project directory is required")
+	if err := ValidateProjectDir(cfg.ProjectDir); err != nil {
+		return ComposeService{}, err
 	}
 	if strings.TrimSpace(cfg.AgentExecutable) == "" {
 		return ComposeService{}, fmt.Errorf("agent executable is required")

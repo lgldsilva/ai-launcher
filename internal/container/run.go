@@ -160,6 +160,23 @@ func (c RunConfig) imageName() (string, error) {
 	return ImageTagWithOptions(c.Selection, DockerfileOptions{DockerCLI: c.DockerCLI})
 }
 
+// ValidateProjectDir rejects a project directory the container backend cannot
+// mount. Absolute is not a formality: the argv builds "-v <dir>:<dir>", and
+// Docker reads a relative source as a *named volume* with a relative
+// destination, which it then refuses. The operator sees an opaque daemon error
+// about an invalid mount instead of being told the directory is wrong, and the
+// project is never mounted.
+func ValidateProjectDir(dir string) error {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return fmt.Errorf("project directory is required")
+	}
+	if !filepath.IsAbs(trimmed) {
+		return fmt.Errorf("project directory %q must be an absolute path", trimmed)
+	}
+	return nil
+}
+
 // BuildRunCommand returns the selected runtime's run argv for RunConfig, in a fixed
 // order: flags, then mounts, then image, then the in-container command. It is
 // pure — no I/O, no docker calls — so dry-run, table tests, and the Gherkin
@@ -174,8 +191,8 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 	if err := cfg.Selection.Validate(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(cfg.ProjectDir) == "" {
-		return nil, fmt.Errorf("project directory is required")
+	if err := ValidateProjectDir(cfg.ProjectDir); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(cfg.AgentExecutable) == "" {
 		return nil, fmt.Errorf("agent executable is required")
