@@ -208,6 +208,7 @@ func reportDoctor(out io.Writer) error {
 	_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
 	var blocked []string
 	stale := false
+	var untested []launcher.UpstreamStatus
 	for _, status := range launcher.UpstreamReport(nil, "") {
 		switch {
 		case status.Missing:
@@ -220,6 +221,9 @@ func reportDoctor(out io.Writer) error {
 			stale = true
 			blocked = append(blocked, status.Command)
 			_, _ = fmt.Fprintf(out, "%-10s %s is older than the required %s; upgrade with --upgrade\n", status.Command, status.Version, status.Minimum)
+		case status.TooNew:
+			untested = append(untested, status)
+			_, _ = fmt.Fprintf(out, "%-10s %s is newer than the validated range (>= %s, < %s)\n", status.Command, status.Version, status.Minimum, status.Untested)
 		default:
 			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
 		}
@@ -227,10 +231,31 @@ func reportDoctor(out io.Writer) error {
 	if stale {
 		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits.")
 	}
+	for _, status := range untested {
+		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.UntestedCode, untestedAdvice(status))
+	}
 	if len(blocked) > 0 {
 		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))
 	}
 	return nil
+}
+
+// untestedAdvice explains what an upstream above the validated range means for
+// the argv this launcher builds. A newer upstream is not automatically broken,
+// which is why --doctor reports it and the launch still proceeds — but ai-jail
+// 1.18.0 is a concrete case where the same flags changed meaning, so it gets a
+// concrete warning instead of a generic one.
+func untestedAdvice(status launcher.UpstreamStatus) string {
+	if status.Command == config.AIJailCommand {
+		return "ai-jail 1.18.0 made network access, the process environment, GPU, display, X11, " +
+			"host shared memory and agent credential state explicit opt-ins. ai-launcher does not " +
+			"emit those flags yet, so a sandboxed agent comes up with no network and ai-memory " +
+			"loses its server URL, auth token and native binary. Use --no-jail, or pin ai-jail " +
+			"below " + status.Untested + ", until ai-launcher emits the new capability flags."
+	}
+	return "ai-launcher composes against " + status.Command + " >= " + status.Minimum +
+		" and < " + status.Untested + "; this install is newer, so the wrapper surface it " +
+		"exposes has not been validated against the argv ai-launcher builds."
 }
 
 // upgradeResolveTag and upgradeApply are seams: tests stub them to exercise

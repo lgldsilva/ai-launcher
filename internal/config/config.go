@@ -149,6 +149,29 @@ const (
 	MinAIMemoryVersion = "1.25.0"
 )
 
+// UntestedAIJailVersion and UntestedAIMemoryVersion are the first upstream
+// versions this launcher's argv has NOT been validated against. They are
+// exclusive bounds — an install at or above one of them is reported by
+// `ai-launcher --doctor`, and the launch proceeds.
+//
+// The floor alone only ever looked down, which leaves the launcher unable to
+// notice the failure mode that actually costs an afternoon: upstream keeping
+// every flag this launcher emits while changing what they *mean*. ai-jail
+// 1.18.0 is exactly that. It accepts the same argv and made network access,
+// the process environment, GPU, display, X11, host shared memory and agent
+// credential state explicit opt-ins, so the sandbox this launcher composes
+// today comes up with no network and a nearly empty environment — the agent
+// cannot reach its API and ai-memory loses AI_MEMORY_SERVER_URL,
+// AI_MEMORY_AUTH_TOKEN and AI_MEMORY_NATIVE_BIN. The Gherkin contract cannot
+// catch that: it locks the shape of the argv, not its meaning.
+//
+// ai-memory has no such break; its bound records how far the `run` wrapper
+// surface was actually read (1.28.1).
+const (
+	UntestedAIJailVersion   = "1.18.0"
+	UntestedAIMemoryVersion = "1.29.0"
+)
+
 // Shared catalog names and platform identifiers. Keeping these values in the
 // config package avoids slightly different spellings in the CLI, catalog and
 // launcher packages that all consume the same persisted IDs.
