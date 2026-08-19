@@ -234,6 +234,17 @@ func TestUpstreamReportLeavesAnUnreadableVersionUnjudged(t *testing.T) {
 	}
 }
 
+// stubJailProbe replaces both halves of the ai-jail probe: the PATH lookup and
+// the exec. Stubbing only the exec made these tests pass or fail according to
+// whether the machine had ai-jail installed.
+func stubJailProbe(t *testing.T, run func(string) ([]byte, error)) func() {
+	t.Helper()
+	originalLook, originalRun := lookPathCommand, runVersionCommand
+	lookPathCommand = func(command string) (string, error) { return "/bin/" + command, nil }
+	runVersionCommand = run
+	return func() { lookPathCommand, runVersionCommand = originalLook, originalRun }
+}
+
 // resetJailVersionCache clears the memoized probe so a test can drive it.
 func resetJailVersionCache(t *testing.T) {
 	t.Helper()
@@ -252,12 +263,11 @@ func resetJailVersionCache(t *testing.T) {
 func TestDetectJailVersionProbesAtMostOncePerProcess(t *testing.T) {
 	resetJailVersionCache(t)
 	calls := 0
-	original := runVersionCommand
-	runVersionCommand = func(string) ([]byte, error) {
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
 		calls++
 		return []byte("ai-jail 1.16.0"), nil
-	}
-	defer func() { runVersionCommand = original }()
+	})
+	defer restore()
 
 	for i := 0; i < 5; i++ {
 		if got := DetectJailVersion(); got != "1.16.0" {
@@ -274,12 +284,11 @@ func TestDetectJailVersionProbesAtMostOncePerProcess(t *testing.T) {
 func TestDetectJailVersionCachesAFailedProbe(t *testing.T) {
 	resetJailVersionCache(t)
 	calls := 0
-	original := runVersionCommand
-	runVersionCommand = func(string) ([]byte, error) {
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
 		calls++
 		return nil, errors.New("boom")
-	}
-	defer func() { runVersionCommand = original }()
+	})
+	defer restore()
 
 	for i := 0; i < 3; i++ {
 		if got := DetectJailVersion(); got != "" {
