@@ -115,6 +115,13 @@ func DefaultGlobal() Global {
 			{ID: PermissionSSH, Name: "SSH access", Requires: []string{PermissionJail}},
 			{ID: PermissionGitHub, Name: "GitHub CLI", Requires: []string{PermissionJail}},
 			{ID: PermissionDocker, Name: "Docker socket", Requires: []string{PermissionJail}},
+			// Network defaults ON, and that is a deliberate departure from
+			// ai-jail's own default. 1.18.0 made network access opt-in for
+			// good reasons, but an AI coding agent with no route to its API
+			// does nothing at all, so every launch would need the flag. The
+			// launcher takes the decision explicitly instead of inheriting it
+			// — and, unlike before, makes it possible to turn OFF.
+			{ID: PermissionNetwork, Name: "Network access", Default: true, Requires: []string{PermissionJail}},
 			{ID: PermissionGPU, Name: "GPU passthrough", Requires: []string{PermissionJail}},
 			// The passthroughs below default to off because ai-jail already
 			// auto-enables display, mise and worktree when the resource exists.

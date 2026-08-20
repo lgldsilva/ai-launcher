@@ -13,6 +13,32 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — ai-jail 1.18.2 is the new minimum, and the sandbox states its network
+
+ai-jail 1.18.0 turned network access into an explicit capability. Before it,
+a sandbox always had network and nothing could say otherwise; after it, a
+sandbox has none unless asked. The launcher emitted no such flag, so under
+1.18 every sandboxed agent came up unable to reach its own model API — the
+failure surfacing as a connection error from the agent rather than as anything
+the launcher said.
+
+The composed argv now always states the decision, `--network` or
+`--no-network`, the same way it already always states `--docker`. Network is a
+catalog permission that defaults **on**, which deliberately departs from
+ai-jail's own default: an AI coding agent with no route to its API does
+nothing. What the change buys, beyond working, is the opposite direction — an
+offline sandbox is now expressible, with `--no-network`, `network: false` under
+`jail_flags`, or by clearing the permission.
+
+**What you need to do:** upgrade ai-jail to 1.18.2 or newer. There is no argv
+that serves both dialects — 1.17.x and older reject `--network` outright — so
+this is a hard floor rather than advice, and pre-flight refuses a jail launch
+below it with a message naming `--no-jail` as the way to keep working
+meanwhile. `ai-launcher --doctor` tells you where you stand.
+
+1.18.2 and not 1.18.0: linked git worktrees had their git dir mounted
+read-only until the patch, which breaks `git commit` inside the sandbox.
+
 ### Changed — ai-memory 1.25.0 is the new minimum
 
 The catalog now offers Kiro CLI and Command Code as memory-capable agents,
