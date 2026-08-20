@@ -813,7 +813,10 @@ Feature: Launcher command contract
       claude
       """
 
-  Scenario: Warns when TCP ports are allowed without lockdown
+  # Through ai-jail 1.17.x --allow-tcp-port was lockdown-only and silently
+  # ignored otherwise. From 1.18.0 it fails closed and aborts the launch, so
+  # the launcher refuses first, with its own message.
+  Scenario: Refuses a launch carrying allow_tcp_ports
     Given a validation configuration
       """
       agent: claude
@@ -826,7 +829,7 @@ Feature: Launcher command contract
     When launcher preflight is checked
     Then issue codes equal
       """
-      allow-tcp-ports-without-lockdown
+      allow-tcp-ports-unsupported
       """
 
   Scenario: Warns when the internal network blocks the agent
