@@ -393,6 +393,33 @@ Feature: Launcher command contract
   # --no-docker default; these two lock the ways an operator turns it on.
   # ai-jail 1.18 forwards a minimal allowlist, so anything the sandbox needs
   # must be named. The bare --env form keeps values out of the argv.
+  # The order of this chain is a contract with TWO tools. ai-jail 1.18 parses
+  # `ai-memory run <harness>` to decide agent-state mounts, accepts only five
+  # value options before the harness, and bails out on anything else starting
+  # with "-". So --executable comes before the harness and --fresh after it.
+  Scenario: Keeps the ai-memory run chain parseable by ai-jail
+    Given a launch configuration
+      """
+      agent: claude
+      executable: /opt/agents/claude
+      jail: false
+      memory: true
+      fresh: true
+      workstream: release-1
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      release-1
+      --executable
+      /opt/agents/claude
+      claude
+      --fresh
+      """
+
   Scenario: Forwards the launcher-owned environment by name
     Given a launch configuration
       """
@@ -569,8 +596,8 @@ Feature: Launcher command contract
       run
       --workstream
       release-1
-      --fresh
       claude
+      --fresh
       """
 
   Scenario: Rejects --fresh together with --continue
@@ -950,9 +977,9 @@ Feature: Launcher command contract
       /opt/tools/bin
       ai-memory
       run
-      claude
       --executable
       /opt/tools/bin/claude
+      claude
       """
 
   Scenario: Emits private home, overlay maps, deny paths, tcp ports and claude dir

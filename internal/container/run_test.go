@@ -618,7 +618,7 @@ func TestInContainerCommandUsesMemoryHarness(t *testing.T) {
 		AgentArgs:        []string{"-p", "hi"},
 	}
 	got := cfg.InContainerCommand()
-	want := []string{"ai-memory", "run", "claude", "--executable", "/opt/ai-memory/claude", "-p", "hi"}
+	want := []string{"ai-memory", "run", "--executable", "/opt/ai-memory/claude", "claude", "-p", "hi"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("InContainerCommand() = %#v; want %#v", got, want)
 	}

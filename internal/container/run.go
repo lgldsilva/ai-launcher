@@ -264,10 +264,15 @@ func (c RunConfig) InContainerCommand() []string {
 		if harness == "" {
 			harness = c.AgentExecutable
 		}
-		command = []string{"ai-memory", "run", harness}
+		// --executable before the harness, matching the host chain. The
+		// container has no ai-jail parsing this argv, so nothing here depends
+		// on the order — but one command should have one spelling, or the two
+		// drift and the next person has to discover which is authoritative.
+		command = []string{"ai-memory", "run"}
 		if executable := strings.TrimSpace(c.MemoryExecutable); executable != "" {
 			command = append(command, "--executable", executable)
 		}
+		command = append(command, harness)
 		command = append(command, c.AgentArgs...)
 	}
 	if c.Tmux {
