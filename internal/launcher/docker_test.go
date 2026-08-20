@@ -36,7 +36,7 @@ func buildDocker(t *testing.T, permissions map[string]bool, flags config.JailFla
 // installed ai-jail rather than of the command this launcher builds.
 func TestJailAlwaysStatesTheDockerDecision(t *testing.T) {
 	argv := buildDocker(t, nil, config.JailFlags{})
-	if want := []string{"ai-jail", "--no-docker", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-network", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
@@ -44,24 +44,24 @@ func TestJailAlwaysStatesTheDockerDecision(t *testing.T) {
 // Turning it on is the operator's explicit opt-in, and only theirs.
 func TestDockerPermissionEmitsThePositiveForm(t *testing.T) {
 	argv := buildDocker(t, map[string]bool{"docker": true}, config.JailFlags{})
-	if want := []string{"ai-jail", "--docker", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--docker", "--no-network", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
 
 // jail_flags is the declarative surface and wins over the permission toggle,
 // in both directions — the same rule every other capability follows, so the
-// argv can never contradict itself with "--no-docker --docker".
+// argv can never contradict itself with "--no-docker --no-network --docker".
 func TestDockerJailFlagWinsOverThePermission(t *testing.T) {
 	forcedOff := buildDocker(t, map[string]bool{"docker": true},
 		config.JailFlags{Docker: boolPtr(false)})
-	if want := []string{"ai-jail", "--no-docker", "claude"}; !reflect.DeepEqual(forcedOff, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-network", "claude"}; !reflect.DeepEqual(forcedOff, want) {
 		t.Errorf("jail_flags.docker: false with the permission on: %#v; want %#v", forcedOff, want)
 	}
 
 	forcedOn := buildDocker(t, map[string]bool{"docker": false},
 		config.JailFlags{Docker: boolPtr(true)})
-	if want := []string{"ai-jail", "--docker", "claude"}; !reflect.DeepEqual(forcedOn, want) {
+	if want := []string{"ai-jail", "--docker", "--no-network", "claude"}; !reflect.DeepEqual(forcedOn, want) {
 		t.Errorf("jail_flags.docker: true with the permission off: %#v; want %#v", forcedOn, want)
 	}
 }

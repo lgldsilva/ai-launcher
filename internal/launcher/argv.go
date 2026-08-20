@@ -123,6 +123,7 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 		command = append(command, "--exec")
 	}
 	command = appendDockerDecision(command, cfg)
+	command = appendNetworkDecision(command, cfg)
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
 	if cfg.UseMemory {
@@ -221,6 +222,38 @@ func appendHostDirMount(command []string, path string, mounts []config.Mount) []
 		}
 	}
 	return append(command, "--map", dir)
+}
+
+// appendNetworkDecision emits exactly one of --network / --no-network, always,
+// for the same reason appendDockerDecision does: leaving it unstated used to be
+// harmless and stopped being so.
+//
+// Through ai-jail 1.17.x the sandbox had unrestricted network access and no
+// flag to say otherwise. 1.18.0 made it an explicit opt-in — a change this
+// argv could not express, so every sandboxed agent came up unable to reach its
+// own model API, and the failure surfaced as a connection error from the agent
+// rather than as anything the launcher said.
+//
+// So the launcher states it. The default is ON, which deliberately departs from
+// ai-jail's: an AI coding agent without network does nothing, and inheriting
+// the upstream default would put the flag on every single launch. What this
+// buys, beyond working, is the ability to turn it OFF — `network: false` in
+// jail_flags, or clearing the permission, now produces a genuinely offline
+// sandbox, which was not expressible before at all.
+//
+// Precedence matches every other capability: an explicit jail_flags.network is
+// the operator's declarative choice and wins, then the permission toggle.
+func appendNetworkDecision(command []string, cfg LaunchConfig) []string {
+	if declared := cfg.JailFlags.Network; declared != nil {
+		if *declared {
+			return append(command, "--network")
+		}
+		return append(command, "--no-network")
+	}
+	if cfg.Permissions[config.PermissionNetwork] {
+		return append(command, "--network")
+	}
+	return append(command, "--no-network")
 }
 
 // appendDockerDecision emits exactly one of --docker / --no-docker, always.

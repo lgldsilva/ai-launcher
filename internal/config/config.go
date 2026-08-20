@@ -133,19 +133,28 @@ func SupportsMemoryRunHarness(name string) bool {
 // versions this launcher composes against. Older installs still launch;
 // `ai-launcher --doctor` reports them (see launcher.UpstreamReport).
 //
-// ai-jail 1.16.0 is a security floor, not a feature floor: up to 1.15.x the
-// Docker socket was bind-mounted read-write on sight, so "docker off by
+// ai-jail 1.18.2 is a hard floor, not advice: the launcher emits --network,
+// which 1.17.x and older reject outright with "unknown option". There is no
+// argv that serves both dialects, so there is no compatibility to preserve —
+// 1.18.0 turned network access, the process environment and half a dozen
+// other capabilities into explicit opt-ins, and a launcher that stayed quiet
+// about them produced a sandbox with no network and no credentials.
+//
+// 1.18.2 rather than 1.18.0 because linked git worktrees had their git dir
+// mounted read-only until the patch, which breaks `git commit` inside the
+// sandbox.
+//
+// The previous floor (1.16.0) was a security floor for the Docker socket:
+// through 1.15.x it was bind-mounted read-write on sight, so "docker off by
 // default" was not true of the resulting sandbox no matter what the launcher
-// emitted. The argv fix (an explicit --no-docker, see appendDockerDecision)
-// covers 1.15.x hosts too; the floor is what tells an operator to stop
-// relying on a build that had no way to say no.
+// emitted. appendDockerDecision still states it explicitly.
 // ai-memory 1.25.0 is a feature floor: `ai-memory run kiro` arrived in 1.24.0
 // and `ai-memory run command-code` in 1.25.0. The catalog offers both as
 // memory-capable agents, and memoryRunHarnesses promises pre-flight will let
 // them through — against an older ai-memory that promise turns into the opaque
 // clap rejection raised inside the jail that invariant 6b exists to prevent.
 const (
-	MinAIJailVersion   = "1.16.0"
+	MinAIJailVersion   = "1.18.2"
 	MinAIMemoryVersion = "1.25.0"
 )
 
@@ -168,7 +177,7 @@ const (
 // ai-memory has no such break; its bound records how far the `run` wrapper
 // surface was actually read (1.28.1).
 const (
-	UntestedAIJailVersion   = "1.18.0"
+	UntestedAIJailVersion   = "1.19.0"
 	UntestedAIMemoryVersion = "1.29.0"
 )
 
@@ -188,6 +197,7 @@ const (
 	PermissionSSH     = "ssh"
 	PermissionGitHub  = "gh"
 	PermissionDocker  = "docker"
+	PermissionNetwork = "network"
 	PermissionGPU     = "gpu"
 	PermissionDisplay = "display"
 

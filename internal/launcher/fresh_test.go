@@ -84,7 +84,7 @@ func TestExecutableDirectoryIsMountedReadOnly(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 	want := []string{
-		"ai-jail", "--no-docker", "--map", "/opt/tools/bin",
+		"ai-jail", "--no-docker", "--no-network", "--map", "/opt/tools/bin",
 		"ai-memory", "run", "claude", "--executable", "/opt/tools/bin/claude",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -103,7 +103,7 @@ func TestExecutableInsideAConfiguredMountIsNotRemounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	want := []string{"ai-jail", "--no-docker", "--rw-map", "/work", "/work/bin/claude"}
+	want := []string{"ai-jail", "--no-docker", "--no-network", "--rw-map", "/work", "/work/bin/claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want %#v", got, want)
 	}
@@ -120,7 +120,7 @@ func TestRelativeExecutableGetsNoAutoMount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	want := []string{"ai-jail", "--no-docker", "bin/claude"}
+	want := []string{"ai-jail", "--no-docker", "--no-network", "bin/claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want %#v (no mount for a relative executable)", got, want)
 	}

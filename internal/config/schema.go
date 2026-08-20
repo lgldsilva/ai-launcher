@@ -152,7 +152,11 @@ type JailFlags struct {
 	// walks straight past bubblewrap, Landlock, seccomp and every --mask.
 	// v1.16.0 made it opt-in after ai-jail issue #88. The launcher does not
 	// rely on that: see appendDockerDecision in internal/launcher.
-	Docker     *bool `yaml:"docker,omitempty"`
+	Docker *bool `yaml:"docker,omitempty"`
+	// Network is the second capability the launcher never leaves unstated.
+	// ai-jail 1.18.0 made it opt-in; a sandbox without it cannot reach any
+	// model API, so appendNetworkDecision always emits one form or the other.
+	Network    *bool `yaml:"network,omitempty"`
 	Tailscale  *bool `yaml:"tailscale,omitempty"`
 	GPU        *bool `yaml:"gpu,omitempty"`
 	Display    *bool `yaml:"display,omitempty"`
@@ -225,7 +229,7 @@ func (p PortMapping) DockerFlag() string {
 
 // IsZero reports whether no jail flag deviates from the ai-jail defaults.
 func (f JailFlags) IsZero() bool {
-	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Tailscale == nil &&
+	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Network == nil && f.Tailscale == nil &&
 		f.GPU == nil && f.Display == nil && f.Mise == nil && f.Worktree == nil &&
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.SaveConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
