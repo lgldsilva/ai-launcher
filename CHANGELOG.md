@@ -13,6 +13,37 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — `--workspace` no longer sets the container project directory
+
+`options.workspace` and `options.project` are ai-memory *scope names* — the
+values `ai-memory run --workspace` and `--project` take. The container backend
+also read them as the host directory to bind-mount, so one field meant two
+incompatible things.
+
+That broke both ways. A real scope name reached Docker as a mount source
+(`--workspace acme` produced `-v acme:acme`, which Docker refuses), and, worse
+because nothing failed, selecting the container backend wrote the working
+directory *into* `options.workspace` on autosave — after which a jail launch
+forwarded it as `ai-memory run --workspace /path/to/repo`, creating a
+path-shaped phantom workspace in the memory database.
+
+The container project directory is now its own value: `--project-dir`, or the
+working directory by default. It is never persisted, because persisting a
+derived value is what leaked it in the first place.
+
+**What you need to do:** if you passed `--workspace` or `--project` to point
+the container at a directory, use `--project-dir` instead — or drop the flag
+entirely when the directory is the one you are standing in. The ai-memory
+scopes keep working exactly as before.
+
+If an earlier docker launch already saved a path into `options.workspace`,
+pre-flight now warns `memory-scope-looks-like-a-path` on every run naming that
+value. Remove it from `.ai-launcher/config.yaml`. It cannot be migrated
+automatically: a workspace name is your data, and ai-memory accepts any
+string, so the launcher cannot tell a deliberate odd name from the leak. Any
+phantom workspace already created in ai-memory can be folded back with
+`ai-memory move-session`.
+
 ### Changed — the workspace config moved to `.ai-launcher/config.yaml`
 
 The workspace-local selection moved from `<project>/.ai-launch.yaml` to
