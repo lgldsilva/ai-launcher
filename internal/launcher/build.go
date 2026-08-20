@@ -38,6 +38,11 @@ type LaunchConfig struct {
 	// the TUI — so Build stays pure and Validator.Validate stays hermetic: the
 	// validator reads a string, it never execs anything.
 	JailVersion string
+	// JailEnv names the environment variables to forward into the sandbox with
+	// ai-jail's --env. Filled by ResolveHostBinaries from JailEnvPassthrough,
+	// so Build stays free of environment reads and --dry-run shows exactly the
+	// argv a real launch would run.
+	JailEnv []string
 	// ProjectDir is the host directory the container backend bind-mounts at the
 	// identical path and sets as WORKDIR. It is deliberately separate from
 	// Workspace and Project, which are ai-memory *scope names*: the container

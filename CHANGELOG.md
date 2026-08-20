@@ -13,6 +13,29 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the sandbox environment is forwarded by name
+
+ai-jail 1.18 replaced full environment inheritance with a minimal allowlist:
+`PATH`, `HOME`, `TERM`, `LANG`, `SHELL`, `TMPDIR`, `COLORTERM`, the `SSL_CERT_*`
+and proxy variables, plus the `LC_*`, `XDG_*` and `TERM_PROGRAM` families.
+Everything else is dropped unless named — which silently took out the three
+`AI_MEMORY_*` variables the launcher owns and every vendor API key.
+
+The composed argv now forwards them with `--env NAME`, one per variable, and
+only for variables that actually exist. The bare form is deliberate: values
+stay in the environment, so `AI_MEMORY_AUTH_TOKEN` never appears in the argv
+or in a process listing. `--inherit-env` is never emitted — it would hand the
+sandbox every secret in your shell.
+
+Which variables an agent needs is a catalog field, `env_passthrough`, populated
+for the shipped agents (Anthropic, OpenAI, Google, xAI, Moonshot and friends).
+
+**What you need to do:** nothing for the shipped agents. If you added your own
+agent to the global catalog and it reads an API key from the environment, add
+`env_passthrough: [YOUR_KEY]` to its entry — otherwise the key stops reaching
+it inside the sandbox, and the symptom is an authentication error from the
+vendor rather than anything the launcher says.
+
 ### Changed — ai-jail 1.18.2 is the new minimum, and the sandbox states its network
 
 ai-jail 1.18.0 turned network access into an explicit capability. Before it,

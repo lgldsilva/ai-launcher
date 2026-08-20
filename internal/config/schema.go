@@ -43,6 +43,17 @@ type Agent struct {
 	// It is used by launcher internals that need the original catalog identity
 	// (for example agent-specific state-directory mounts).
 	CatalogCommand string `yaml:"catalog_command,omitempty"`
+	// EnvPassthrough names the environment variables this agent needs to see
+	// inside the sandbox — API keys and endpoint overrides, not secrets the
+	// launcher owns. ai-jail 1.18 replaced full environment inheritance with a
+	// minimal allowlist, so a variable not named here simply does not reach the
+	// agent, and the failure looks like an authentication error from the
+	// vendor rather than anything the launcher did.
+	//
+	// Values are never written into the argv: the launcher emits the bare
+	// `--env NAME` form, which copies from ai-jail's own environment, so a
+	// token stays out of the process table (ARCHITECTURE invariant 7).
+	EnvPassthrough []string `yaml:"env_passthrough,omitempty"`
 }
 
 // Param declares a harness-specific CLI flag in the catalog so new agents or
