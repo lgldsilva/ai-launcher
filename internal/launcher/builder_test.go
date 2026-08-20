@@ -13,7 +13,7 @@ import (
 
 func TestBuildMinimalWithMemory(t *testing.T) {
 	got, err := Build(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true, UseMemory: true, Permissions: map[string]bool{"jail": true}})
-	want := []string{"ai-jail", "--no-docker", "ai-memory", "run", "claude"}
+	want := []string{"ai-jail", "--no-docker", "--no-network", "ai-memory", "run", "claude"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
 	}
@@ -63,7 +63,7 @@ func TestBuildAllOptions(t *testing.T) {
 		Yolo:          true,
 		ExtraArgs:     []string{"--model", "sonnet"},
 	})
-	want := []string{"ai-jail", "--docker", "--ssh", "--rw-map", "/home/lgldsilva/.config/gh", "--gpu", "--map", "/usr/bin", "--map", "/data", "--rw-map", "/work", "ai-memory", "run", "--new", "ws-test", "claude", "--executable", "/usr/bin/claude", "--yolo", "--model", "sonnet"}
+	want := []string{"ai-jail", "--docker", "--no-network", "--ssh", "--rw-map", "/home/lgldsilva/.config/gh", "--gpu", "--map", "/usr/bin", "--map", "/data", "--rw-map", "/work", "ai-memory", "run", "--new", "ws-test", "claude", "--executable", "/usr/bin/claude", "--yolo", "--model", "sonnet"}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestBuildMapsV115PassthroughPermissions(t *testing.T) {
 			"systemd-user": true, "mise": true, "worktree": true,
 		},
 	})
-	want := []string{"ai-jail", "--no-docker", "--display", "--pictures", "--tailscale", "--systemd-user", "--mise", "--worktree", "claude"}
+	want := []string{"ai-jail", "--no-docker", "--no-network", "--display", "--pictures", "--tailscale", "--systemd-user", "--mise", "--worktree", "claude"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
 	}

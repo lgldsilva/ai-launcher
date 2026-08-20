@@ -48,16 +48,16 @@ func TestBuildMapsEveryTriStateToggleInBothForms(t *testing.T) {
 	} {
 		var flags config.JailFlags
 		*toggle(&flags) = boolPtr(true)
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", name, "claude"}) {
+		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "--no-network", name, "claude"}) {
 			t.Errorf("enabled %s: argv = %#v", name, argv)
 		}
 		*toggle(&flags) = boolPtr(false)
 		negative := strings.Replace(name, "--", "--no-", 1)
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", negative, "claude"}) {
+		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "--no-network", negative, "claude"}) {
 			t.Errorf("disabled %s: argv = %#v; want %s", name, argv, negative)
 		}
 		*toggle(&flags) = nil
-		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "claude"}) {
+		if argv := buildWithJailFlags(t, flags); !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "--no-network", "claude"}) {
 			t.Errorf("unset %s must stay in ai-jail auto mode: argv = %#v", name, argv)
 		}
 	}
@@ -74,6 +74,7 @@ func TestBuildMapsJailListFlagsBrowserAndClaudeDir(t *testing.T) {
 	})
 	want := []string{
 		"ai-jail", "--no-docker",
+		"--no-network",
 		"--overlay-map", "/data",
 		"--mask", "/etc/secrets",
 		"--deny-path", "/proc/kcore",
@@ -91,7 +92,7 @@ func TestBuildMapsJailListFlagsBrowserAndClaudeDir(t *testing.T) {
 func TestBuildMapsBrowserProfiles(t *testing.T) {
 	for browser, flag := range map[string]string{"soft": "--browser=soft", "HARD": "--browser=hard", "off": "--no-browser"} {
 		argv := buildWithJailFlags(t, config.JailFlags{Browser: browser})
-		if !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", flag, "claude"}) {
+		if !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "--no-network", flag, "claude"}) {
 			t.Errorf("browser %q: argv = %#v; want %s", browser, argv, flag)
 		}
 	}
@@ -105,13 +106,13 @@ func TestBuildJailExecEnablesProgrammaticMode(t *testing.T) {
 		JailExec:    true,
 		Permissions: map[string]bool{},
 	})
-	want := []string{"ai-jail", "--exec", "--no-docker", "ai-memory", "run", "claude"}
+	want := []string{"ai-jail", "--exec", "--no-docker", "--no-network", "ai-memory", "run", "claude"}
 	if err != nil || !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", argv, err, want)
 	}
 	// The interactive path (no JailExec) leaves the ai-jail PTY defaults alone.
 	argv, err = Build(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true, Permissions: map[string]bool{}})
-	if err != nil || !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "claude"}) {
+	if err != nil || !reflect.DeepEqual(argv, []string{"ai-jail", "--no-docker", "--no-network", "claude"}) {
 		t.Fatalf("interactive Build() = %#v, %v", argv, err)
 	}
 }
@@ -153,7 +154,7 @@ func TestBuildContinueRunsAiMemoryWithoutHarness(t *testing.T) {
 		Workspace:       "acme",
 		Permissions:     map[string]bool{},
 	})
-	want := []string{"ai-jail", "--exec", "--no-docker", "ai-memory", "run", "--workspace", "acme"}
+	want := []string{"ai-jail", "--exec", "--no-docker", "--no-network", "ai-memory", "run", "--workspace", "acme"}
 	if err != nil || !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v, %v; want %#v", argv, err, want)
 	}
@@ -383,6 +384,7 @@ func TestBuildMapsJailExceptionListsAndHiddenDotdirs(t *testing.T) {
 	})
 	want := []string{
 		"ai-jail", "--no-docker",
+		"--no-network",
 		"--mask", "/etc/secrets",
 		"--deny-path", "/proc/kcore",
 		"--mask-except", "/etc/secrets/public",
@@ -399,13 +401,13 @@ func TestBuildMapsJailExceptionListsAndHiddenDotdirs(t *testing.T) {
 func TestBuildMapsStatusBarStyle(t *testing.T) {
 	for _, style := range []string{"dark", "light", "pastel"} {
 		argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: style})
-		if want := []string{"ai-jail", "--no-docker", "--status-bar=" + style, "claude"}; !reflect.DeepEqual(argv, want) {
+		if want := []string{"ai-jail", "--no-docker", "--no-network", "--status-bar=" + style, "claude"}; !reflect.DeepEqual(argv, want) {
 			t.Errorf("style %q: argv = %#v; want %#v", style, argv, want)
 		}
 	}
 	// Mixed case and surrounding whitespace normalize to the lowercase style.
 	argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: " Dark "})
-	if want := []string{"ai-jail", "--no-docker", "--status-bar=dark", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-network", "--status-bar=dark", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("mixed-case style: argv = %#v; want %#v", argv, want)
 	}
 }
@@ -414,16 +416,80 @@ func TestBuildStatusBarStyleSuppressesBooleanForms(t *testing.T) {
 	// A configured style wins over the tri-state toggle: --no-status-bar is
 	// never emitted alongside --status-bar=STYLE.
 	argv := buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "pastel", StatusBar: boolPtr(false)})
-	if want := []string{"ai-jail", "--no-docker", "--status-bar=pastel", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-network", "--status-bar=pastel", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("style + disabled toggle: argv = %#v; want %#v", argv, want)
 	}
 	argv = buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "light", StatusBar: boolPtr(true)})
-	if want := []string{"ai-jail", "--no-docker", "--status-bar=light", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-network", "--status-bar=light", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("style + enabled toggle: argv = %#v; want %#v", argv, want)
 	}
 	// An unrecognized style leaves the boolean toggle in charge.
 	argv = buildWithJailFlags(t, config.JailFlags{StatusBarStyle: "neon", StatusBar: boolPtr(false)})
-	if want := []string{"ai-jail", "--no-docker", "--no-status-bar", "claude"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"ai-jail", "--no-docker", "--no-network", "--no-status-bar", "claude"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("unknown style: argv = %#v; want %#v", argv, want)
 	}
+}
+
+// Network is the second capability the launcher never leaves to the upstream
+// default, and the reasoning mirrors docker's: through ai-jail 1.17.x the
+// sandbox always had network and no flag could say otherwise, then 1.18.0 made
+// it opt-in and every sandboxed agent silently lost its route to its own API.
+func TestJailAlwaysStatesTheNetworkDecision(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		permission bool
+		declared   *bool
+		want       string
+	}{
+		{"permission on", true, nil, "--network"},
+		{"permission off", false, nil, "--no-network"},
+		{"jail_flags wins over the permission", false, boolPtr(true), "--network"},
+		{"jail_flags can force it off", true, boolPtr(false), "--no-network"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Build(LaunchConfig{
+				Agent:       config.Agent{Command: "claude"},
+				UseJail:     true,
+				Permissions: map[string]bool{config.PermissionJail: true, config.PermissionNetwork: tt.permission},
+				JailFlags:   config.JailFlags{Network: tt.declared},
+			})
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if !containsToken(got, tt.want) {
+				t.Fatalf("Build() = %v; want it stating %s", got, tt.want)
+			}
+			opposite := "--network"
+			if tt.want == "--network" {
+				opposite = "--no-network"
+			}
+			if containsToken(got, opposite) {
+				t.Fatalf("Build() = %v; it states both forms of the network decision", got)
+			}
+		})
+	}
+}
+
+// The decision is unconditional: there is no configuration in which the argv
+// stays silent about the network, because silence is what broke under 1.18.
+func TestJailNeverOmitsTheNetworkDecision(t *testing.T) {
+	got, err := Build(LaunchConfig{
+		Agent:   config.Agent{Command: "claude"},
+		UseJail: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !containsToken(got, "--network") && !containsToken(got, "--no-network") {
+		t.Fatalf("Build() = %v; want an explicit network decision even with no permissions map", got)
+	}
+}
+
+func containsToken(argv []string, token string) bool {
+	for _, arg := range argv {
+		if arg == token {
+			return true
+		}
+	}
+	return false
 }
