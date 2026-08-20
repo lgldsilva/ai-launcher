@@ -23,62 +23,54 @@ func issueByCode(issues []Issue, code string) (Issue, bool) {
 // builder emits flags upstream silently ignores: the operator believes ports
 // are open when nothing is. The warning is the only thing standing between that
 // belief and a debugging session, so each arm of the condition is pinned.
-func TestAllowTCPPortsWarnOnlyWhenLockdownIsNotForcedOn(t *testing.T) {
+// Through ai-jail 1.17.x --allow-tcp-port was lockdown-only and silently
+// ignored otherwise, so this was a warning about ports that did nothing. From
+// 1.18.0 it fails closed: ai-jail aborts the launch outright, lockdown or not,
+// because UDP cannot be constrained through that interface. The supported
+// floor is 1.18.2, so there is no configuration left where the flag is merely
+// inert — pre-flight refuses, and lockdown no longer changes the answer.
+func TestAllowTCPPortsAreRefusedRegardlessOfLockdown(t *testing.T) {
 	base := LaunchConfig{UseJail: true}
 	base.JailFlags.AllowTCPPorts = []int{8080}
 
 	cases := []struct {
-		name string
-		cfg  func() LaunchConfig
-		warn bool
+		name   string
+		cfg    func() LaunchConfig
+		refuse bool
 	}{
+		{"lockdown unset", func() LaunchConfig { return base }, true},
 		{
-			name: "lockdown unset leaves the ports inert",
-			cfg:  func() LaunchConfig { return base },
-			warn: true,
+			"lockdown explicitly off",
+			func() LaunchConfig { cfg := base; cfg.JailFlags.Lockdown = boolPtr(false); return cfg },
+			true,
 		},
 		{
-			name: "lockdown explicitly off leaves the ports inert",
-			cfg: func() LaunchConfig {
-				cfg := base
-				cfg.JailFlags.Lockdown = boolPtr(false)
-				return cfg
-			},
-			warn: true,
+			// The old behaviour made this the one accepted combination.
+			"lockdown forced on",
+			func() LaunchConfig { cfg := base; cfg.JailFlags.Lockdown = boolPtr(true); return cfg },
+			true,
 		},
+		{"no ports configured", func() LaunchConfig { return LaunchConfig{UseJail: true} }, false},
 		{
-			name: "lockdown forced on makes the ports take effect",
-			cfg: func() LaunchConfig {
-				cfg := base
-				cfg.JailFlags.Lockdown = boolPtr(true)
-				return cfg
-			},
-			warn: false,
-		},
-		{
-			name: "no ports configured",
-			cfg:  func() LaunchConfig { return LaunchConfig{UseJail: true} },
-			warn: false,
-		},
-		{
-			name: "jail off; jail-options-without-jail already covers it",
-			cfg: func() LaunchConfig {
-				cfg := base
-				cfg.UseJail = false
-				return cfg
-			},
-			warn: false,
+			"jail off; jail-options-without-jail already covers it",
+			func() LaunchConfig { cfg := base; cfg.UseJail = false; return cfg },
+			false,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			issues := allowTCPPortIssues(tc.cfg())
-			issue, found := issueByCode(issues, "allow-tcp-ports-without-lockdown")
-			if found != tc.warn {
-				t.Fatalf("warning present = %v; want %v (issues = %#v)", found, tc.warn, issues)
+			issue, found := issueByCode(issues, "allow-tcp-ports-unsupported")
+			if found != tc.refuse {
+				t.Fatalf("refusal present = %v; want %v (issues = %#v)", found, tc.refuse, issues)
 			}
-			if found && !issue.Warning {
-				t.Error("the launch must still be allowed to proceed; this is advisory")
+			if found {
+				if issue.Warning {
+					t.Error("the issue is advisory; ai-jail aborts this launch, so it must be fatal")
+				}
+				if !strings.Contains(issue.Message, ".ai-jail") {
+					t.Errorf("message = %q; want it naming the project .ai-jail, whose ports are merged in", issue.Message)
+				}
 			}
 		})
 	}

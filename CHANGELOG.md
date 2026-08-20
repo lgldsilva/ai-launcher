@@ -13,6 +13,23 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — `allow_tcp_ports` is refused instead of ignored
+
+Through ai-jail 1.17.x `--allow-tcp-port` was lockdown-only and silently
+ignored otherwise, so the launcher warned that the ports were doing nothing.
+From 1.18.0 the flag fails closed: ai-jail aborts the launch outright, with or
+without lockdown, because UDP cannot be constrained through that interface.
+
+Pre-flight now refuses with `allow-tcp-ports-unsupported` rather than warning,
+so the message comes from the launcher instead of being raised inside the
+wrapper.
+
+**What you need to do:** remove `jail_flags.allow_tcp_ports` from your config,
+and check the project `.ai-jail` too — ai-jail merges its `allow_tcp_ports`
+with the ones on the command line, so the ports can come from a file the
+launcher does not control. For outbound access, use the network permission
+(on by default) instead.
+
 ### Added — the sandbox environment is forwarded by name
 
 ai-jail 1.18 replaced full environment inheritance with a minimal allowlist:
