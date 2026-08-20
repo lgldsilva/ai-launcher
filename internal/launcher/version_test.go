@@ -207,7 +207,7 @@ func TestUpstreamReportFlagsInstallsAboveTheTestedCeiling(t *testing.T) {
 // this the report would cry wolf on every install the launcher does support.
 func TestUpstreamReportAcceptsTheVersionJustBelowTheCeiling(t *testing.T) {
 	stubVersionCommand(t, map[string]string{
-		"/bin/ai-jail":   "ai-jail 1.17.9",
+		"/bin/ai-jail":   "ai-jail 1.18.9",
 		"/bin/ai-memory": "ai-memory 1.28.1",
 	}, nil)
 	for _, status := range UpstreamReport(lookPathAll, "linux") {

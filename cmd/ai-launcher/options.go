@@ -65,6 +65,7 @@ type cliOptions struct {
 	listProfiles                   bool
 	continueSession                bool
 	showVersion, doctor            bool
+	noNetwork                      bool
 	noLocalConfig                  bool
 	noColor, highContrast          bool
 }
@@ -81,6 +82,10 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.systemdUser, permissionSystemdUser, false, "expose the systemd user bus in the jail (Linux only)")
 	flags.BoolVar(&o.mise, "mise", false, "enable the ai-jail mise integration")
 	flags.BoolVar(&o.worktree, "worktree", false, "enable Git worktree passthrough in the jail")
+	// Network is on by default (catalog), so the useful flag is the one that
+	// turns it off — same shape as --no-jail. An offline sandbox was not
+	// expressible at all before ai-jail 1.18 made network a capability.
+	flags.BoolVar(&o.noNetwork, "no-network", false, "run the sandbox without network access")
 	flags.BoolVar(&o.noJail, flagNoJail, false, "run without ai-jail")
 	flags.BoolVar(&o.sandbox, "sandbox", false, "enable ai-jail (alias for the default sandbox)")
 	flags.BoolVar(&o.dockerBackend, "docker-backend", false, "run the agent inside a docker container instead of ai-jail")

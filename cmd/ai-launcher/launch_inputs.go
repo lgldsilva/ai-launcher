@@ -76,6 +76,12 @@ func resolvePermissions(flags *flag.FlagSet, opts *cliOptions, local config.Loca
 	applyBoolFlag(flags, permissionSystemdUser, permissions, permissionSystemdUser, opts.systemdUser)
 	applyBoolFlag(flags, config.PermissionMise, permissions, config.PermissionMise, opts.mise)
 	applyBoolFlag(flags, config.PermissionWorktree, permissions, config.PermissionWorktree, opts.worktree)
+	// --no-network is the negative form of a permission that defaults on, so
+	// it clears rather than sets. Applied last: an explicit opt-out wins over
+	// whatever the workspace file or the catalog default asked for.
+	if flagsWasSet(flags, "no-network") && opts.noNetwork {
+		permissions[config.PermissionNetwork] = false
+	}
 	return catalogue.NormalizePermissions(permissions)
 }
 

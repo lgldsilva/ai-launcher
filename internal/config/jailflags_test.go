@@ -127,6 +127,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		"lockdown":             func(f *JailFlags) { f.Lockdown = boolPointer(true) },
 		"private_home":         func(f *JailFlags) { f.PrivateHome = boolPointer(false) },
 		"docker":               func(f *JailFlags) { f.Docker = boolPointer(false) },
+		"network":              func(f *JailFlags) { f.Network = boolPointer(false) },
 		"tailscale":            func(f *JailFlags) { f.Tailscale = boolPointer(true) },
 		"gpu":                  func(f *JailFlags) { f.GPU = boolPointer(true) },
 		"display":              func(f *JailFlags) { f.Display = boolPointer(false) },

@@ -75,6 +75,7 @@ func TestMemoryExecutableDirectoryIsMapped(t *testing.T) {
 	}
 	want := []string{
 		"ai-jail", "--no-docker",
+		"--no-network",
 		"--map", "/opt/mem/bin",
 		"--map", "/opt/agents",
 		"/opt/mem/bin/ai-memory", "run", "claude",
@@ -97,6 +98,7 @@ func TestContinueUsesResolvedMemoryExecutable(t *testing.T) {
 	}
 	want := []string{
 		"ai-jail", "--no-docker",
+		"--no-network",
 		"--map", "/opt/mem/bin",
 		"/opt/mem/bin/ai-memory", "run",
 	}
@@ -185,6 +187,7 @@ func TestLiveJailRunsGrokHelp(t *testing.T) {
 		t.Skip("live jail exec is host-only")
 	}
 	requireRealCLI(t, "ai-jail", "ai-jail")
+	requireSupportedJail(t)
 	path := requireRealCLI(t, "grok", "grok")
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -227,6 +230,22 @@ func TestLiveJailRunsGrokHelp(t *testing.T) {
 }
 
 // requireRealCLI skips when name is missing or is a mutation stub (exit 0).
+// requireSupportedJail skips when the installed ai-jail predates the floor the
+// launcher composes against. This test execs the real binary, so an older build
+// rejects flags it has never heard of ("unknown option: --no-network") and the
+// failure says nothing about the launcher — it only reports the host is behind.
+// The version gate belongs to pre-flight, and it has its own tests.
+func requireSupportedJail(t *testing.T) {
+	t.Helper()
+	version := DetectJailVersion()
+	if version == "" {
+		t.Skip("ai-jail version unreadable")
+	}
+	if compareVersions(version, config.MinAIJailVersion) < 0 {
+		t.Skipf("ai-jail %s is below the supported floor %s", version, config.MinAIJailVersion)
+	}
+}
+
 func requireRealCLI(t *testing.T, name, needle string) string {
 	t.Helper()
 	path, err := exec.LookPath(name)

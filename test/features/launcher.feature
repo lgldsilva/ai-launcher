@@ -43,6 +43,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --docker
+      --no-network
       --ssh
       --rw-map
       /home/tester/.config/gh
@@ -76,6 +77,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       codex
       """
 
@@ -97,6 +99,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --rw-map
       /home/tester/.config
       codex
@@ -265,6 +268,7 @@ Feature: Launcher command contract
       ai-jail
       --exec
       --no-docker
+      --no-network
       --lockdown
       --mask
       /etc/secrets
@@ -298,6 +302,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --no-gpu
       --no-landlock
       --no-seccomp
@@ -323,6 +328,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --gpu
       --display
       --mise
@@ -346,6 +352,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --no-display
       --no-mise
       --no-worktree
@@ -372,6 +379,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --no-tailscale
       --no-gpu
       --no-display
@@ -383,6 +391,45 @@ Feature: Launcher command contract
   # the capability unset is therefore not a safe default for this one flag, so
   # the launcher always states it. Every other jail scenario above asserts the
   # --no-docker default; these two lock the ways an operator turns it on.
+  Scenario: The network permission is the opt-in for outbound access
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      permissions:
+        jail: true
+        network: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --network
+      claude
+      """
+
+  # ai-jail 1.18 made network opt-in; the launcher states the decision either
+  # way, so an offline sandbox is expressible instead of accidental.
+  Scenario: Emits the negative network form when the permission is off
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      permissions:
+        jail: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      claude
+      """
+
   Scenario: The docker permission is the opt-in for the socket
     Given a launch configuration
       """
@@ -397,6 +444,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --docker
+      --no-network
       claude
       """
 
@@ -416,6 +464,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       claude
       """
 
@@ -433,6 +482,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --no-hide-config
       claude
       """
@@ -451,6 +501,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --no-save-config
       claude
       """
@@ -470,6 +521,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --hide-config
       --save-config
       claude
@@ -543,6 +595,7 @@ Feature: Launcher command contract
       ai-jail
       --exec
       --no-docker
+      --no-network
       ai-memory
       run
       """
@@ -629,6 +682,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --display
       --pictures
       --tailscale
@@ -671,6 +725,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --status-bar=dark
       --mask-except
       /etc/secrets/public
@@ -700,6 +755,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --status-bar=pastel
       claude
       """
@@ -810,7 +866,7 @@ Feature: Launcher command contract
       goos: linux
       jail: true
       memory: false
-      jail_version: 1.18.2
+      jail_version: 1.19.0
       """
     When launcher preflight is checked
     Then issue codes equal
@@ -863,6 +919,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --map
       /opt/tools/bin
       ai-memory
@@ -891,6 +948,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --lockdown
       --private-home
       --overlay-map
@@ -918,6 +976,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --browser=soft
       claude
       """
@@ -936,6 +995,7 @@ Feature: Launcher command contract
       """
       ai-jail
       --no-docker
+      --no-network
       --no-browser
       claude
       """
