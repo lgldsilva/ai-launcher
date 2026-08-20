@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -230,5 +231,71 @@ func TestUpstreamReportLeavesAnUnreadableVersionUnjudged(t *testing.T) {
 		if status.TooOld || status.TooNew {
 			t.Errorf("%s judged %#v with no readable version", status.Command, status)
 		}
+	}
+}
+
+// stubJailProbe replaces both halves of the ai-jail probe: the PATH lookup and
+// the exec. Stubbing only the exec made these tests pass or fail according to
+// whether the machine had ai-jail installed.
+func stubJailProbe(t *testing.T, run func(string) ([]byte, error)) func() {
+	t.Helper()
+	originalLook, originalRun := lookPathCommand, runVersionCommand
+	lookPathCommand = func(command string) (string, error) { return "/bin/" + command, nil }
+	runVersionCommand = run
+	return func() { lookPathCommand, runVersionCommand = originalLook, originalRun }
+}
+
+// resetJailVersionCache clears the memoized probe so a test can drive it.
+func resetJailVersionCache(t *testing.T) {
+	t.Helper()
+	jailVersionCache.once = sync.Once{}
+	jailVersionCache.value = ""
+	t.Cleanup(func() {
+		jailVersionCache.once = sync.Once{}
+		jailVersionCache.value = ""
+	})
+}
+
+// The TUI rebuilds its argv preview through ResolveHostBinaries on every
+// keystroke and throws the result away, so an un-memoized probe would exec
+// ai-jail once per rendered frame — the cost ARCHITECTURE keeps out of the
+// event loop on purpose.
+func TestDetectJailVersionProbesAtMostOncePerProcess(t *testing.T) {
+	resetJailVersionCache(t)
+	calls := 0
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
+		calls++
+		return []byte("ai-jail 1.16.0"), nil
+	})
+	defer restore()
+
+	for i := 0; i < 5; i++ {
+		if got := DetectJailVersion(); got != "1.16.0" {
+			t.Fatalf("DetectJailVersion() = %q; want 1.16.0", got)
+		}
+	}
+	if calls > 1 {
+		t.Errorf("probed %d times; the result is memoized for the process", calls)
+	}
+}
+
+// A failed probe is remembered as "unknown", not retried on every frame, and
+// never mistaken for an old version.
+func TestDetectJailVersionCachesAFailedProbe(t *testing.T) {
+	resetJailVersionCache(t)
+	calls := 0
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
+		calls++
+		return nil, errors.New("boom")
+	})
+	defer restore()
+
+	for i := 0; i < 3; i++ {
+		if got := DetectJailVersion(); got != "" {
+			t.Fatalf("DetectJailVersion() = %q; want empty for a failed probe", got)
+		}
+	}
+	if calls > 1 {
+		t.Errorf("probed %d times after a failure; want the outcome memoized", calls)
 	}
 }
