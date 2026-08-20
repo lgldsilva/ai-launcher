@@ -13,6 +13,19 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — ai-memory 1.25.0 is the new minimum
+
+The catalog now offers Kiro CLI and Command Code as memory-capable agents,
+which needs `ai-memory run kiro` (added upstream in 1.24.0) and
+`ai-memory run command-code` (1.25.0). Pre-flight promises those harnesses
+will launch, and against an older ai-memory the promise turns into an opaque
+`invalid value for '[HARNESS]'` raised *inside* the sandbox, where you never
+see it.
+
+**What you need to do:** upgrade ai-memory to 1.25.0 or newer before taking
+this release. `ai-launcher --doctor` tells you where you stand, and pre-flight
+refuses a launch below the floor rather than letting it fail inside the jail.
+
 ### Changed — the in-image launcher is part of the image tag
 
 Images that embed the ai-launcher binary (release agents, in-image
