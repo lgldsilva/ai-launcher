@@ -39,7 +39,7 @@ func TestBuildRemapsOcWrapperToOpencodeHarness(t *testing.T) {
 		UseJail:    false,
 		UseMemory:  true,
 	})
-	want := []string{"ai-memory", "run", "opencode", "--executable", "/Users/me/.local/bin/oc"}
+	want := []string{"ai-memory", "run", "--executable", "/Users/me/.local/bin/oc", "opencode"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build(oc) = %#v, %v; want %#v", got, err, want)
 	}
@@ -63,7 +63,7 @@ func TestBuildAllOptions(t *testing.T) {
 		Yolo:          true,
 		ExtraArgs:     []string{"--model", "sonnet"},
 	})
-	want := []string{"ai-jail", "--docker", "--no-network", "--ssh", "--rw-map", "/home/lgldsilva/.config/gh", "--gpu", "--map", "/usr/bin", "--map", "/data", "--rw-map", "/work", "ai-memory", "run", "--new", "ws-test", "claude", "--executable", "/usr/bin/claude", "--yolo", "--model", "sonnet"}
+	want := []string{"ai-jail", "--docker", "--no-network", "--ssh", "--rw-map", "/home/lgldsilva/.config/gh", "--gpu", "--map", "/usr/bin", "--map", "/data", "--rw-map", "/work", "ai-memory", "run", "--new", "ws-test", "--executable", "/usr/bin/claude", "claude", "--yolo", "--model", "sonnet"}
 	if err != nil {
 		t.Fatal(err)
 	}

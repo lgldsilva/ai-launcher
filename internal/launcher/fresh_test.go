@@ -20,7 +20,9 @@ func TestFreshIsEmittedAsAWrapperFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	want := []string{"ai-memory", "run", "--fresh", "claude"}
+	// --fresh goes after the harness: ai-jail 1.18 parses this chain and bails
+	// out on any unknown flag before the harness name.
+	want := []string{"ai-memory", "run", "claude", "--fresh"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want %#v", got, want)
 	}
@@ -85,7 +87,7 @@ func TestExecutableDirectoryIsMountedReadOnly(t *testing.T) {
 	}
 	want := []string{
 		"ai-jail", "--no-docker", "--no-network", "--map", "/opt/tools/bin",
-		"ai-memory", "run", "claude", "--executable", "/opt/tools/bin/claude",
+		"ai-memory", "run", "--executable", "/opt/tools/bin/claude", "claude",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want the executable directory mounted read-only:\n%#v", got, want)
