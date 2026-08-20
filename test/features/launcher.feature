@@ -391,6 +391,32 @@ Feature: Launcher command contract
   # the capability unset is therefore not a safe default for this one flag, so
   # the launcher always states it. Every other jail scenario above asserts the
   # --no-docker default; these two lock the ways an operator turns it on.
+  # ai-jail 1.18 forwards a minimal allowlist, so anything the sandbox needs
+  # must be named. The bare --env form keeps values out of the argv.
+  Scenario: Forwards the launcher-owned environment by name
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_env: [AI_MEMORY_AUTH_TOKEN, ANTHROPIC_API_KEY]
+      permissions:
+        jail: true
+        network: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --network
+      --env
+      AI_MEMORY_AUTH_TOKEN
+      --env
+      ANTHROPIC_API_KEY
+      claude
+      """
+
   Scenario: The network permission is the opt-in for outbound access
     Given a launch configuration
       """
