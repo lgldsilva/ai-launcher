@@ -387,22 +387,55 @@ func TestDoctorReturnsErrorWhenUpstreamIsTooOld(t *testing.T) {
 	}
 }
 
-func TestDoctorSucceedsWhenUpstreamMeetsFloor(t *testing.T) {
+// stubUpstreamVersions puts ai-jail and ai-memory stubs reporting the given
+// versions at the front of PATH.
+func stubUpstreamVersions(t *testing.T, versions map[string]string) {
+	t.Helper()
 	binDir := t.TempDir()
-	for _, name := range []string{"ai-jail", "ai-memory"} {
+	for name, want := range versions {
 		path := filepath.Join(binDir, name)
-		script := "#!/bin/sh\necho \"" + name + " version 99.0.0\"\n"
+		script := "#!/bin/sh\necho \"" + name + " version " + want + "\"\n"
 		if err := os.WriteFile(path, []byte(script), 0o700); err != nil { // #nosec G306 -- test stub
 			t.Fatal(err)
 		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestDoctorSucceedsWhenUpstreamMeetsFloor(t *testing.T) {
+	// Inside the validated range on both ends: at the floor, below the ceiling.
+	stubUpstreamVersions(t, map[string]string{
+		"ai-jail":   config.MinAIJailVersion,
+		"ai-memory": config.MinAIMemoryVersion,
+	})
 	out, err := runDryRun(t, "--doctor")
 	if err != nil {
 		t.Fatalf("run(--doctor) error = %v; want success when upstream tools meet the floor", err)
 	}
-	if !strings.Contains(out, "99.0.0") {
+	if !strings.Contains(out, config.MinAIJailVersion) {
 		t.Fatalf("--doctor output = %q; want the detected upstream version", out)
+	}
+	if strings.Contains(out, "untested") {
+		t.Fatalf("--doctor output = %q; a version inside the range must not be reported as untested", out)
+	}
+}
+
+// An upstream above the validated range is reported, not refused: it may well
+// work, and refusing would strand every operator the day upstream ships a
+// release. The exit code is what proves the difference between this and a
+// floor violation.
+func TestDoctorWarnsWithoutFailingAboveTheTestedCeiling(t *testing.T) {
+	stubUpstreamVersions(t, map[string]string{"ai-jail": "99.0.0", "ai-memory": "99.0.0"})
+	out, err := runDryRun(t, "--doctor")
+	if err != nil {
+		t.Fatalf("run(--doctor) error = %v; a newer upstream must warn, not block", err)
+	}
+	if !strings.Contains(out, "ai-jail-version-untested") {
+		t.Fatalf("--doctor output = %q; want the untested code for ai-jail", out)
+	}
+	// The advice has to name what actually breaks, or it is noise.
+	if !strings.Contains(out, "no network") || !strings.Contains(out, "--no-jail") {
+		t.Fatalf("--doctor output = %q; want concrete advice about the 1.18 capability opt-ins", out)
 	}
 }
 

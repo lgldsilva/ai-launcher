@@ -36,9 +36,17 @@ type UpstreamStatus struct {
 	Path    string
 	Version string
 	Minimum string
-	Code    string
-	Missing bool
-	TooOld  bool
+	// Untested is the first version the launcher's argv was not validated
+	// against (exclusive). TooNew reports the installed version reaching it.
+	Untested string
+	Code     string
+	// UntestedCode is the stable code for the TooNew report, kept separate
+	// from Code so a caller can tell "too old to run" from "newer than what
+	// was validated" without parsing the message.
+	UntestedCode string
+	Missing      bool
+	TooOld       bool
+	TooNew       bool
 }
 
 // UpstreamReport probes the upstream CLIs this launcher composes with and
@@ -55,15 +63,23 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 	}
 	report := make([]UpstreamStatus, 0, 2)
 	if goos != config.PlatformWindows {
-		report = append(report, probeUpstream(lookPath, config.AIJailCommand, config.MinAIJailVersion, "ai-jail-version-too-old"))
+		report = append(report, probeUpstream(lookPath, config.AIJailCommand,
+			config.MinAIJailVersion, config.UntestedAIJailVersion,
+			"ai-jail-version-too-old", "ai-jail-version-untested"))
 	}
-	report = append(report, probeUpstream(lookPath, config.AIMemoryCommand, config.MinAIMemoryVersion, "ai-memory-version-too-old"))
+	report = append(report, probeUpstream(lookPath, config.AIMemoryCommand,
+		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
+		"ai-memory-version-too-old", "ai-memory-version-untested"))
 	return report
 }
 
-// probeUpstream resolves one tool and reads its --version output.
-func probeUpstream(lookPath func(string) (string, error), command, minimum, code string) UpstreamStatus {
-	status := UpstreamStatus{Command: command, Minimum: minimum, Code: code}
+// probeUpstream resolves one tool and reads its --version output. untested is
+// an exclusive bound: an install at or above it is flagged TooNew.
+func probeUpstream(lookPath func(string) (string, error), command, minimum, untested, code, untestedCode string) UpstreamStatus {
+	status := UpstreamStatus{
+		Command: command, Minimum: minimum, Untested: untested,
+		Code: code, UntestedCode: untestedCode,
+	}
 	path, err := lookPath(command)
 	if err != nil {
 		status.Missing = true
@@ -75,7 +91,11 @@ func probeUpstream(lookPath func(string) (string, error), command, minimum, code
 		return status
 	}
 	status.Version = semverPattern.FindString(string(output))
-	status.TooOld = status.Version != "" && compareVersions(status.Version, minimum) < 0
+	if status.Version == "" {
+		return status
+	}
+	status.TooOld = compareVersions(status.Version, minimum) < 0
+	status.TooNew = untested != "" && compareVersions(status.Version, untested) >= 0
 	return status
 }
 
