@@ -83,6 +83,53 @@ func Environment(cfg LaunchConfig) []string {
 	return env
 }
 
+// JailEnvPassthrough returns the environment variable names the sandbox must
+// receive, in a stable order and filtered to those actually present in env.
+//
+// ai-jail 1.18 replaced full environment inheritance with a minimal allowlist
+// (PATH, HOME, TERM, LANG, SHELL, TMPDIR, COLORTERM, the SSL_CERT_* and proxy
+// variables, plus the LC_*, XDG_* and TERM_PROGRAM families). Everything else
+// is dropped unless named. For this launcher that silently took out the three
+// AI_MEMORY_* variables it owns — invariants 7 and 8 are implemented *through*
+// the environment — along with the agent credential-store override and every
+// vendor API key.
+//
+// The list is derived from ownedMemoryEnvKeys and the same catalog the rest of
+// the launch reads, rather than being written out a second time, because two
+// hand-maintained lists diverge on the first variable somebody adds.
+//
+// Filtering to what exists keeps --dry-run readable: ai-jail ignores a name
+// that is absent from its own environment, but an argv listing thirty
+// variables nobody set is noise in the one place an operator reads the
+// composed command.
+func JailEnvPassthrough(cfg LaunchConfig, env []string) []string {
+	names := make([]string, 0, len(ownedMemoryEnvKeys)+len(cfg.Agent.EnvPassthrough)+1)
+	if cfg.UseMemory {
+		names = append(names, ownedMemoryEnvKeys...)
+	}
+	if key, _ := AgentCredentialStoreEnv(cfg.Agent, runtimeGOOS()); key != "" {
+		names = append(names, key)
+	}
+	names = append(names, cfg.Agent.EnvPassthrough...)
+
+	seen := make(map[string]struct{}, len(names))
+	present := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate {
+			continue
+		}
+		seen[name] = struct{}{}
+		if envHas(env, name) {
+			present = append(present, name)
+		}
+	}
+	return present
+}
+
 // envHas reports whether env already contains a value for key.
 func envHas(env []string, key string) bool {
 	prefix := key + "="

@@ -125,6 +125,7 @@ func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) [
 	}
 	command = appendDockerDecision(command, cfg)
 	command = appendNetworkDecision(command, cfg)
+	command = appendEnvPassthrough(command, cfg)
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
 	if cfg.UseMemory {
@@ -175,6 +176,9 @@ func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
 	}
 	if cfg.UseJail && strings.TrimSpace(cfg.JailVersion) == "" {
 		cfg.JailVersion = DetectJailVersion()
+	}
+	if cfg.UseJail && cfg.JailEnv == nil {
+		cfg.JailEnv = JailEnvPassthrough(cfg, Environment(cfg))
 	}
 	if !cfg.UseJail || !cfg.UseMemory || strings.TrimSpace(cfg.MemoryExecutable) != "" {
 		return cfg
@@ -241,6 +245,25 @@ func appendHostDirMount(command []string, path string, mounts []config.Mount, re
 		}
 	}
 	return append(command, "--map", dir)
+}
+
+// appendEnvPassthrough forwards the environment variables the sandbox needs,
+// one `--env NAME` per name.
+//
+// The bare form is load-bearing. `--env NAME=VALUE` would put the value in the
+// argv, and one of these names is AI_MEMORY_AUTH_TOKEN — a bearer secret that
+// invariant 7 keeps out of logs and process listings. Given a bare name,
+// ai-jail copies the value from its own environment, which is the environment
+// Environment() built for it, so the secret travels the same way it always did
+// and the composed command stays safe to print.
+//
+// --inherit-env is deliberately never emitted: it would hand the sandbox every
+// secret in the operator's shell and undo the reason 1.18 made this explicit.
+func appendEnvPassthrough(command []string, cfg LaunchConfig) []string {
+	for _, name := range cfg.JailEnv {
+		command = append(command, "--env", name)
+	}
+	return command
 }
 
 // appendNetworkDecision emits exactly one of --network / --no-network, always,
