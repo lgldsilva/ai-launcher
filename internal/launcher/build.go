@@ -141,14 +141,31 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		command = append(command, memoryCommand(cfg), "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
-		if cfg.Fresh {
-			command = append(command, "--fresh")
+		// --executable goes BEFORE the harness and --fresh AFTER it, and the
+		// order is a contract with ai-jail, not a style choice.
+		//
+		// ai-jail 1.18 parses this very chain (command::managed_harness) to
+		// decide which agent state to mount under --agent-state and which
+		// executables private home must keep visible. That parser is
+		// deliberately strict: it accepts five value options before the
+		// harness — --workspace, --project, --workstream, --new, --executable
+		// — and bails out on any other token starting with "-", falling back
+		// to the outer command name. It also stops at the harness, so an
+		// --executable after it is never read.
+		//
+		// The launcher used to emit --fresh before the harness and
+		// --executable after it, so with --fresh the chain went unrecognised
+		// and the agent silently lost its state mounts. ai-memory accepts both
+		// positions — it extracts exact wrapper flags from the native
+		// arguments — so this order satisfies both tools.
+		if resolved := resolveHostPath(cfg.Executable); resolved != "" {
+			command = append(command, "--executable", resolved)
 		}
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
-		if resolved := resolveHostPath(cfg.Executable); resolved != "" {
-			command = append(command, "--executable", resolved)
+		if cfg.Fresh {
+			command = append(command, "--fresh")
 		}
 	} else {
 		executable := cfg.Agent.Command

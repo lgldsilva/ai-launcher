@@ -219,7 +219,10 @@ func TestProfileWithoutOptionsKeepsLocalOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	if !strings.HasPrefix(out, "ai-memory run opencode") {
+	// The point is that the memory wrapper survived the profile, not where the
+	// harness sits: --executable is emitted before it so ai-jail can parse the
+	// chain, which is asserted by the argv-order tests instead.
+	if !strings.HasPrefix(out, "ai-memory run") || !strings.Contains(out, "opencode") {
 		t.Fatalf("dry-run = %q; want local memory option retained by a profile without options", out)
 	}
 }
