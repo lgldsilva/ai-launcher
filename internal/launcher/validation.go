@@ -327,21 +327,35 @@ func dockerIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Iss
 	return nil
 }
 
-// allowTCPPortIssues warns when allow_tcp_ports is configured without
-// lockdown. ai-jail classifies --allow-tcp-port as lockdown-only, so the
-// builder emits the flags but upstream silently ignores them — the operator
-// believes ports are open when nothing is.
+// allowTCPPortIssues refuses a launch that would carry --allow-tcp-port.
+//
+// This used to be a warning, and it used to be about lockdown: through
+// ai-jail 1.17.x the flag was lockdown-only and silently ignored otherwise,
+// so the operator believed ports were open when nothing was. From 1.18.0 the
+// flag fails closed — ai-jail aborts the launch outright, with or without
+// lockdown, because UDP cannot be constrained through that interface. Verified
+// against 1.18.2:
+//
+//	✗ --allow-tcp-port is disabled because UDP cannot be isolated;
+//	  use explicit --network for unrestricted network access
+//
+// Since the supported floor is 1.18.2, there is no version left where the
+// flag does anything but stop the launch, so pre-flight says so first — with
+// the launcher's own message rather than one raised inside the wrapper.
+//
+// The message names the project .ai-jail too: ai-jail merges its
+// allow_tcp_ports with the CLI's, so the ports can come from a file the
+// launcher does not control, and an operator who clears jail_flags and keeps
+// failing needs to know where else to look.
 func allowTCPPortIssues(cfg LaunchConfig) []Issue {
 	if !cfg.UseJail || len(cfg.JailFlags.AllowTCPPorts) == 0 {
 		return nil
 	}
-	if cfg.JailFlags.Lockdown != nil && *cfg.JailFlags.Lockdown {
-		return nil
-	}
 	return []Issue{{
-		Code:    "allow-tcp-ports-without-lockdown",
-		Message: "allow_tcp_ports only takes effect with lockdown enabled; ai-jail ignores --allow-tcp-port otherwise",
-		Warning: true,
+		Code: "allow-tcp-ports-unsupported",
+		Message: "ai-jail refuses to launch with --allow-tcp-port (UDP cannot be constrained through it); " +
+			"remove jail_flags.allow_tcp_ports — and check the project .ai-jail, whose ports are merged in — " +
+			"and use the network permission for outbound access",
 	}}
 }
 
