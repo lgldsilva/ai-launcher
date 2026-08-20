@@ -57,7 +57,7 @@ func TestWorkspaceProjectAndWorkstreamForwarding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := "ai-memory run --workspace acme --project billing --workstream release-1 opencode --executable " + stubPath(t, "custom-cli")
+	want := "ai-memory run --workspace acme --project billing --workstream release-1 --executable " + stubPath(t, "custom-cli") + " opencode"
 	if strings.TrimSpace(out) != want {
 		t.Fatalf("dry-run = %q; want %q", out, want)
 	}
@@ -69,7 +69,7 @@ func TestNewWorkstreamStillCreates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	if strings.TrimSpace(out) != "ai-memory run --new fresh opencode --executable "+stubPath(t, "custom-cli") {
+	if strings.TrimSpace(out) != "ai-memory run --new fresh --executable "+stubPath(t, "custom-cli")+" opencode" {
 		t.Fatalf("--new dry-run = %q", out)
 	}
 }

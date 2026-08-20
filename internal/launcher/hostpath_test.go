@@ -78,8 +78,8 @@ func TestMemoryExecutableDirectoryIsMapped(t *testing.T) {
 		"--no-network",
 		"--map", "/opt/mem/bin",
 		"--map", "/opt/agents",
-		"/opt/mem/bin/ai-memory", "run", "claude",
-		"--executable", "/opt/agents/claude",
+		"/opt/mem/bin/ai-memory", "run",
+		"--executable", "/opt/agents/claude", "claude",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Build() = %#v; want %#v", got, want)
