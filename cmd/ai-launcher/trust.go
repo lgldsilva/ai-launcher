@@ -32,6 +32,7 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 	if trust.optionsRaw {
 		trust.jail = raw.Options.Jail
 		trust.docker = raw.Options.Docker || hasContainerResources(raw.Options)
+		trust.dockerReason = dockerBackendReason(raw.Options)
 		trust.yolo = raw.Options.Yolo
 		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
 		trust.jailFlags = raw.Options.JailFlags
@@ -88,7 +89,8 @@ type localTrust struct {
 	agentKnown          bool
 	fromFile            bool // false once --agent was given: the operator's own choice.
 	jail                bool
-	docker              bool // container backend requested by the file
+	docker              bool   // container backend requested by the file
+	dockerReason        string // the file key that requested it, for the refusal message
 	mounts              []config.Mount
 	rawPermissions      map[string]bool           // permissions from file (profile may overwrite)
 	yolo                bool                      // file value when profile does not own options
@@ -229,14 +231,31 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 func enforceDockerBackendConsent(flags *flag.FlagSet, trust localTrust) error {
 	if trust.optionsRaw && trust.docker &&
 		!flagsWasSet(flags, "docker-backend") && !flagsWasSet(flags, "container-runtime") && !containerResourceFlagSet(flags) {
-		return errors.New("local config enables the docker container backend (options.docker: true) " +
-			"without operator consent; pass --docker-backend or --container-runtime to accept explicitly, or save the selection")
+		return fmt.Errorf("local config enables the docker container backend (%s) "+
+			"without operator consent; pass --docker-backend or --container-runtime to accept explicitly, or save the selection",
+			trust.dockerReason)
 	}
 	return nil
 }
 
+// dockerBackendReason names the workspace-file key that asked for the container
+// backend, so the refusal points at the line the operator has to look at. The
+// message used to say "options.docker: true" unconditionally, which sent
+// anyone whose file selected the backend through options.services or a
+// resource limit looking for a key that is not there.
+func dockerBackendReason(options config.Options) string {
+	switch {
+	case options.Docker:
+		return "options.docker: true"
+	case len(options.Services) > 0:
+		return "options.services: " + strings.Join(options.Services, ", ")
+	default:
+		return "container resources under options"
+	}
+}
+
 func containerResourceFlagSet(flags *flag.FlagSet) bool {
-	for _, name := range []string{"container-memory", "cpus", "pids", "publish", "service-port", "network", "container-context"} {
+	for _, name := range []string{"container-memory", "cpus", "pids", "publish", "service", "service-port", "network", "container-context"} {
 		if flagsWasSet(flags, name) {
 			return true
 		}

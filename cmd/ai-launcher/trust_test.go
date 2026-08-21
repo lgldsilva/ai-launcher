@@ -549,6 +549,51 @@ func TestLocalConfigCannotEnableDockerBackendOnItsOwn(t *testing.T) {
 	}
 }
 
+// options.services selects the container backend just as surely as
+// options.docker does: resolveLaunchInputs turns a non-empty selection into
+// Docker = true, Jail = false. The consent gate ran before that rewrite and
+// only looked at options.docker and the resource limits, so a repository file
+// swapped ai-jail for a container by naming a service instead of the toggle.
+func TestLocalConfigCannotEnableDockerBackendThroughServices(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  stacks: [go]\n  services: [postgres]\n")
+	stubToolsOnPath(t, "docker")
+	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--workspace", "/w", "--dry-run")
+	if err == nil {
+		t.Fatal("run() = nil; a local config selecting services must be refused")
+	}
+	if !strings.Contains(err.Error(), "options.services") {
+		t.Errorf("error = %v; want the refusal naming options.services, not options.docker", err)
+	}
+	// The operator's own --service is explicit consent, like --docker-backend.
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--service", "postgres", "--workspace", "/w", "--dry-run"); err != nil {
+		t.Fatalf("run() error = %v; an explicit --service must still work", err)
+	}
+}
+
+// The refusal has to name the key the operator can actually find in the file.
+func TestDockerBackendReasonNamesTheFileKey(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		options config.Options
+		want    string
+	}{
+		{"toggle", config.Options{Docker: true}, "options.docker: true"},
+		{"services", config.Options{Services: []string{"postgres", "redis"}}, "options.services: postgres, redis"},
+		{"resources", config.Options{ContainerMemory: "2g"}, "container resources under options"},
+		// The toggle wins when both are present: it is the direct statement.
+		{"both", config.Options{Docker: true, Services: []string{"postgres"}}, "options.docker: true"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dockerBackendReason(tt.options); got != tt.want {
+				t.Errorf("dockerBackendReason() = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // The same docker choice saved by the operator becomes trusted input, exactly
 // like jail: false is honored after --save.
 func TestSavedLocalConfigHonorsDockerBackend(t *testing.T) {

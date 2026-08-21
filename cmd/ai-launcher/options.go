@@ -208,11 +208,18 @@ func (o *cliOptions) applyResourceFlags(flags *flag.FlagSet, local *config.Local
 	return nil
 }
 
+// hasContainerResources reports whether options ask for the container backend
+// through something other than the `docker` toggle itself. Services belong in
+// this list: resolveLaunchInputs turns a non-empty selection into
+// `Docker = true, Jail = false`, so a file naming one swaps the sandbox exactly
+// like `docker: true` does. Leaving it out let a workspace file replace ai-jail
+// with a container without ever reaching enforceDockerBackendConsent.
 func hasContainerResources(options config.Options) bool {
 	return strings.TrimSpace(options.ContainerMemory) != "" ||
 		strings.TrimSpace(options.ContainerCPUs) != "" ||
 		options.ContainerPIDs != 0 || len(options.ContainerPorts) > 0 ||
-		strings.TrimSpace(options.ContainerNetwork) != "" || len(options.ContainerServicePorts) > 0
+		strings.TrimSpace(options.ContainerNetwork) != "" ||
+		len(options.ContainerServicePorts) > 0 || len(options.Services) > 0
 }
 
 func (o *cliOptions) applyServicePortFlags(flags *flag.FlagSet, local *config.Local) error {
