@@ -13,6 +13,19 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — generated container services are hardened with `cap_drop: [ALL]`
+
+Every generated service — the plain `docker run` agent, Compose services,
+and the egress proxy — now launches with all Linux capabilities dropped and
+`no-new-privileges` set (`--cap-drop=ALL` /
+`--security-opt=no-new-privileges:true`, or the Compose equivalents). The
+agent already runs as a non-root user and needs nothing handed back; the
+squid egress proxy and catalog services start as root to drop privileges,
+so they get exactly the capabilities that drop requires via `cap_add`
+(`SETGID SETUID` for squid, `CHOWN SETGID SETUID` for catalog services).
+The dangerous capabilities (SYS_ADMIN, NET_ADMIN, SYS_PTRACE, …) stay
+dropped. No action needed on upgrade.
+
 ### Added — `container_host_gateway` is configurable from the TUI and CLI
 
 The host-gateway toggle (`host.docker.internal` mapped into the container)

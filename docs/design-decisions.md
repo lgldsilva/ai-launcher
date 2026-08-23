@@ -362,6 +362,26 @@ of opening the door" philosophy already applied to the *inbound*
 section: "run a host-side MCP HTTP/SSE proxy... do not use `--network host`
 and do not mount the Docker socket"), now applied outbound.
 
+**Limitations — what the allowlist does NOT cover.** The proxy is an HTTP/HTTPS
+egress control, not a complete isolation boundary, and three gaps are inherent
+to the design rather than bugs: (1) **DNS is not constrained** — the generated
+network is `internal: true`, which removes the default gateway, but Docker's
+embedded resolver (`127.0.0.11`) still forwards queries to the host DNS, so a
+compromised agent can exfiltrate data encoded in domain-name lookups (DNS
+tunneling). An operator who needs a DNS boundary must add a filtering
+resolver; the launcher does not. (2) **HTTPS is tunneled, not inspected** — the
+squid ACL matches the destination of the `CONNECT` (the allowlisted domain) and
+then the TLS session passes through opaquely; there is no SNI or payload
+inspection, so traffic to an *allowed* host is not further filtered. (3) **The
+proxy is the default route, not a forced one** — the agent's
+`HTTP_PROXY`/`HTTPS_PROXY` is injected, but an operator's explicit
+`container_environment` entry for those vars wins (intentional — see
+`BuildCompose`'s overlay order); combined with the **default-on** host
+gateway, a malicious config could repoint the agent at a host-side proxy with
+open egress. Treat the allowlist as defense in depth, not a hard boundary: the
+strongest posture is `container_network_internal: true` + the allowlist +
+`container_host_gateway: false` + no `container_environment` proxy override.
+
 **Why the proxy is not a catalog `Service`.** The infrastructure catalog
 (`internal/container/services.go`, postgres/redis/etc.) is a user-selectable
 TUI picklist; an auto-injected security proxy does not belong there — it

@@ -211,6 +211,14 @@ func BuildRunCommand(cfg RunConfig) ([]string, error) {
 		argv = append(argv, "-i")
 	}
 	argv = appendResourceFlags(argv, cfg)
+	// Same hardening baseline every Compose service carries, as docker run
+	// flags: cap_drop ALL strips Docker's default capability set and
+	// no-new-privileges blocks setuid escalation. The agent runs as a non-root
+	// --user, so it needs no cap_add — it never starts as root, so it has no
+	// privileges to drop. This closes the gap where only the Compose path was
+	// hardened and a plain `docker run` launch (no services) kept every default
+	// capability.
+	argv = appendSecurityFlags(argv)
 	if cfg.UID > 0 || cfg.GID > 0 {
 		argv = append(argv, "--user", fmt.Sprintf("%d:%d", cfg.UID, cfg.GID))
 	}
@@ -421,6 +429,19 @@ func appendResourceFlags(argv []string, cfg RunConfig) []string {
 		argv = append(argv, "--network", value)
 	}
 	return argv
+}
+
+// appendSecurityFlags applies the hardening baseline every Compose service also
+// gets, as docker run flags. cap_drop ALL removes Docker's default Linux
+// capability set and security_opt no-new-privileges:true blocks setuid-based
+// privilege escalation. The agent runs as a non-root --user, so unlike the
+// egress proxy and catalog services (which start as root and drop) it needs no
+// cap_add here. See hardenedServiceSecurity for the Compose-side twin.
+func appendSecurityFlags(argv []string) []string {
+	return append(argv,
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges:true",
+	)
 }
 
 // mountSpec renders a -v spec: same-path with the requested mode. The

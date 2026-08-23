@@ -35,6 +35,10 @@ type ComposeService struct {
 	WorkingDir  string            `yaml:"working_dir,omitempty"`
 	User        string            `yaml:"user,omitempty"`
 	GroupAdd    []string          `yaml:"group_add,omitempty"`
+	CapDrop     []string          `yaml:"cap_drop,omitempty"`
+	CapAdd      []string          `yaml:"cap_add,omitempty"`
+	SecurityOpt []string          `yaml:"security_opt,omitempty"`
+	ReadOnly    bool              `yaml:"read_only,omitempty"`
 	Ports       []string          `yaml:"ports,omitempty"`
 	Volumes     []string          `yaml:"volumes,omitempty"`
 	Environment map[string]string `yaml:"environment,omitempty"`
@@ -48,6 +52,19 @@ type ComposeService struct {
 	TTY         bool              `yaml:"tty,omitempty"`
 	Restart     string            `yaml:"restart,omitempty"`
 	Healthcheck map[string]any    `yaml:"healthcheck,omitempty"`
+}
+
+// hardenedServiceSecurity returns the Docker security labels every generated
+// service carries: cap_drop ALL strips Docker's default Linux capability set,
+// and security_opt no-new-privileges:true blocks setuid-based privilege
+// escalation. Together they bring the docker backend closer to the
+// seccomp/landlock hardening the ai-jail path gets from its sandbox. The agent
+// runs as a non-root user and infrastructure services run as their image's own
+// user, so cap_drop ALL is safe; a service that genuinely needs a capability
+// (for example CAP_NET_BIND_SERVICE to bind a privileged port) gets it back via
+// cap_add on top of this baseline.
+func hardenedServiceSecurity() (capDrop, securityOpt []string) {
+	return []string{"ALL"}, []string{"no-new-privileges:true"}
 }
 
 // ComposeNetwork describes a named compose network. Internal, when true, is
@@ -321,6 +338,17 @@ func ComposeServiceFromCatalog(service Service, networkName string) (ComposeServ
 		DependsOn:   append([]string(nil), service.DependsOn...),
 		Restart:     "no",
 	}
+	compose.CapDrop, compose.SecurityOpt = hardenedServiceSecurity()
+	// Catalog services are third-party images. Most start as root, chown their
+	// data directory, and drop to an unprivileged user via setgid/setuid
+	// (postgres, redis, mongo, …), so cap_drop ALL alone removes the three
+	// capabilities that startup needs (CHOWN, SETGID, SETUID) and aborts it —
+	// confirmed by the behavioral integration tests for redis (chown) and the
+	// egress proxy (setgid/setuid). Hand exactly those three back. The
+	// dangerous capabilities (SYS_ADMIN, NET_ADMIN, SYS_PTRACE, …) stay
+	// dropped; a service that needs one of those is the exception and should
+	// add its own cap_add on top of this baseline, validated by a test.
+	compose.CapAdd = []string{"CHOWN", "SETGID", "SETUID"}
 	if command := strings.TrimSpace(service.Healthcheck); command != "" {
 		compose.Healthcheck = map[string]any{
 			"test": []string{composeHealthcheckShell, command},
@@ -374,6 +402,7 @@ func ComposeServiceFromRunConfig(cfg RunConfig, command []string, networkName st
 	compose.Volumes = composeRunVolumes(cfg, runtime)
 	compose.Environment = composeRunEnvironment(cfg, runtime)
 	compose.ExtraHosts = composeRunExtraHosts(cfg, runtime)
+	compose.CapDrop, compose.SecurityOpt = hardenedServiceSecurity()
 	return compose, nil
 }
 
