@@ -42,6 +42,24 @@ mutants to execute. The mutator itself is pinned by image digest in the
 Makefile; Docker remains an explicit prerequisite whenever mutation is
 applicable.
 
+### Behavioral container tests (opt-in, local)
+
+The egress proxy and the catalog hardening have behavioral integration tests
+behind the `container_integration` build tag — they start real containers and
+assert the proxy enforces its allowlist and that `cap_drop`/`cap_add` does not
+abort redis/postgres startup. They are excluded from `make test` and from the
+coverage gate on purpose (they need Docker and network). Run them locally where
+Docker is available; they skip cleanly when it is not:
+
+```
+go test -tags container_integration ./internal/container/
+```
+
+CI does not run them today (no Docker-in-CI job yet). They are the runnable
+form of the "verified end-to-end" claims in the egress-proxy and hardening
+work; keep them green when changing the proxy image, the squid.conf generator,
+or the service hardening baseline.
+
 The `sonar` job is **gated on the `SONAR_TOKEN` secret**: every step skips
 cleanly while the secret does not exist, so forks and early setup stay green.
 `SONAR_TOKEN` is injected only into the scan action — never the coverage/
