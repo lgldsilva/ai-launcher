@@ -42,12 +42,24 @@ func TestExecutableSymlinkMapsTargetDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(got, " ")
-	if !strings.Contains(joined, "--map "+realDir) {
+	if !strings.Contains(joined, "--map "+canonical(t, realDir)) {
 		t.Fatalf("must map the symlink target dir, got %s", joined)
 	}
-	if !strings.Contains(joined, "--executable "+real) {
+	if !strings.Contains(joined, "--executable "+canonical(t, real)) {
 		t.Fatalf("must pass the resolved binary, got %s", joined)
 	}
+}
+
+// canonical resolves symlinks in a fixture path: macOS maps /var to
+// /private/var, and the launcher canonicalizes host paths before mounting,
+// so expectations must compare against the resolved form.
+func canonical(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 func TestMemoryExecutableDirectoryIsMapped(t *testing.T) {
@@ -107,8 +119,8 @@ func TestResolveHostBinariesFillsMemoryAfterJailToggle(t *testing.T) {
 	}
 
 	got := ResolveHostBinaries(LaunchConfig{UseJail: true, UseMemory: true})
-	if got.MemoryExecutable != stub {
-		t.Fatalf("MemoryExecutable = %q; want %q", got.MemoryExecutable, stub)
+	if got.MemoryExecutable != canonical(t, stub) {
+		t.Fatalf("MemoryExecutable = %q; want %q", got.MemoryExecutable, canonical(t, stub))
 	}
 }
 
@@ -127,8 +139,8 @@ func TestResolveHostBinariesFollowsExecutableSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := ResolveHostBinaries(LaunchConfig{Executable: link})
-	if got.Executable != real {
-		t.Fatalf("Executable = %q; want resolved %q", got.Executable, real)
+	if got.Executable != canonical(t, real) {
+		t.Fatalf("Executable = %q; want resolved %q", got.Executable, canonical(t, real))
 	}
 }
 
@@ -152,8 +164,8 @@ func TestResolveHostBinariesFollowsMemorySymlink(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 	got := ResolveHostBinaries(LaunchConfig{UseJail: true, UseMemory: true})
-	if got.MemoryExecutable != real {
-		t.Fatalf("MemoryExecutable = %q; want resolved %q", got.MemoryExecutable, real)
+	if got.MemoryExecutable != canonical(t, real) {
+		t.Fatalf("MemoryExecutable = %q; want resolved %q", got.MemoryExecutable, canonical(t, real))
 	}
 }
 

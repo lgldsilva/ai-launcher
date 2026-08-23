@@ -35,13 +35,19 @@ func stubToolsOnPath(t *testing.T, names ...string) string {
 
 // stubPath resolves a stub installed by stubToolsOnPath. A resolvable harness
 // is invoked through its absolute path, so that is what the argv carries.
+// The launcher canonicalizes the executable (macOS resolves /var to
+// /private/var), so the expectation must be canonical too.
 func stubPath(t *testing.T, name string) string {
 	t.Helper()
 	path, err := exec.LookPath(name)
 	if err != nil {
 		t.Fatalf("stub %q is not on PATH: %v", name, err)
 	}
-	return path
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 // execMountArgv is the read-only map of the directory holding the resolved
