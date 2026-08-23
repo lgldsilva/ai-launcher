@@ -611,3 +611,113 @@ func TestMaterializeComposeResolvesEmptyProjectDir(t *testing.T) {
 		t.Fatalf("compose file not materialized under cwd: %v", err)
 	}
 }
+
+// assertHardened is the shared predicate for the security baseline every
+// generated service carries: cap_drop ALL (the default Docker capability set
+// stripped) plus security_opt no-new-privileges:true (no setuid escalation).
+// It is the docker backend's analogue of the seccomp/landlock hardening the
+// ai-jail path gets from its sandbox.
+func assertHardened(t *testing.T, label string, svc ComposeService) {
+	t.Helper()
+	if len(svc.CapDrop) != 1 || svc.CapDrop[0] != "ALL" {
+		t.Errorf("%s CapDrop = %#v; want [ALL]", label, svc.CapDrop)
+	}
+	found := false
+	for _, opt := range svc.SecurityOpt {
+		if opt == "no-new-privileges:true" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("%s SecurityOpt = %#v; want to contain no-new-privileges:true", label, svc.SecurityOpt)
+	}
+}
+
+// TestEveryGeneratedServiceIsHardened is the property test that locks the
+// hardening baseline across every constructor that produces a ComposeService:
+// every catalog service, the agent (ComposeServiceFromRunConfig), and the
+// egress proxy. If a new service or constructor is added without the baseline,
+// this fails; if hardenedServiceSecurity is weakened, every arm fails. The
+// proxy needs cap_add SETGID/SETUID to drop from root, and catalog services
+// additionally need CHOWN to set up their data dir — both validated
+// behaviorally by the container_integration suite.
+func TestEveryGeneratedServiceIsHardened(t *testing.T) {
+	t.Run("catalog services", func(t *testing.T) {
+		for _, id := range ServiceIDs() {
+			service, ok := ServiceByID(id)
+			if !ok {
+				t.Fatalf("ServiceByID(%q) not found", id)
+			}
+			svc, err := ComposeServiceFromCatalog(service, "ai-launcher")
+			if err != nil {
+				t.Fatalf("ComposeServiceFromCatalog(%q) error = %v", id, err)
+			}
+			assertHardened(t, "catalog:"+id, svc)
+			// Catalog services chown their data dir and drop privileges, so the
+			// minimal cap_add set is CHOWN + SETGID + SETUID (validated for redis
+			// and postgres by the container_integration suite).
+			if len(svc.CapAdd) != 3 || svc.CapAdd[0] != "CHOWN" || svc.CapAdd[1] != "SETGID" || svc.CapAdd[2] != "SETUID" {
+				t.Errorf("catalog:%s CapAdd = %#v; want [CHOWN SETGID SETUID]", id, svc.CapAdd)
+			}
+		}
+	})
+
+	t.Run("agent service", func(t *testing.T) {
+		svc, err := ComposeServiceFromRunConfig(RunConfig{
+			ProjectDir:      "/project",
+			AgentExecutable: "claude",
+			Selection:       Selection{Agents: []AgentInstall{{Version: "1.0.0"}}},
+		}, []string{"claude"}, "ai-launcher")
+		if err != nil {
+			t.Fatalf("ComposeServiceFromRunConfig() error = %v", err)
+		}
+		assertHardened(t, "agent", svc)
+		if svc.ReadOnly {
+			t.Error("agent ReadOnly = true; the agent writes to /tmp and its working directory and cannot be read-only")
+		}
+	})
+
+	t.Run("egress proxy", func(t *testing.T) {
+		svc, err := EgressProxyComposeService("/data/egress-proxy/squid.conf", "ai-launcher", "ai-launcher-egress")
+		if err != nil {
+			t.Fatalf("EgressProxyComposeService() error = %v", err)
+		}
+		assertHardened(t, "egress-proxy", svc)
+		// squid starts as root and drops to its "proxy" user via setgid/setuid,
+		// so it needs exactly those two capabilities handed back on top of
+		// cap_drop ALL — see EgressProxyComposeService's doc comment.
+		if len(svc.CapAdd) != 2 || svc.CapAdd[0] != "SETGID" || svc.CapAdd[1] != "SETUID" {
+			t.Errorf("egress-proxy CapAdd = %#v; want [SETGID SETUID]", svc.CapAdd)
+		}
+		if svc.ReadOnly {
+			t.Error("egress-proxy ReadOnly = true; squid writes pid/cache state and cannot run read-only")
+		}
+	})
+}
+
+// TestRenderedComposeCarriesHardening confirms the omitempty security fields
+// actually reach the rendered YAML (a struct field that never marshals would
+// make assertHardened pass while the running container stayed unhardened).
+func TestRenderedComposeCarriesHardening(t *testing.T) {
+	file := NewComposeFile()
+	file.Networks["ai-launcher"] = ComposeNetwork{Driver: "bridge"}
+	agent, err := ComposeServiceFromRunConfig(RunConfig{
+		ProjectDir:      "/project",
+		AgentExecutable: "claude",
+		Selection:       Selection{Agents: []AgentInstall{{Version: "1.0.0"}}},
+	}, []string{"claude"}, "ai-launcher")
+	if err != nil {
+		t.Fatalf("ComposeServiceFromRunConfig() error = %v", err)
+	}
+	file.Services["agent"] = agent
+	rendered, err := RenderCompose(file)
+	if err != nil {
+		t.Fatalf("RenderCompose() error = %v", err)
+	}
+	for _, want := range []string{"cap_drop:", "- ALL", "no-new-privileges:true"} {
+		if !strings.Contains(string(rendered), want) {
+			t.Errorf("rendered compose missing %q:\n%s", want, rendered)
+		}
+	}
+}

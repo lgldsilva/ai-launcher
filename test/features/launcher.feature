@@ -929,6 +929,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       -w
       /work/project
       -v
@@ -1008,6 +1010,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       -e
       HOME=/home/tester
       -w
@@ -1058,6 +1062,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       --group-add
       20
       -e
@@ -1134,6 +1140,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       -e
       HOME=/home/tester
       -w
@@ -1204,6 +1212,8 @@ Feature: Launcher command contract
       3000:3000
       --network
       bridge
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       -w
       /work
       -v
@@ -1231,6 +1241,8 @@ Feature: Launcher command contract
       -it
       --network
       host
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       -w
       /work
       -v
@@ -1256,6 +1268,8 @@ Feature: Launcher command contract
       run
       --rm
       -it
+      --cap-drop=ALL
+      --security-opt=no-new-privileges:true
       -w
       /work
       -v

@@ -293,7 +293,18 @@ root on the host, and the launcher's `DeniedMount` gate refuses the socket
 from untrusted configs). The generated image includes the Docker CLI and runs
 the agent as `ai-launcher`, outside /root; when the socket is mounted, its
 numeric group is added as a supplemental group so the non-root process can
-use it. No Docker daemon is started inside the agent image. The shared
+use it. Every generated service is hardened with `cap_drop: [ALL]` and
+`security_opt: [no-new-privileges:true]`, bringing the docker backend closer
+to the seccomp/landlock baseline the ai-jail path gets from its sandbox. The
+agent (which already runs as a non-root user) needs no capabilities handed
+back; the egress proxy and each infrastructure service start as root and drop
+privileges, so they get exactly the capabilities that drop requires handed
+back via `cap_add` — `SETGID SETUID` for the squid proxy and
+`CHOWN SETGID SETUID` for catalog services (which also chown their data
+directory on first start), each set pinned by a behavioral integration test.
+The dangerous capabilities (SYS_ADMIN, NET_ADMIN, SYS_PTRACE, …) stay dropped.
+No Docker daemon is started
+inside the agent image. The shared
 development profile includes Git, SSH tooling, `jq`, `yq`, `ripgrep`, `fd`,
 archive tools, and the Docker CLI.
 

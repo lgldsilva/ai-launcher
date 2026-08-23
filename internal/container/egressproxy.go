@@ -127,6 +127,7 @@ func EgressProxyComposeService(configPath, internalNetwork, egressNetwork string
 	if strings.TrimSpace(egressNetwork) == "" {
 		return ComposeService{}, fmt.Errorf("egress proxy egress network is required")
 	}
+	capDrop, securityOpt := hardenedServiceSecurity()
 	return ComposeService{
 		Image:    EgressProxyImage,
 		Volumes:  []string{configPath + ":/etc/squid/squid.conf:ro"},
@@ -136,6 +137,17 @@ func EgressProxyComposeService(configPath, internalNetwork, egressNetwork string
 		// stacks as durable background services, so auto-restart has no
 		// established convention here to diverge from.
 		Restart: "no",
+		// The squid daemon starts as root and drops to its unprivileged "proxy"
+		// user via setgid/setuid, so cap_drop ALL alone (the baseline every
+		// service carries) removes CAP_SETGID/CAP_SETUID and the daemon aborts
+		// before it can serve a single request — caught by the behavioral
+		// integration test. cap_add hands back exactly those two, nothing else:
+		// every other capability (NET_ADMIN, SYS_ADMIN, …) stays dropped.
+		// read_only is intentionally NOT set: squid writes its pid/socket/cache
+		// state under /run and /var/spool/squid.
+		CapDrop:     capDrop,
+		CapAdd:      []string{"SETGID", "SETUID"},
+		SecurityOpt: securityOpt,
 		Healthcheck: map[string]any{
 			// squidclient is NOT present in the ubuntu/squid image (verified
 			// against the running container — a prior version of this
