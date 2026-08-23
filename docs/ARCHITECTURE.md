@@ -378,8 +378,9 @@ ports, and Compose services require a bridge network. Collisions are rejected
 unless the affected services are explicitly remapped.
 `container_network_internal: true` marks that network `internal: true`
 (Compose-only, all-or-nothing — see design-decisions.md), blocking every
-outbound route including the agent's own API calls; pre-flight warns
-whenever it is set. `container_network_allowed_domains` softens that: a
+outbound route including the agent's own API calls; pre-flight warns when a
+service is selected and rejects the launch when none is (the toggle is a
+no-op without a Compose network). `container_network_allowed_domains` softens that: a
 squid proxy on a second, non-internal `<network>-egress` network is injected
 instead, and only the listed domains (plus subdomains) are reachable — the
 same "narrow proxy instead of an open door" pattern the host-gateway section

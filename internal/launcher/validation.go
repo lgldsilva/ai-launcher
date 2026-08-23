@@ -302,12 +302,18 @@ func allowTCPPortIssues(cfg LaunchConfig) []Issue {
 	}}
 }
 
-// containerNetworkInternalIssues warns about the two ways an internal
-// Compose network surprises an operator: it blocks ALL outbound traffic
-// including the agent's own LLM API calls, and it silently does nothing when
-// no infrastructure service is selected (the plain docker run backend has no
-// Compose network to mark internal — BuildCompose only runs when at least
-// one service is chosen).
+// containerNetworkInternalIssues reports the two ways an internal Compose
+// network surprises an operator. They differ in severity:
+//
+//   - With at least one service, the network takes effect and blocks ALL
+//     outbound traffic including the agent's own LLM API calls. That is a
+//     legitimate operator choice, so it stays a warning — the operator may
+//     well intend total egress blocking.
+//   - With no service selected, the toggle is a silent no-op: the plain
+//     docker run backend has no Compose network to mark internal, so the
+//     operator believes egress is blocked while it remains fully open. That
+//     is a false sense of security, so it is fatal — the launch is refused
+//     rather than allowed to proceed under an ineffective setting.
 func containerNetworkInternalIssues(cfg LaunchConfig) []Issue {
 	if !cfg.UseDocker || !cfg.Docker.NetworkInternal {
 		return nil
@@ -315,8 +321,7 @@ func containerNetworkInternalIssues(cfg LaunchConfig) []Issue {
 	if len(cfg.Services) == 0 {
 		return []Issue{{
 			Code:    "internal-network-requires-compose",
-			Message: "container_network_internal only takes effect on the Compose path (at least one service selected); the plain docker run backend ignores it and network access remains open",
-			Warning: true,
+			Message: "container_network_internal only takes effect on the Compose path (at least one service selected); the plain docker run backend ignores it and network access remains open — add a --service or remove container_network_internal",
 		}}
 	}
 	if len(cfg.ContainerNetworkAllowedDomains) > 0 {
@@ -333,22 +338,32 @@ func containerNetworkInternalIssues(cfg LaunchConfig) []Issue {
 	}}
 }
 
-// containerNetworkAllowedDomainsIssues warns when the domain allowlist is
-// configured but the internal network isn't active (or Docker isn't the
-// backend) — addEgressProxy never fires, so the allowlist is a silent no-op
-// (open egress, not restricted egress) rather than the safety boundary the
-// operator likely expects.
+// containerNetworkAllowedDomainsIssues rejects a domain allowlist that cannot
+// take effect. addEgressProxy only fires when both container_network_internal
+// is on and a domain list is present, so an allowlist without the internal
+// network (or without the docker backend) is a silent no-op: egress stays
+// fully open, which is the opposite of the safety boundary the operator is
+// configuring the list to enforce. That false sense of security is fatal —
+// the launch is refused rather than allowed to proceed with an inert list.
+//
+// The docker-only guard mirrors containerNetworkInternalIssues: the allowlist
+// is a docker-backend setting with no meaning under ai-jail, so a persisted
+// list must NOT block a jail-mode launch (for example an operator who toggles
+// the backend off temporarily). Without this guard the fatal below would
+// refuse a launch the setting has no effect on.
 func containerNetworkAllowedDomainsIssues(cfg LaunchConfig) []Issue {
 	if len(cfg.ContainerNetworkAllowedDomains) == 0 {
 		return nil
 	}
-	if cfg.UseDocker && cfg.Docker.NetworkInternal {
+	if !cfg.UseDocker {
+		return nil
+	}
+	if cfg.Docker.NetworkInternal {
 		return nil
 	}
 	return []Issue{{
 		Code:    "container-network-allowed-domains-without-internal-network",
-		Message: "container_network_allowed_domains is configured but container_network_internal is not on; the egress proxy is never injected and the domain list has no effect — network access remains fully open",
-		Warning: true,
+		Message: "container_network_allowed_domains is configured but container_network_internal is not on; the egress proxy is never injected and the domain list has no effect — network access remains fully open, so enable container_network_internal or remove the allowlist",
 	}}
 }
 
