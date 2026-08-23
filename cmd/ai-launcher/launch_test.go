@@ -29,8 +29,13 @@ func TestFinalizeResolvesMemoryWhenJailAndMemoryOn(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var errOut bytes.Buffer
 	got := finalizeLaunchConfig(launcher.LaunchConfig{UseJail: true, UseMemory: true}, config.DefaultGlobal(), t.TempDir(), &errOut)
-	if got.MemoryExecutable != stub {
-		t.Fatalf("MemoryExecutable = %q; want %q", got.MemoryExecutable, stub)
+	// macOS resolves /var to /private/var; canonicalize for the assertion.
+	want, err := filepath.EvalSymlinks(stub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MemoryExecutable != want {
+		t.Fatalf("MemoryExecutable = %q; want %q", got.MemoryExecutable, want)
 	}
 }
 

@@ -64,6 +64,13 @@ func TestPreviewMapsMemoryAfterJailAndMemoryToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The launcher canonicalizes host paths (macOS resolves /var to
+	// /private/var), so the assertions compare the resolved forms.
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedStub := filepath.Join(resolvedDir, "ai-memory")
 
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
 		Agent:       config.Agent{Command: "codex"},
@@ -77,10 +84,10 @@ func TestPreviewMapsMemoryAfterJailAndMemoryToggle(t *testing.T) {
 	model.launch.UseJail = true
 	model.launch.UseMemory = true
 	view := model.View()
-	if !strings.Contains(view, "--map "+dir) {
+	if !strings.Contains(view, "--map "+resolvedDir) {
 		t.Fatalf("preview after toggle must map memory dir, got %s", view)
 	}
-	if !strings.Contains(view, stub) {
+	if !strings.Contains(view, resolvedStub) {
 		t.Fatalf("preview after toggle must use resolved memory, got %s", view)
 	}
 }
