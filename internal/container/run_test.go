@@ -39,6 +39,7 @@ func TestBuildRunCommandMinimal(t *testing.T) {
 
 	want := []string{
 		"docker", "run", "--rm", "-it",
+		"--cap-drop=ALL", "--security-opt=no-new-privileges:true",
 		"-w", "/Volumes/MSD512/Projetos/ai-launcher",
 		"-v", "/Volumes/MSD512/Projetos/ai-launcher:/Volumes/MSD512/Projetos/ai-launcher",
 		"--add-host=host.docker.internal:host-gateway",
@@ -48,6 +49,37 @@ func TestBuildRunCommandMinimal(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("BuildRunCommand() = %#v\nwant %#v", got, want)
 	}
+}
+
+// TestBuildRunCommandHardened asserts the docker-run path (no services) carries
+// the same hardening baseline every Compose service gets, so a plain
+// `docker run` launch does not keep Docker's default capability set. The agent
+// runs as a non-root --user, so it gets cap_drop ALL with no cap_add.
+func TestBuildRunCommandHardened(t *testing.T) {
+	sel := testSelection(t)
+	got, err := BuildRunCommand(RunConfig{
+		Selection:       sel,
+		ProjectDir:      "/work",
+		AgentExecutable: "claude",
+	})
+	if err != nil {
+		t.Fatalf("BuildRunCommand() error = %v", err)
+	}
+	if !containsExact(got, "--cap-drop=ALL") {
+		t.Errorf("argv missing --cap-drop=ALL: %#v", got)
+	}
+	if !containsExact(got, "--security-opt=no-new-privileges:true") {
+		t.Errorf("argv missing --security-opt=no-new-privileges:true: %#v", got)
+	}
+}
+
+func containsExact(haystack []string, needle string) bool {
+	for _, item := range haystack {
+		if item == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildRunCommandUsesInImageMemoryWrapper(t *testing.T) {
