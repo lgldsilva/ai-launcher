@@ -84,16 +84,18 @@ func TestAllowTCPPortsWarnOnlyWhenLockdownIsNotForcedOn(t *testing.T) {
 	}
 }
 
-// An internal Compose network blocks ALL outbound traffic, including the
-// agent's own LLM API calls, and silently does nothing when no Compose
-// service is selected (BuildCompose only runs with at least one service).
-// Both surprises need their own warning so the operator sees them before a
-// launch quietly fails or the toggle turns out to be a no-op.
-func TestContainerNetworkInternalWarnsOnBlockedAgentAndOnRequiresCompose(t *testing.T) {
+// An internal Compose network is classified two ways. With a service selected
+// it takes effect and blocks ALL outbound traffic including the agent's own
+// LLM API calls — that is a legitimate operator choice, so it stays advisory.
+// With no service selected it is a silent no-op (the plain docker run backend
+// has no Compose network), so the operator believes egress is blocked while it
+// remains open — a false sense of security, which must be fatal, not warned.
+func TestContainerNetworkInternalWarnsOnBlockedAgentButRejectsRequiresCompose(t *testing.T) {
 	cases := []struct {
-		name string
-		cfg  LaunchConfig
-		code string
+		name  string
+		cfg   LaunchConfig
+		code  string
+		fatal bool
 	}{
 		{
 			name: "docker with a service and internal network warns it blocks the agent",
@@ -102,15 +104,17 @@ func TestContainerNetworkInternalWarnsOnBlockedAgentAndOnRequiresCompose(t *test
 				Services:  []string{"redis"},
 				Docker:    container.RunConfig{NetworkInternal: true},
 			},
-			code: "internal-network-blocks-agent",
+			code:  "internal-network-blocks-agent",
+			fatal: false,
 		},
 		{
-			name: "docker with internal network but no services warns it requires compose",
+			name: "docker with internal network but no services is rejected (no-op would reopen egress)",
 			cfg: LaunchConfig{
 				UseDocker: true,
 				Docker:    container.RunConfig{NetworkInternal: true},
 			},
-			code: "internal-network-requires-compose",
+			code:  "internal-network-requires-compose",
+			fatal: true,
 		},
 		{
 			name: "docker with a service, internal network, and allowed domains warns it restricts (not blocks) the agent",
@@ -120,7 +124,8 @@ func TestContainerNetworkInternalWarnsOnBlockedAgentAndOnRequiresCompose(t *test
 				Docker:                         container.RunConfig{NetworkInternal: true},
 				ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
 			},
-			code: "internal-network-restricts-agent",
+			code:  "internal-network-restricts-agent",
+			fatal: false,
 		},
 		{
 			name: "internal network off raises nothing",
@@ -152,27 +157,29 @@ func TestContainerNetworkInternalWarnsOnBlockedAgentAndOnRequiresCompose(t *test
 			if !found {
 				t.Fatalf("issues = %#v; want code %q", issues, tc.code)
 			}
-			if !issue.Warning {
-				t.Error("the launch must still be allowed to proceed; this is advisory")
+			if issue.Warning != !tc.fatal {
+				t.Errorf("issue %q Warning = %v; want fatal=%v", tc.code, issue.Warning, tc.fatal)
 			}
 		})
 	}
 }
 
-func TestContainerNetworkAllowedDomainsWarnsWithoutInternalNetwork(t *testing.T) {
+func TestContainerNetworkAllowedDomainsRejectsWithoutInternalNetwork(t *testing.T) {
 	cases := []struct {
-		name string
-		cfg  LaunchConfig
-		code string
+		name  string
+		cfg   LaunchConfig
+		code  string
+		fatal bool
 	}{
 		{
-			name: "domains configured without internal network warns the allowlist is inert",
+			name: "domains configured without internal network is rejected (allowlist would be inert, egress open)",
 			cfg: LaunchConfig{
 				UseDocker:                      true,
 				Services:                       []string{"redis"},
 				ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
 			},
-			code: "container-network-allowed-domains-without-internal-network",
+			code:  "container-network-allowed-domains-without-internal-network",
+			fatal: true,
 		},
 		{
 			name: "domains configured with internal network on raises nothing here",
@@ -192,6 +199,14 @@ func TestContainerNetworkAllowedDomainsWarnsWithoutInternalNetwork(t *testing.T)
 			},
 			code: "",
 		},
+		{
+			name: "jail mode ignores the docker-only allowlist (no fatal, mirrors internal-network)",
+			cfg: LaunchConfig{
+				UseDocker:                      false,
+				ContainerNetworkAllowedDomains: []string{"api.anthropic.com"},
+			},
+			code: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -206,8 +221,8 @@ func TestContainerNetworkAllowedDomainsWarnsWithoutInternalNetwork(t *testing.T)
 			if !found {
 				t.Fatalf("issues = %#v; want code %q", issues, tc.code)
 			}
-			if !issue.Warning {
-				t.Error("the launch must still be allowed to proceed; this is advisory")
+			if issue.Warning != !tc.fatal {
+				t.Errorf("issue %q Warning = %v; want fatal=%v", tc.code, issue.Warning, tc.fatal)
 			}
 		})
 	}

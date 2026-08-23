@@ -264,8 +264,8 @@ type Options struct {
 	// keeps today's default (open egress); true is an explicit, all-or-
 	// nothing v1 opt-in — see docs/design-decisions.md. It only takes effect
 	// on the Compose path (at least one service selected); a plain `docker
-	// run` launch ignores it and preflight warns
-	// (internal-network-requires-compose).
+	// run` launch ignores it, so preflight rejects that combination as a
+	// false sense of security (internal-network-requires-compose).
 	//
 	// If you add/change this field, you MUST also update the scalar struct
 	// and literal below in UnmarshalYAML — see
@@ -277,8 +277,9 @@ type Options struct {
 	// egress, restricting outbound traffic to these domains. nil and an
 	// empty slice are treated identically (no domains configured — only
 	// len() > 0 is ever checked, matching the Services convention below).
-	// Configuring this without ContainerNetworkInternal is a silent no-op;
-	// preflight warns (container-network-allowed-domains-without-internal-network).
+	// Configuring this without ContainerNetworkInternal is a silent no-op,
+	// so preflight rejects it as a false sense of security
+	// (container-network-allowed-domains-without-internal-network).
 	// See docs/design-decisions.md.
 	//
 	// If you add/change this field, you MUST also update the scalar struct
