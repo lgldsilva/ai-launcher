@@ -503,11 +503,38 @@ func (m Model) containerResourceRows() []containerResourceRow {
 			hint:  "comma-separated, e.g. api.anthropic.com,github.com — only used when Net: internal is on",
 			role:  containerRowText,
 		},
+		{
+			name:  "Host gateway",
+			kind:  resourceHostGateway,
+			value: displayHostGateway(m.launch.ContainerHostGateway),
+			hint:  "on by default — container reaches host.docker.internal (loopback MCP); turn off for full isolation",
+			role:  containerRowToggle,
+			toggle: func(m *Model) {
+				next := !config.EffectiveContainerHostGateway(m.launch.ContainerHostGateway)
+				m.launch.ContainerHostGateway = &next
+				m.launch.Docker.AddHostGateway = next
+				if next {
+					m.status = "Host gateway ON — the container reaches host.docker.internal (host services, loopback MCP)."
+					return
+				}
+				m.status = "Host gateway OFF — the container cannot reach host.docker.internal; loopback MCP URLs are not rewritten."
+			},
+		},
 	}
 }
 
 func displayNetworkInternal(value *bool) string {
 	if config.EffectiveContainerNetworkInternal(value) {
+		return "on"
+	}
+	return "off"
+}
+
+// displayHostGateway mirrors displayNetworkInternal: the field is a tri-state
+// *bool whose nil resolves to on (the historical default), so "on" is what the
+// operator sees unless they have explicitly disabled host reachability.
+func displayHostGateway(value *bool) string {
+	if config.EffectiveContainerHostGateway(value) {
 		return "on"
 	}
 	return "off"

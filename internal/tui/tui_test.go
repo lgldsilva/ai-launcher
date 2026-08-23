@@ -591,7 +591,7 @@ func TestShortDockerLayoutFollowsContainerSection(t *testing.T) {
 	model.section = model.containerIndex()
 	model.cursor = len(model.stackIDs) + len(model.containerResourceRows())
 	view := model.View()
-	if !strings.Contains(view, "Container") || !strings.Contains(view, "Runtime:") {
+	if !strings.Contains(view, "Container") || !strings.Contains(view, "Net: internal:") {
 		t.Fatalf("short Container view = %q; want the active container controls", view)
 	}
 	if strings.Contains(view, "\nAgent\n") {

@@ -82,6 +82,11 @@ const (
 	// while resourceNetworkInternal is on, since that's what triggers the
 	// egress-proxy injection in BuildCompose.
 	resourceNetworkAllowedDomains containerResourceKind = "container-network-allowed-domains"
+	// resourceHostGateway identifies the toggle row for
+	// LaunchConfig.ContainerHostGateway. Like resourceNetworkInternal it is a
+	// toggle (no text input): the host gateway defaults to on, so this row is
+	// the only interactive way to disable host-network reachability.
+	resourceHostGateway containerResourceKind = "container-host-gateway"
 )
 
 // containerRowRole distinguishes a text-editable resource row (opens
