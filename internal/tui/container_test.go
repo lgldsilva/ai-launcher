@@ -793,7 +793,9 @@ func TestLoadProfilePinsReleaseVersion(t *testing.T) {
 // containerRowRole: every original resource row is text-editable (opens
 // startContainerResourceInput) and must stay that way. The one deliberate
 // exception is "Net: internal" (added for ContainerNetworkInternal), which
-// must stay a toggle row — this test locks both facts down.
+// must stay a toggle row — as must "Host gateway" (added for
+// ContainerHostGateway, the one security field whose default is on). This test
+// locks all three facts down.
 func TestContainerResourceRowRoleDefaultsToText(t *testing.T) {
 	stubWindows(t, false)
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
@@ -801,11 +803,15 @@ func TestContainerResourceRowRoleDefaultsToText(t *testing.T) {
 		Permissions: map[string]bool{},
 	})
 	rows := model.containerResourceRows()
-	if len(rows) != 9 {
-		t.Fatalf("containerResourceRows() = %d rows; want 9", len(rows))
+	if len(rows) != 10 {
+		t.Fatalf("containerResourceRows() = %d rows; want 10", len(rows))
+	}
+	toggles := map[containerResourceKind]bool{
+		resourceNetworkInternal: true,
+		resourceHostGateway:     true,
 	}
 	for _, row := range rows {
-		if row.kind == resourceNetworkInternal {
+		if toggles[row.kind] {
 			if row.role != containerRowToggle {
 				t.Fatalf("row %q role = %v; want containerRowToggle", row.name, row.role)
 			}
@@ -864,6 +870,80 @@ func TestToggleNetworkInternalUpdatesSelection(t *testing.T) {
 	}
 	if !strings.Contains(model.status, "disabled") {
 		t.Fatalf("status = %q; want a disabled confirmation", model.status)
+	}
+}
+
+// TestToggleHostGatewayUpdatesSelection mirrors the network-internal toggle
+// test for the host gateway. The default is ON (nil resolves true), so the
+// first toggle turns it OFF — and must flip both the raw tri-state
+// (ContainerHostGateway, carried for --save round-trip) and the resolved value
+// (Docker.AddHostGateway, what BuildCompose/BuildRunCommand consume). This is
+// the only interactive path to disable host reachability, so the off-arm must
+// land visibly in the status line.
+func TestToggleHostGatewayUpdatesSelection(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	rows := model.containerResourceRows()
+	index := -1
+	for i, row := range rows {
+		if row.kind == resourceHostGateway {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("Host gateway row not found in containerResourceRows()")
+	}
+	model.section = model.containerIndex()
+	model.cursor = len(model.stackIDs) + index
+
+	// Default is on (nil resolves true), so the first toggle turns it OFF.
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+	if model.launch.ContainerHostGateway == nil || *model.launch.ContainerHostGateway {
+		t.Fatalf("ContainerHostGateway = %v; want false after first toggle (default was on)", model.launch.ContainerHostGateway)
+	}
+	if model.launch.Docker.AddHostGateway {
+		t.Fatal("Docker.AddHostGateway = true; want false after disabling host gateway")
+	}
+	if !strings.Contains(model.status, "OFF") {
+		t.Fatalf("status = %q; want an OFF confirmation", model.status)
+	}
+
+	// Second toggle turns it back ON.
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeySpace})
+	if model.launch.ContainerHostGateway == nil || !*model.launch.ContainerHostGateway {
+		t.Fatalf("ContainerHostGateway = %v; want true after second toggle", model.launch.ContainerHostGateway)
+	}
+	if !model.launch.Docker.AddHostGateway {
+		t.Fatal("Docker.AddHostGateway = false; want true after re-enabling host gateway")
+	}
+	if !strings.Contains(model.status, "ON") {
+		t.Fatalf("status = %q; want an ON confirmation", model.status)
+	}
+}
+
+func TestContainerViewShowsHostGatewayToggle(t *testing.T) {
+	stubWindows(t, false)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		UseDocker:   true,
+		Permissions: map[string]bool{},
+	})
+	view := model.View()
+	for _, want := range []string{"Host gateway", "loopback MCP"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+
+	disabled := false
+	model.launch.ContainerHostGateway = &disabled
+	model.launch.Docker.AddHostGateway = false
+	view = model.View()
+	if !strings.Contains(view, "off") {
+		t.Fatalf("view missing \"off\" rendering for a disabled host gateway:\n%s", view)
 	}
 }
 

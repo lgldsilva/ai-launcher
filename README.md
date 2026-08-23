@@ -201,10 +201,13 @@ nerdctl with local PATH availability; selecting Podman or nerdctl clears an
 incompatible Docker context before launch.
 
 Loopback ai-memory and MCP endpoints are rewritten to the host gateway without
-mounting the host filesystem. Set `options.container_host_gateway: false` when
-the container must not reach host TCP services. For a narrower MCP boundary,
-put an allowlisted HTTP/SSE MCP proxy on one dedicated host port and point the
-agent at that port; do not use `--network host` or mount the Docker socket.
+mounting the host filesystem. The gateway is on by default; turn it off with
+`options.container_host_gateway: false`, the `--no-container-host-gateway` flag
+(the reverse is `--container-host-gateway`), or the Container → Host gateway
+toggle in the TUI, when the container must not reach host TCP services. For a
+narrower MCP boundary, put an allowlisted HTTP/SSE MCP proxy on one dedicated
+host port and point the agent at that port; do not use `--network host` or
+mount the Docker socket.
 
 When `ai-launcher` is started from a terminal with Compose services selected,
 it runs the agent through `docker compose run --rm --service-ports agent` so
