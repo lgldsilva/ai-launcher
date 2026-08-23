@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,4 +38,77 @@ func TestParseServicePortOverridesRejectsMalformedInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// container_host_gateway is the one security field whose default (on) is the
+// less-secure choice, so the two flags are the only CLI path to disable it.
+// Pin each arm of the tri-state the flag produces: unset stays nil (resolved
+// on at launch), --container-host-gateway pins true, --no-container-host-gateway
+// pins false. Setting either also opts into the docker backend, matching every
+// other container_* flag.
+func TestContainerHostGatewayFlagsApplyTriState(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantSet  bool
+		wantTrue bool
+	}{
+		{name: "no flag leaves the field unset (resolved on at launch)", args: nil, wantSet: false},
+		{name: "--container-host-gateway enables explicitly", args: []string{"--container-host-gateway"}, wantSet: true, wantTrue: true},
+		{name: "--no-container-host-gateway disables", args: []string{"--no-container-host-gateway"}, wantSet: true, wantTrue: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := cliOptions{}
+			flags := flag.NewFlagSet("test", flag.ContinueOnError)
+			opts.register(flags)
+			if err := flags.Parse(tc.args); err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			local := &config.Local{Options: config.Options{}}
+			opts.applyOptionFlags(flags, local)
+
+			field := local.Options.ContainerHostGateway
+			switch {
+			case !tc.wantSet && field != nil:
+				t.Errorf("ContainerHostGateway = %v; want nil (unset)", *field)
+			case tc.wantSet && field == nil:
+				t.Errorf("ContainerHostGateway = nil; want %v", tc.wantTrue)
+			case tc.wantSet && *field != tc.wantTrue:
+				t.Errorf("ContainerHostGateway = %v; want %v", *field, tc.wantTrue)
+			}
+
+			// Every container_* flag opts into the docker backend, and these are
+			// no exception: host-gateway is a docker-backend property.
+			if tc.args != nil && !local.Options.Docker {
+				t.Errorf("Options.Docker = false; setting a container flag must opt into the docker backend")
+			}
+		})
+	}
+}
+
+// EffectiveContainerHostGateway resolves nil to true (the historical default),
+// so a disabled config must survive the flag round-trip as a real false, not as
+// a re-defaulted true. Losing the raw tri-state would silently reintroduce that.
+func TestNoContainerHostGatewayFlagResolvesFalse(t *testing.T) {
+	opts := cliOptions{}
+	flags := flag.NewFlagSet("test", flag.ContinueOnError)
+	opts.register(flags)
+	if err := flags.Parse([]string{"--no-container-host-gateway"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	local := &config.Local{Options: config.Options{}}
+	opts.applyOptionFlags(flags, local)
+
+	if got := config.EffectiveContainerHostGateway(local.Options.ContainerHostGateway); got {
+		t.Errorf("EffectiveContainerHostGateway = true; --no-container-host-gateway must resolve false, got field=%s",
+			boolFieldString(local.Options.ContainerHostGateway))
+	}
+}
+
+func boolFieldString(value *bool) string {
+	if value == nil {
+		return "nil"
+	}
+	return strconv.FormatBool(*value)
 }

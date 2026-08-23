@@ -17,6 +17,11 @@ func (s *stringList) Set(value string) error {
 	return nil
 }
 
+// boolPtr returns a pointer to value, the shape container_host_gateway and the
+// other tri-state Options fields store so --save/--save-profile round-trip the
+// operator's raw choice instead of collapsing it to the resolved bool.
+func boolPtr(value bool) *bool { return &value }
+
 // readable and the flag-to-config mapping can be applied as a unit.
 // cliOptions holds every command-line flag value in one place so run() stays
 // readable and the flag-to-config mapping can be applied as a unit.
@@ -45,6 +50,8 @@ type cliOptions struct {
 	dockerBackend                  bool
 	containerRuntime               string
 	containerContext               string
+	containerHostGateway           bool
+	noContainerHostGateway         bool
 	memory, noMemory               bool
 	containerMemory, containerCPUs string
 	containerPIDs                  int64
@@ -79,6 +86,8 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.dockerBackend, "docker-backend", false, "run the agent inside a docker container instead of ai-jail")
 	flags.StringVar(&o.containerRuntime, "container-runtime", "", "container runtime: auto, docker, podman, or nerdctl (enables container mode)")
 	flags.StringVar(&o.containerContext, "container-context", "", "Docker context name (empty uses the current context; see docker context ls)")
+	flags.BoolVar(&o.containerHostGateway, "container-host-gateway", false, "enable host-network reachability (host.docker.internal) and loopback MCP rewriting for the docker backend (default; use to override a config that disabled it)")
+	flags.BoolVar(&o.noContainerHostGateway, "no-container-host-gateway", false, "disable host-network reachability and loopback MCP rewriting for the docker backend")
 	flags.Var(&o.stacks, "stack", "toolchain stack for the docker image (go, python, rust, java, maven, gradle, node, cpp, neovim; repeatable)")
 	flags.Var(&o.services, "service", "infrastructure service for the docker environment (mongo, redis, postgres, wiremock, code-server, ...; repeatable)")
 	flags.BoolVar(&o.memory, "memory", false, "enable ai-memory")
@@ -282,6 +291,14 @@ func (o *cliOptions) applyOptionFlags(flags *flag.FlagSet, local *config.Local) 
 		}},
 		{"container-context", func() {
 			local.Options.ContainerContext = strings.TrimSpace(o.containerContext)
+			local.Options.Docker = true
+		}},
+		{"container-host-gateway", func() {
+			local.Options.ContainerHostGateway = boolPtr(o.containerHostGateway)
+			local.Options.Docker = true
+		}},
+		{"no-container-host-gateway", func() {
+			local.Options.ContainerHostGateway = boolPtr(!o.noContainerHostGateway)
 			local.Options.Docker = true
 		}},
 		{"stack", func() { local.Options.Stacks = o.stacks }},

@@ -13,6 +13,14 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — `container_host_gateway` is configurable from the TUI and CLI
+
+The host-gateway toggle (`host.docker.internal` mapped into the container)
+was config-file-only; it is now a checkbox in the TUI container section and
+a pair of CLI flags — `--container-host-gateway` /
+`--no-container-host-gateway` — that override the persisted default (on).
+README documents both.
+
 ### Changed — inert network-isolation configs now fail pre-flight instead of warning
 
 `container_network_internal: true` with no Compose services selected used to
