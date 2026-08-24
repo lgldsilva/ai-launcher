@@ -185,6 +185,29 @@ func TestCorruptLocalConfigWarnsAndContinues(t *testing.T) {
 	}
 }
 
+// A typo in the local config is invisible today: the unknown key never takes
+// effect and the next save erases it. The launch must still proceed — a config
+// written by a newer launcher has to keep working — but stderr has to name the
+// key so the operator can see what was ignored.
+func TestUnknownLocalConfigKeyWarnsAndContinues(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: codex\noptions:\n  jail: false\n  memory: false\n  container_host_gatway: false\n")
+	var out, errOut bytes.Buffer
+	err := run([]string{"--config", globalPath, "--local-config", localPath,
+		"--agent", "codex", "--no-jail", "--no-memory", "--dry-run"},
+		strings.NewReader(""), &out, &errOut)
+	if err != nil {
+		t.Fatalf("run() error = %v; an unknown key must not fail the launch", err)
+	}
+	if !strings.Contains(errOut.String(), "warning:") ||
+		!strings.Contains(errOut.String(), "options.container_host_gatway") {
+		t.Fatalf("stderr %q; want a warning naming the unknown key", errOut.String())
+	}
+	if !strings.Contains(out.String(), "codex") {
+		t.Fatalf("dry-run = %q; want the launch to proceed", out.String())
+	}
+}
+
 // No --no-jail here on purpose: the `review` profile declares its own options
 // block, so it — not the workspace file — owns the jail toggle. Passing
 // --no-jail used to be required only because the profile's value leaked into
