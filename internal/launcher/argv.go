@@ -18,11 +18,12 @@ func buildContinue(cfg LaunchConfig) ([]string, error) {
 	if !cfg.UseMemory {
 		return nil, errors.New("continuing a session requires ai-memory")
 	}
+	resolve := newPathResolver()
 	command := make([]string, 0, 10)
 	if cfg.UseJail {
-		command = appendJailArgs(command, cfg)
+		command = appendJailArgs(command, cfg, resolve)
 	}
-	command = append(command, memoryCommand(cfg), "run")
+	command = append(command, memoryCommand(cfg, resolve), "run")
 	command = appendMemoryScope(command, cfg)
 	command = appendWorkstreamSelection(command, cfg)
 	return appendYoloFlag(command, cfg), nil
@@ -114,7 +115,7 @@ func appendYoloFlag(command []string, cfg LaunchConfig) []string {
 // appendJailArgs prepends the ai-jail wrapper with the programmatic-mode
 // flag, the declarative jail capability flags, and the flags derived from the
 // enabled permissions and configured mounts.
-func appendJailArgs(command []string, cfg LaunchConfig) []string {
+func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) []string {
 	command = append(command, config.AIJailCommand)
 	if cfg.JailExec {
 		// --exec is ai-jail's programmatic mode: direct exec without the PTY
@@ -126,9 +127,9 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 	command = appendJailFlags(command, cfg.JailFlags)
 	command = appendPermissionArgs(command, cfg)
 	if cfg.UseMemory {
-		command = appendHostDirMount(command, cfg.MemoryExecutable, cfg.Mounts)
+		command = appendHostDirMount(command, cfg.MemoryExecutable, cfg.Mounts, resolve)
 	}
-	command = appendExecutableMount(command, cfg)
+	command = appendExecutableMount(command, cfg, resolve)
 	for _, mount := range cfg.Mounts {
 		path := strings.TrimSpace(mount.Path)
 		if path == "" {
@@ -152,9 +153,9 @@ func appendJailArgs(command []string, cfg LaunchConfig) []string {
 // memoryCommand is the argv token for the wrapper. Inside the jail it must
 // be the resolved host path so --map and exec agree; without a jail the
 // contract stays the bare PATH name.
-func memoryCommand(cfg LaunchConfig) string {
+func memoryCommand(cfg LaunchConfig, resolve *pathResolver) string {
 	if cfg.UseJail {
-		if resolved := resolveHostPath(cfg.MemoryExecutable); resolved != "" {
+		if resolved := resolve.hostPath(cfg.MemoryExecutable); resolved != "" {
 			return resolved
 		}
 	}
@@ -185,23 +186,41 @@ func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
 	return cfg
 }
 
-func resolveHostPath(path string) string {
+// pathResolver memoizes symlink resolution for one Build call. The same host
+// paths (harness executable, ai-memory binary) are consulted several times
+// while composing the argv; without the cache each consult re-walked every
+// symlink chain with lstat syscalls. The cache is per-call on purpose: a TUI
+// session may outlive a mount change, so nothing is shared across Builds.
+type pathResolver struct {
+	resolved map[string]string
+}
+
+func newPathResolver() *pathResolver {
+	return &pathResolver{resolved: make(map[string]string, 4)}
+}
+
+func (r *pathResolver) hostPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
 	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
-		return resolved
+	if cached, ok := r.resolved[path]; ok {
+		return cached
 	}
-	return path
+	resolved := path
+	if evaluated, err := filepath.EvalSymlinks(path); err == nil && evaluated != "" {
+		resolved = evaluated
+	}
+	r.resolved[path] = resolved
+	return resolved
 }
 
-func appendExecutableMount(command []string, cfg LaunchConfig) []string {
-	return appendHostDirMount(command, cfg.Executable, cfg.Mounts)
+func appendExecutableMount(command []string, cfg LaunchConfig, resolve *pathResolver) []string {
+	return appendHostDirMount(command, cfg.Executable, cfg.Mounts, resolve)
 }
 
-func appendHostDirMount(command []string, path string, mounts []config.Mount) []string {
-	path = resolveHostPath(path)
+func appendHostDirMount(command []string, path string, mounts []config.Mount, resolve *pathResolver) []string {
+	path = resolve.hostPath(path)
 	if path == "" || !filepath.IsAbs(path) {
 		return command
 	}
