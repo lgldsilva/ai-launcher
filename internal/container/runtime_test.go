@@ -1,6 +1,7 @@
 package container
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -252,5 +253,186 @@ func TestListDockerContextsCommandFailsClearlyWithoutDocker(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, err := listDockerContextsCommand(); err == nil || !strings.Contains(err.Error(), "docker CLI not found in PATH") {
 		t.Fatalf("listDockerContextsCommand() error = %v; want a clear docker-not-found failure", err)
+	}
+}
+
+// RequireLocalDaemon must reject ssh:// endpoints: the backend bind-mounts
+// host paths same-path, which would silently mount wrong directories on the
+// daemon's machine.
+func TestRequireLocalDaemonRejectsSSHContext(t *testing.T) {
+	stubDaemonSeams(t, "", `[{"Name":"remote-builder","Endpoints":{"docker":{"Host":"ssh://builder@192.0.2.10"}}}]`, nil)
+	err := RequireLocalDaemon(DockerRuntime{}, "remote-builder")
+	if err == nil {
+		t.Fatal("RequireLocalDaemon() must reject an ssh:// context")
+	}
+	for _, want := range []string{"local Docker daemon", `context "remote-builder"`, "ssh://builder@192.0.2.10"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q; want it to mention %q", err, want)
+		}
+	}
+}
+
+func TestRequireLocalDaemonRejectsRemoteTCP(t *testing.T) {
+	stubDaemonSeams(t, "", `[{"Name":"default","Endpoints":{"docker":{"Host":"tcp://192.0.2.20:2375"}}}]`, nil)
+	if err := RequireLocalDaemon(DockerRuntime{}, ""); err == nil || !strings.Contains(err.Error(), "tcp://192.0.2.20:2375") {
+		t.Fatalf("RequireLocalDaemon() must reject a remote tcp:// endpoint, got %v", err)
+	}
+}
+
+// Rootless Docker and colima expose the daemon on a loopback TCP socket; that
+// is still the local machine, so it must be accepted.
+func TestRequireLocalDaemonAcceptsLoopbackTCP(t *testing.T) {
+	for _, host := range []string{"tcp://localhost:2375", "tcp://127.0.0.1:2376"} {
+		stubDaemonSeams(t, "", `[{"Name":"colima","Endpoints":{"docker":{"Host":"`+host+`"}}}]`, nil)
+		if err := RequireLocalDaemon(DockerRuntime{}, "colima"); err != nil {
+			t.Fatalf("RequireLocalDaemon() with %s: %v; loopback TCP is local", host, err)
+		}
+	}
+}
+
+func TestRequireLocalDaemonAcceptsUnixSocket(t *testing.T) {
+	stubDaemonSeams(t, "", `[{"Name":"default","Endpoints":{"docker":{"Host":"unix:///var/run/docker.sock"}}}]`, nil)
+	if err := RequireLocalDaemon(DockerRuntime{}, ""); err != nil {
+		t.Fatalf("RequireLocalDaemon() with a unix socket: %v", err)
+	}
+}
+
+// DOCKER_HOST overrides any context in the Docker CLI, so the guard must
+// check it first and never inspect the context.
+func TestRequireLocalDaemonDockerHostEnvWins(t *testing.T) {
+	inspectCalled := false
+	originalInspect := dockerContextInspectCommand
+	dockerContextInspectCommand = func(string) ([]byte, error) {
+		inspectCalled = true
+		return nil, errors.New("must not be called")
+	}
+	t.Cleanup(func() { dockerContextInspectCommand = originalInspect })
+	originalEnv := dockerHostEnvValue
+	dockerHostEnvValue = func() (string, bool) { return "ssh://builder@192.0.2.10", true }
+	t.Cleanup(func() { dockerHostEnvValue = originalEnv })
+
+	if err := RequireLocalDaemon(DockerRuntime{}, "default"); err == nil || !strings.Contains(err.Error(), "DOCKER_HOST") {
+		t.Fatalf("RequireLocalDaemon() must reject a remote DOCKER_HOST, got %v", err)
+	}
+	if inspectCalled {
+		t.Fatal("context inspect must not run when DOCKER_HOST is set")
+	}
+
+	dockerHostEnvValue = func() (string, bool) { return "unix:///var/run/docker.sock", true }
+	if err := RequireLocalDaemon(DockerRuntime{}, "default"); err != nil {
+		t.Fatalf("RequireLocalDaemon() with a local DOCKER_HOST: %v", err)
+	}
+}
+
+// Fail-closed: when the endpoint cannot be determined, the launch is refused
+// and the error says how to override, because silently wrong mounts are the
+// failure mode this guard exists to prevent.
+func TestRequireLocalDaemonFailsClosedOnInspectFailure(t *testing.T) {
+	stubDaemonSeams(t, "", "", errors.New("context does not exist"))
+	err := RequireLocalDaemon(DockerRuntime{}, "gone")
+	if err == nil {
+		t.Fatal("RequireLocalDaemon() must fail when context inspect fails")
+	}
+	for _, want := range []string{"could not be determined", `context "gone"`, "--container-context"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q; want it to mention %q", err, want)
+		}
+	}
+}
+
+func TestRequireLocalDaemonFailsClosedOnUndeterminedEndpoint(t *testing.T) {
+	for name, out := range map[string]string{
+		"invalid JSON":       "not-json",
+		"no entries":         `[]`,
+		"no docker endpoint": `[{"Name":"aci","Endpoints":{"kubernetes":{"Host":"https://example"}}}]`,
+	} {
+		stubDaemonSeams(t, "", out, nil)
+		if err := RequireLocalDaemon(DockerRuntime{}, ""); err == nil {
+			t.Fatalf("RequireLocalDaemon() with %s must fail closed", name)
+		}
+	}
+}
+
+// The guard is docker-specific; other runtimes use different connection
+// mechanisms and must not be blocked by it.
+func TestRequireLocalDaemonIgnoresNonDockerRuntimes(t *testing.T) {
+	stubDaemonSeams(t, "ssh://builder@192.0.2.10", "", errors.New("must not be called"))
+	for _, runtime := range []Runtime{PodmanRuntime{}, NerdctlRuntime{}} {
+		if err := RequireLocalDaemon(runtime, ""); err != nil {
+			t.Fatalf("RequireLocalDaemon(%s): %v; non-docker runtimes are out of scope", runtime.Name(), err)
+		}
+	}
+}
+
+func stubDaemonSeams(t *testing.T, dockerHost string, inspectOut string, inspectErr error) {
+	t.Helper()
+	originalEnv := dockerHostEnvValue
+	dockerHostEnvValue = func() (string, bool) { return dockerHost, dockerHost != "" }
+	t.Cleanup(func() { dockerHostEnvValue = originalEnv })
+	originalInspect := dockerContextInspectCommand
+	dockerContextInspectCommand = func(string) ([]byte, error) { return []byte(inspectOut), inspectErr }
+	t.Cleanup(func() { dockerContextInspectCommand = originalInspect })
+}
+
+func TestDockerContextInspectCommandFailsClearlyWithoutDocker(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := dockerContextInspectCommand(""); err == nil || !strings.Contains(err.Error(), "docker CLI not found in PATH") {
+		t.Fatalf("dockerContextInspectCommand() error = %v; want a clear docker-not-found failure", err)
+	}
+}
+
+// The real seam must place the context name after `context inspect` so an
+// explicit selection is inspected instead of the current context.
+func TestDockerContextInspectCommandPassesContextName(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "argv")
+	docker := filepath.Join(dir, "docker")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + log + "\"\nprintf '[{\"Endpoints\":{\"docker\":{\"Host\":\"unix:///x.sock\"}}}]'\n"
+	if err := os.WriteFile(docker, []byte(script), 0o700); err != nil { // #nosec G306 -- test helper executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	out, err := dockerContextInspectCommand("colima")
+	if err != nil {
+		t.Fatalf("dockerContextInspectCommand() error = %v", err)
+	}
+	argv, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(argv) != "context\ninspect\ncolima\n" {
+		t.Fatalf("argv = %q; want context inspect colima", argv)
+	}
+	host, err := parseContextDockerHost(out)
+	if err != nil || host != "unix:///x.sock" {
+		t.Fatalf("parseContextDockerHost() = %q, %v", host, err)
+	}
+}
+
+// Endpoint classification in isolation: the shapes a daemon endpoint can take
+// beyond the ones the RequireLocalDaemon tests exercise end to end.
+func TestIsLocalDockerHostClassifiesEndpoints(t *testing.T) {
+	cases := []struct {
+		host  string
+		local bool
+	}{
+		{"", true},
+		{"/var/run/docker.sock", true},
+		{"unix:///var/run/docker.sock", true},
+		{`npipe:////./pipe/docker_engine`, true},
+		{"UNIX:///var/run/docker.sock", true},
+		{"tcp://[::1]:2375", true},
+		{"tcp://192.0.2.20:2375", false},
+		{"tcp://docker.example.com:2376", false},
+		{"tcp://%zz:2375", false},
+		{"ssh://builder@192.0.2.10", false},
+		{"http://192.0.2.20:2375", false},
+		{"var/run/docker.sock", false},
+	}
+	for _, tt := range cases {
+		if got := isLocalDockerHost(tt.host); got != tt.local {
+			t.Errorf("isLocalDockerHost(%q) = %v; want %v", tt.host, got, tt.local)
+		}
 	}
 }

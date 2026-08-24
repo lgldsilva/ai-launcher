@@ -175,6 +175,9 @@ func (r *launchRequest) launchCompose() error {
 	if err := container.RuntimeInfo(runtime, r.launchConfig.ContainerContext); err != nil {
 		return fmt.Errorf("%s runtime is unavailable: %w", runtime.Name(), err)
 	}
+	if err := container.RequireLocalDaemon(runtime, r.launchConfig.ContainerContext); err != nil {
+		return err
+	}
 	r.rememberRecentAgent()
 	return r.runComposeSession(runtime, composePath, argv, interactive)
 }

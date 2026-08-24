@@ -1,7 +1,10 @@
 package container
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -247,6 +250,126 @@ func CommandPrefix(runtime Runtime, contextName string) []string {
 func ComposeCommandFor(runtime Runtime, contextName string) []string {
 	prefix := CommandPrefix(runtime, contextName)
 	return append(prefix, "compose")
+}
+
+// dockerHostEnvValue is a seam so tests can exercise DOCKER_HOST handling
+// without mutating the process environment of parallel tests.
+var dockerHostEnvValue = func() (string, bool) { return os.LookupEnv("DOCKER_HOST") }
+
+// dockerContextInspectCommand is a seam for RequireLocalDaemon tests. With an
+// empty name, `docker context inspect` resolves the CLI's current context.
+var dockerContextInspectCommand = func(contextName string) ([]byte, error) {
+	dockerCLI, err := exec.LookPath("docker")
+	if err != nil {
+		return nil, fmt.Errorf("docker CLI not found in PATH: %w", err)
+	}
+	args := []string{"context", "inspect"}
+	if contextName != "" {
+		args = append(args, contextName)
+	}
+	return exec.Command(dockerCLI, args...).Output() // #nosec G204 -- fixed Docker context-inspect command, absolute path from LookPath
+}
+
+// RequireLocalDaemon rejects container launches whose Docker endpoint is a
+// remote daemon. The container backend bind-mounts host paths at the same
+// path inside the container (project directory, home dotfiles, the ai-memory
+// binary, Compose service data), so a daemon reached over ssh:// or a remote
+// tcp:// socket would silently mount wrong or empty directories on the
+// daemon's machine. DOCKER_HOST, when set, overrides contexts entirely and is
+// checked first; otherwise the selected (or current) context is inspected.
+// The check is fail-closed: an endpoint that cannot be determined rejects the
+// launch, because a refused launch beats silently wrong mounts.
+func RequireLocalDaemon(runtime Runtime, contextName string) error {
+	runtime = RuntimeOrDefault(runtime)
+	if runtime.Name() != "docker" {
+		return nil
+	}
+	host, source, err := dockerDaemonHost(contextName)
+	if err != nil {
+		return fmt.Errorf("container backend requires a local Docker daemon, but the endpoint of %s could not be determined: %w. "+
+			"Pass --container-context with a local context or set DOCKER_HOST to a local socket to continue", source, err)
+	}
+	if isLocalDockerHost(host) {
+		return nil
+	}
+	return fmt.Errorf("container backend requires a local Docker daemon: %s resolves to %q, but the backend bind-mounts host paths "+
+		"at the same path inside the container (project directory, home dotfiles, ai-memory binary); on a remote daemon those mounts "+
+		"hit the wrong machine. Select a local context with --container-context or unset DOCKER_HOST", source, host)
+}
+
+// dockerDaemonHost resolves the effective daemon endpoint: DOCKER_HOST wins
+// over any context, matching Docker CLI precedence.
+func dockerDaemonHost(contextName string) (host, source string, err error) {
+	if value, ok := dockerHostEnvValue(); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value), "DOCKER_HOST", nil
+	}
+	out, err := dockerContextInspectCommand(strings.TrimSpace(contextName))
+	if err != nil {
+		return "", describeContextSource(contextName), err
+	}
+	host, err = parseContextDockerHost(out)
+	if err != nil {
+		return "", describeContextSource(contextName), err
+	}
+	return host, describeContextSource(contextName), nil
+}
+
+func describeContextSource(contextName string) string {
+	contextName = strings.TrimSpace(contextName)
+	if contextName == "" {
+		return "the current Docker context"
+	}
+	return fmt.Sprintf("context %q", contextName)
+}
+
+// parseContextDockerHost extracts Endpoints.docker.Host from
+// `docker context inspect` JSON output (an array with one entry).
+func parseContextDockerHost(out []byte) (string, error) {
+	var entries []struct {
+		Endpoints map[string]struct {
+			Host string `json:"Host"`
+		} `json:"Endpoints"`
+	}
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return "", fmt.Errorf("docker context inspect: invalid JSON: %w", err)
+	}
+	if len(entries) == 0 {
+		return "", fmt.Errorf("docker context inspect returned no context")
+	}
+	endpoint, ok := entries[0].Endpoints["docker"]
+	if !ok {
+		return "", fmt.Errorf("docker context inspect: no docker endpoint")
+	}
+	return strings.TrimSpace(endpoint.Host), nil
+}
+
+// isLocalDockerHost classifies a daemon endpoint. unix://, npipe:// (Windows
+// named pipes are machine-local), an empty value, and a bare socket path are
+// local; tcp:// to loopback is local (rootless Docker and colima expose local
+// TCP); ssh://, remote tcp://, and any other scheme are remote.
+func isLocalDockerHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return true
+	}
+	scheme, _, found := strings.Cut(host, "://")
+	if !found {
+		return strings.HasPrefix(host, "/")
+	}
+	switch strings.ToLower(scheme) {
+	case "unix", "npipe":
+		return true
+	case "tcp":
+		parsed, err := url.Parse(host)
+		if err != nil {
+			return false
+		}
+		switch strings.ToLower(parsed.Hostname()) {
+		case "localhost", "127.0.0.1", "::1":
+			return true
+		}
+	}
+	return false
 }
 
 // RuntimeInfo checks the selected runtime and Docker context.
