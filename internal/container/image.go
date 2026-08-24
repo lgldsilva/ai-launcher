@@ -24,7 +24,11 @@ func ImageTag(selection Selection) (string, error) {
 // ImageTagWithOptions is ImageTag including the Dockerfile build options in
 // the hash: an option changes the image contents, so it must change the tag
 // or a same-selection image built without the option would be reused for a
-// launch that needs it (a lying cache hit).
+// launch that needs it (a lying cache hit). DockerfileOptions.LauncherHash is
+// part of the hash for the same reason, even though it leaves the rendered
+// Dockerfile untouched: the launcher binary copied into the image is image
+// content, and omitting it made an upgraded launcher reuse the image an older
+// one built.
 func ImageTagWithOptions(selection Selection, options DockerfileOptions) (string, error) {
 	canonical, err := selectionCanonical(selection)
 	if err != nil {
@@ -32,6 +36,9 @@ func ImageTagWithOptions(selection Selection, options DockerfileOptions) (string
 	}
 	if options.DockerCLI {
 		canonical += "|docker-cli"
+	}
+	if options.LauncherHash != "" {
+		canonical += "|launcher=" + options.LauncherHash
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return "ai-launcher-box:" + hex.EncodeToString(sum[:])[:12], nil

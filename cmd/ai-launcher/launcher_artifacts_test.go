@@ -134,3 +134,20 @@ func TestRegularArtifactExistsRejectsSymlinkParent(t *testing.T) {
 		t.Fatalf("regularArtifactExists() error = %v; want symlink rejection", err)
 	}
 }
+
+// The hash is what makes the launcher part of the image identity, so it has to
+// be stable for one build and shaped like a tag component.
+func TestLauncherExecutableHashIsStableAndShort(t *testing.T) {
+	hash := launcherExecutableHash()
+	if len(hash) != 12 {
+		t.Fatalf("launcherExecutableHash() = %q; want 12 hex characters", hash)
+	}
+	for _, r := range hash {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			t.Fatalf("launcherExecutableHash() = %q; want lowercase hex", hash)
+		}
+	}
+	if again := launcherExecutableHash(); again != hash {
+		t.Fatalf("launcherExecutableHash() = %q then %q; the same binary must hash the same", hash, again)
+	}
+}

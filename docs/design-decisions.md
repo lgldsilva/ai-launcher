@@ -283,6 +283,26 @@ the explicit trade for the shared-login workflow. Host-only credentials
 change made by the repository, exactly like `jail: false`; it is refused
 until the operator passes `--docker-backend` or saves the selection.
 
+**Why the launcher binary is part of the image tag.** Images that embed the
+in-image ai-launcher (release agents, in-image ai-memory, the auxiliary
+tools) hashed only the selection, so upgrading ai-launcher hit the image the
+previous version had built and the container went on running the stale
+binary. The tag now includes a short content hash of the running executable
+whenever the selection actually embeds it — selections that never carry the
+binary keep the identity they had. The hash is taken from the host
+executable rather than the cross-compiled Linux artifact because both come
+from the same source and the host one is already on disk: reading it costs
+nothing, while producing the Linux build is exactly the work the cache probe
+is there to avoid.
+
+**Why the Linux launcher is built only on a cache miss.** Producing it costs
+a cross-compile, and for a release install with no source checkout an HTTPS
+download of the release tarball — on every launch, with the result thrown
+away whenever the image was already cached. The launch path therefore probes
+the image cache first (`container.ImageExists`) and builds or downloads only
+when the image is missing, the same shape the Compose path already had with
+`regularArtifactExists`.
+
 **Why installs pin versions (and never `latest`).** The image tag is a
 content hash of the selection. Installing `latest` would make the tag lie as
 upstream moves — the same selection would produce different images over

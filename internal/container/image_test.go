@@ -315,3 +315,40 @@ func TestImageTagWithOptionsChangesTag(t *testing.T) {
 		t.Fatal("ImageTag must delegate to the zero options")
 	}
 }
+
+// The launcher binary copied into the image is image content even though the
+// rendered Dockerfile does not change with it: without the hash in the tag, an
+// upgraded ai-launcher reused the image the previous version had built and the
+// container kept running the stale binary.
+func TestImageTagIncludesTheLauncherHash(t *testing.T) {
+	sel, err := Normalize([]string{"go"}, []AgentInstall{{Command: "claude", Kind: InstallScript, Script: "https://example.test/install.sh"}}, nil)
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	tagFor := func(hash string) string {
+		t.Helper()
+		tag, err := ImageTagWithOptions(sel, DockerfileOptions{LauncherHash: hash})
+		if err != nil {
+			t.Fatalf("ImageTagWithOptions(%q) error = %v", hash, err)
+		}
+		return tag
+	}
+	none, first, second := tagFor(""), tagFor("aaaaaaaaaaaa"), tagFor("bbbbbbbbbbbb")
+	if first == second {
+		t.Fatal("a different launcher binary must produce a different image tag")
+	}
+	if none == first {
+		t.Fatal("adding the launcher hash must change the tag of an image that carries the binary")
+	}
+	if none != tagFor("") {
+		t.Fatal("the tag must stay deterministic for the same inputs")
+	}
+	// Selections that never embed the launcher keep the identity they had.
+	plain, err := ImageTag(sel)
+	if err != nil {
+		t.Fatalf("ImageTag() error = %v", err)
+	}
+	if plain != none {
+		t.Fatal("an empty launcher hash must not change the tag")
+	}
+}

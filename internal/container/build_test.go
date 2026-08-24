@@ -518,3 +518,76 @@ func TestMaterializeLauncherBinaryWritesInsideGivenProjectDir(t *testing.T) {
 		t.Fatalf("MaterializeLauncherBinary(project) path = %q; want %q", path, want)
 	}
 }
+
+// ImageExists is the cache probe on its own: producing the Linux launcher
+// binary costs a cross-compile — or an HTTPS download of the release tarball
+// when there is no checkout — and a cached image consumes neither, so the
+// caller has to be able to ask before paying.
+func TestImageExists(t *testing.T) {
+	sel := testBuildSelection(t)
+	tag := mustTag(t, sel)
+
+	t.Run("hit", func(t *testing.T) {
+		var argvs [][]string
+		runner := func(argv []string) (int, error) {
+			argvs = append(argvs, argv)
+			return 0, nil
+		}
+		got, exists, err := ImageExists(DockerRuntime{}, sel, DockerfileOptions{}, "", runner)
+		if err != nil || !exists || got != tag {
+			t.Fatalf("ImageExists() = %q, %t, %v; want %q, true, nil", got, exists, err, tag)
+		}
+		if len(argvs) != 1 || !reflect.DeepEqual(argvs[0], []string{"docker", "image", "inspect", tag}) {
+			t.Fatalf("commands = %v; want a single image inspect", argvs)
+		}
+	})
+
+	t.Run("miss", func(t *testing.T) {
+		runner := func([]string) (int, error) { return 1, nil }
+		got, exists, err := ImageExists(DockerRuntime{}, sel, DockerfileOptions{}, "", runner)
+		if err != nil || exists || got != tag {
+			t.Fatalf("ImageExists() = %q, %t, %v; want %q, false, nil", got, exists, err, tag)
+		}
+	})
+
+	t.Run("options change the tag probed", func(t *testing.T) {
+		var probed string
+		runner := func(argv []string) (int, error) {
+			probed = argv[len(argv)-1]
+			return 1, nil
+		}
+		if _, _, err := ImageExists(DockerRuntime{}, sel, DockerfileOptions{LauncherHash: "aaaaaaaaaaaa"}, "", runner); err != nil {
+			t.Fatalf("ImageExists() error = %v", err)
+		}
+		if probed == tag {
+			t.Fatal("the launcher hash must reach the probed tag, or an upgraded launcher hits the stale image")
+		}
+	})
+
+	t.Run("invalid context", func(t *testing.T) {
+		runner := func([]string) (int, error) { return 0, nil }
+		if _, _, err := ImageExists(PodmanRuntime{}, sel, DockerfileOptions{}, "remote-builder", runner); err == nil {
+			t.Fatal("ImageExists() must reject a context the runtime cannot use")
+		}
+	})
+}
+
+// A cache hit must not build: that is what lets the caller skip producing the
+// launcher binary, so the guarantee is worth pinning here too.
+func TestEnsureImageOnCacheHitIssuesOnlyTheProbe(t *testing.T) {
+	sel := testBuildSelection(t)
+	var argvs [][]string
+	runner := func(argv []string) (int, error) {
+		argvs = append(argvs, argv)
+		return 0, nil
+	}
+	// An empty launcher path: on a cache hit nothing reads it.
+	if _, cleanup, err := EnsureImage(DockerRuntime{}, sel, "version: \"2.1\"\n", "", runner); err != nil {
+		t.Fatalf("EnsureImage() error = %v", err)
+	} else {
+		cleanup()
+	}
+	if len(argvs) != 1 || argvs[0][1] != "image" {
+		t.Fatalf("commands = %v; want only the image inspect probe", argvs)
+	}
+}

@@ -422,17 +422,32 @@ func EnsureImageWithContextOptions(runtime Runtime, selection Selection, options
 	return ensureImage(runtime, selection, options, globalConfigYAML, launcherLinuxPath, contextName, runner)
 }
 
-func ensureImage(runtime Runtime, selection Selection, options DockerfileOptions, globalConfigYAML, launcherLinuxPath, contextName string, runner Runner) (string, func(), error) {
+// ImageExists reports whether the image for this selection is already present
+// on the target daemon, along with its tag. It is the cache probe ensureImage
+// runs, exported so a caller can skip preparing build inputs that only a real
+// build consumes — compiling or downloading the Linux launcher binary cost a
+// build (or an HTTPS download) on every launch, and the result was discarded
+// on every cache hit.
+func ImageExists(runtime Runtime, selection Selection, options DockerfileOptions, contextName string, runner Runner) (string, bool, error) {
 	runtime = RuntimeOrDefault(runtime)
 	if err := ValidateContext(runtime, contextName); err != nil {
-		return "", nil, err
+		return "", false, err
 	}
 	tag, err := ImageTagWithOptions(selection, options)
 	if err != nil {
-		return "", nil, err
+		return "", false, err
 	}
 	code, err := runner(append(CommandPrefix(runtime, contextName), "image", "inspect", tag))
-	if err == nil && code == 0 {
+	return tag, err == nil && code == 0, nil
+}
+
+func ensureImage(runtime Runtime, selection Selection, options DockerfileOptions, globalConfigYAML, launcherLinuxPath, contextName string, runner Runner) (string, func(), error) {
+	runtime = RuntimeOrDefault(runtime)
+	tag, exists, err := ImageExists(runtime, selection, options, contextName, runner)
+	if err != nil {
+		return "", nil, err
+	}
+	if exists {
 		return tag, func() {
 			// A cached image owns no temporary build context or overlay here.
 		}, nil
@@ -441,7 +456,7 @@ func ensureImage(runtime Runtime, selection Selection, options DockerfileOptions
 	if err != nil {
 		return "", nil, err
 	}
-	code, err = runner(BuildCommandWithContext(ctx, runtime, contextName))
+	code, err := runner(BuildCommandWithContext(ctx, runtime, contextName))
 	if err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("%s build failed: %w", runtime.Name(), err)

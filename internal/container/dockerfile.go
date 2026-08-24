@@ -14,6 +14,14 @@ type DockerfileOptions struct {
 	// the host daemon socket at run time; without that mount the client is
 	// dead weight in every layer consumer.
 	DockerCLI bool
+	// LauncherHash identifies the ai-launcher build whose Linux binary is
+	// copied into the image. It changes nothing in the rendered Dockerfile —
+	// the COPY line is the same — but it belongs in the image tag: without it
+	// an upgraded launcher kept hitting the image an older one built and the
+	// container went on running the stale binary. Set it only when the
+	// selection actually embeds the launcher, so images that never carried it
+	// keep their tag.
+	LauncherHash string
 }
 
 // Dockerfile renders the Dockerfile for a canonical Selection with the zero
