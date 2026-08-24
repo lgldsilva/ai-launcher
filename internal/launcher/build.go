@@ -123,11 +123,12 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	if cfg.UseDocker {
 		return buildDockerRun(cfg)
 	}
+	resolve := newPathResolver()
 	if cfg.UseJail {
-		command = appendJailArgs(command, cfg)
+		command = appendJailArgs(command, cfg, resolve)
 	}
 	if cfg.UseMemory {
-		command = append(command, memoryCommand(cfg), "run")
+		command = append(command, memoryCommand(cfg, resolve), "run")
 		command = appendMemoryScope(command, cfg)
 		command = appendWorkstreamSelection(command, cfg)
 		if cfg.Fresh {
@@ -136,12 +137,12 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
-		if resolved := resolveHostPath(cfg.Executable); resolved != "" {
+		if resolved := resolve.hostPath(cfg.Executable); resolved != "" {
 			command = append(command, "--executable", resolved)
 		}
 	} else {
 		executable := cfg.Agent.Command
-		if resolved := resolveHostPath(cfg.Executable); resolved != "" {
+		if resolved := resolve.hostPath(cfg.Executable); resolved != "" {
 			executable = resolved
 		}
 		command = append(command, executable)
