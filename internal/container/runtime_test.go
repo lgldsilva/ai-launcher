@@ -397,7 +397,7 @@ func TestDockerContextInspectCommandPassesContextName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dockerContextInspectCommand() error = %v", err)
 	}
-	argv, err := os.ReadFile(log)
+	argv, err := os.ReadFile(log) // #nosec G304 -- log is a path this test just created under t.TempDir()
 	if err != nil {
 		t.Fatal(err)
 	}
