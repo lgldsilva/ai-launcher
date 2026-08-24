@@ -416,6 +416,19 @@ guessing a different connection mechanism. The TUI lists contexts from
 `docker context ls` when the context editor opens, offers `(current)` as the
 empty choice, and still accepts a manually typed name if listing fails.
 
+The selected daemon must be local. All container mounts are same-path bind
+mounts of host paths (project directory, home dotfiles, the ai-memory binary,
+Compose service data), which only resolve correctly when the daemon runs on
+the same machine. After the runtime preflight succeeds, the launcher resolves
+the effective endpoint — `DOCKER_HOST` first (it overrides contexts in the
+Docker CLI), otherwise `docker context inspect` on the selected or current
+context — and rejects `ssh://` endpoints, `tcp://` endpoints to non-loopback
+hosts, and any other non-local scheme before building or mounting. `unix://`,
+`npipe://`, empty endpoints, and loopback `tcp://` (rootless Docker, colima)
+are local. The check fails closed: when the endpoint cannot be determined,
+the launch is refused with a message explaining how to select a local
+endpoint, because a refused launch beats silently wrong mounts.
+
 An interactive Docker launch may also set `container_tmux.enabled`. The
 generated development profile installs tmux and wraps the in-container agent
 as `tmux new-session -A -s ai-launcher ...`, leaving the first window attached

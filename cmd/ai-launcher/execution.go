@@ -110,6 +110,9 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, func(), 
 	if err := container.RuntimeInfo(runtime, r.launchConfig.ContainerContext); err != nil {
 		return argv, noop, fmt.Errorf("%s runtime is unavailable: %w", runtime.Name(), err)
 	}
+	if err := container.RequireLocalDaemon(runtime, r.launchConfig.ContainerContext); err != nil {
+		return argv, noop, err
+	}
 
 	// The image needs the launcher binary for release agents and for the
 	// explicit in-image ai-memory installation; script/npm/host-only agents

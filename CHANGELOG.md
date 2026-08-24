@@ -13,6 +13,25 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the container backend rejects remote Docker daemons
+
+The backend bind-mounts host paths at the same path inside the container
+(project directory, home dotfiles, the ai-memory binary, Compose service
+data). When the selected Docker context — or `DOCKER_HOST` — pointed at a
+remote daemon (`ssh://`, `tcp://` to a non-loopback host), those mounts
+silently resolved to wrong or empty directories on the daemon's machine.
+
+Launch pre-flight now resolves the effective endpoint (`DOCKER_HOST` first,
+then `docker context inspect` on the selected or current context) and refuses
+to launch against a remote daemon, failing closed when the endpoint cannot be
+determined. `unix://`, `npipe://`, empty endpoints, and loopback `tcp://`
+(rootless Docker, colima) are accepted.
+
+**What you need to do:** if a launch now fails with "container backend
+requires a local Docker daemon", select a local context
+(`--container-context`, `options.container_context`, or `docker context use`)
+or unset `DOCKER_HOST`.
+
 ### Added — generated container services are hardened with `cap_drop: [ALL]`
 
 Every generated service — the plain `docker run` agent, Compose services,

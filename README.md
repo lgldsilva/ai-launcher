@@ -196,6 +196,15 @@ empty `(current)` entry leaves the host's current context unchanged. Manual
 entry remains available if the daemon cannot list contexts. The CLI equivalent
 is `docker context ls`.
 
+The container backend requires a **local** Docker daemon. Because the backend
+bind-mounts host paths at the same path inside the container (project
+directory, home dotfiles, the ai-memory binary), a remote daemon — a context
+or `DOCKER_HOST` using `ssh://`, or `tcp://` to a non-loopback host — would
+silently mount wrong or empty directories on the daemon's machine. Launch
+pre-flight rejects such endpoints (fail-closed when the endpoint cannot be
+determined); `unix://`, `npipe://`, and loopback `tcp://` (rootless Docker,
+colima) are accepted. Switch to a local context to launch.
+
 The TUI also exposes Container → Runtime. It lists `auto`, Docker, Podman, and
 nerdctl with local PATH availability; selecting Podman or nerdctl clears an
 incompatible Docker context before launch.
