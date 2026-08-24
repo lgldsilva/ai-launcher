@@ -15,26 +15,35 @@ import (
 // LoadGlobal reads the global config, falling back to DefaultGlobal for a
 // missing file and merging built-in defaults for omitted sections.
 func LoadGlobal(path string) (Global, error) {
+	cfg, _, err := LoadGlobalWithWarnings(path)
+	return cfg, err
+}
+
+// LoadGlobalWithWarnings is LoadGlobal plus a non-fatal warning for every key
+// the file declares that the schema does not know. Unknown keys load fine —
+// a config written by a newer launcher must not hard-fail here — but the next
+// SaveGlobal silently drops them, so the caller should surface them.
+func LoadGlobalWithWarnings(path string) (Global, []string, error) {
 	defaults := DefaultGlobal()
 	if path == "" {
-		return defaults, nil
+		return defaults, nil, nil
 	}
 	b, err := os.ReadFile(path) // #nosec G304 -- path is the user-supplied global config location by design
 	if errors.Is(err, os.ErrNotExist) {
-		return defaults, nil
+		return defaults, nil, nil
 	}
 	if err != nil {
-		return defaults, fmt.Errorf("read global config: %w", err)
+		return defaults, nil, fmt.Errorf("read global config: %w", err)
 	}
 	var cfg Global
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		return defaults, fmt.Errorf("parse global config %s: %w", path, err)
+		return defaults, nil, fmt.Errorf("parse global config %s: %w", path, err)
 	}
 	cfg = mergeGlobalDefaults(defaults, cfg)
 	if err := ValidateVersion(cfg.Version); err != nil {
-		return defaults, err
+		return defaults, nil, err
 	}
-	return cfg, nil
+	return cfg, unknownKeyWarnings("global config", path, b, Global{}), nil
 }
 
 // SaveGlobal persists the global catalog atomically and with user-only

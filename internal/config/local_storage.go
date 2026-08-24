@@ -16,18 +16,27 @@ import (
 // to DefaultLocal and omitted option keys retain safe defaults. Files larger
 // than maxLocalConfigBytes are rejected before full allocation.
 func LoadLocal(path string) (Local, error) {
+	cfg, _, err := LoadLocalWithWarnings(path)
+	return cfg, err
+}
+
+// LoadLocalWithWarnings is LoadLocal plus a non-fatal warning for every key
+// the file declares that the schema does not know. Unknown keys load fine —
+// a config written by a newer launcher must not hard-fail here — but they are
+// silently dropped by the next save, so the caller should surface them.
+func LoadLocalWithWarnings(path string) (Local, []string, error) {
 	cfg := DefaultLocal()
 	if path == "" {
-		return cfg, nil
+		return cfg, nil, nil
 	}
 	path = localConfigReadPath(path)
 	// #nosec G304 -- path is the user-supplied local config location by design
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return cfg, nil
+		return cfg, nil, nil
 	}
 	if err != nil {
-		return cfg, fmt.Errorf("read local config: %w", err)
+		return cfg, nil, fmt.Errorf("read local config: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	// Read at most limit+1 so oversize is detected without slurping a multi-GB
@@ -35,14 +44,14 @@ func LoadLocal(path string) (Local, error) {
 	limited := io.LimitReader(f, int64(maxLocalConfigBytes)+1)
 	b, err := io.ReadAll(limited)
 	if err != nil {
-		return cfg, fmt.Errorf("read local config: %w", err)
+		return cfg, nil, fmt.Errorf("read local config: %w", err)
 	}
 	if len(b) > maxLocalConfigBytes {
-		return cfg, fmt.Errorf("local config %s exceeds %d byte limit", path, maxLocalConfigBytes)
+		return cfg, nil, fmt.Errorf("local config %s exceeds %d byte limit", path, maxLocalConfigBytes)
 	}
 	var loaded Local
 	if err := yaml.Unmarshal(b, &loaded); err != nil {
-		return cfg, fmt.Errorf("parse local config %s: %w", path, err)
+		return cfg, nil, fmt.Errorf("parse local config %s: %w", path, err)
 	}
 	if loaded.Version == "" {
 		loaded.Version = CurrentVersion
@@ -60,9 +69,9 @@ func LoadLocal(path string) (Local, error) {
 		loaded.Options = cfg.Options
 	}
 	if err := ValidateVersion(loaded.Version); err != nil {
-		return cfg, err
+		return cfg, nil, err
 	}
-	return loaded, nil
+	return loaded, unknownKeyWarnings("local config", path, b, Local{}), nil
 }
 
 // LocalSaveResult describes the effective path written by SaveLocalResult and
