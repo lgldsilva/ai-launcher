@@ -60,6 +60,7 @@ func (m *Model) loadProfile(name string) {
 		m.launch.ContainerNetworkAllowedDomains = append([]string(nil), profile.Options.ContainerNetworkAllowedDomains...)
 		m.launch.ContainerEnvironment = copyStringMap(profile.Options.ContainerEnvironment)
 		m.launch.ContainerServicePorts = copyServicePortMappings(profile.Options.ContainerServicePorts)
+		m.launch.ContainerDependencies = profile.Options.ContainerDependencies.Clone()
 		m.launch.ContainerTmux = profile.Options.ContainerTmux
 		m.launch.Docker.MemoryLimit = profile.Options.ContainerMemory
 		m.launch.Docker.CPULimit = profile.Options.ContainerCPUs
@@ -268,6 +269,7 @@ func (m *Model) saveProfileAs(name string) {
 			ContainerNetworkAllowedDomains: append([]string(nil), m.launch.ContainerNetworkAllowedDomains...),
 			ContainerEnvironment:           copyStringMap(m.launch.ContainerEnvironment),
 			ContainerServicePorts:          copyServicePortMappings(m.launch.ContainerServicePorts),
+			ContainerDependencies:          m.launch.ContainerDependencies.Clone(),
 			ContainerTmux:                  m.launch.ContainerTmux,
 			ContainerMemory:                m.launch.Docker.MemoryLimit,
 			ContainerCPUs:                  m.launch.Docker.CPULimit,
