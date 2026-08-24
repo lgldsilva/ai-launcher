@@ -21,6 +21,42 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
+// launcherExecutableHash returns a short content hash of the running
+// ai-launcher executable, or "" when it cannot be read.
+//
+// It exists to make the launcher part of the container image identity. The
+// image embeds a Linux build of this launcher (for release agents, in-image
+// ai-memory and the auxiliary tools), but the image tag only ever hashed the
+// selection — so upgrading ai-launcher hit the image the previous version had
+// built and the container went on running the stale binary. Hashing the host
+// executable is enough: the Linux build is produced from the same source, and
+// a launcher upgrade always changes these bytes.
+//
+// A failure is not fatal: without the hash the tag falls back to the old
+// selection-only identity, which is worse for staleness but still correct for
+// everything else. Refusing to launch because a hash could not be taken would
+// trade a rare inconvenience for a hard stop.
+func launcherExecutableHash() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err == nil {
+		executable = resolved
+	}
+	file, err := os.Open(executable) // #nosec G304 -- the running executable's own path
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(digest.Sum(nil))[:12]
+}
+
 // buildLauncherLinux cross-compiles this binary for linux/amd64 into a temp
 // file and returns its path. The image build runs the launcher's installer
 // inside the container, so the binary must be a linux executable.
