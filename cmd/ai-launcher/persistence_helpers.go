@@ -14,46 +14,66 @@ import (
 )
 
 func saveIfRequestedResult(save bool, path string, local config.Local, launch launcher.LaunchConfig) (config.LocalSaveResult, error) {
+	return saveIfRequestedResultKeeping(save, false, path, local, launch)
+}
+
+// saveIfRequestedResultKeeping is saveIfRequestedResult with the option to
+// leave the file's existing options block alone. keepOptions is what the
+// interactive autosave passes after a profile load the operator did not edit:
+// the selection that ran came from the profile, so writing it back would
+// erase every option the workspace file declares and the profile omits.
+func saveIfRequestedResultKeeping(save, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig) (config.LocalSaveResult, error) {
 	if !save {
 		return config.LocalSaveResult{}, nil
 	}
 	local.Agent = launch.Agent.Command
 	local.Permissions = launch.Permissions
 	local.Mounts = launch.Mounts
-	local.Options.Jail = launch.UseJail
-	local.Options.Docker = launch.UseDocker
-	local.Options.ContainerRuntime = config.EffectiveContainerRuntime(launch.ContainerRuntime)
-	local.Options.ContainerContext = strings.TrimSpace(launch.ContainerContext)
-	local.Options.Stacks = launch.Docker.Selection.Stacks
-	local.Options.Services = append([]string(nil), launch.Services...)
-	local.Options.ContainerNetworkAllowedDomains = append([]string(nil), launch.ContainerNetworkAllowedDomains...)
-	local.Options.ContainerMemory = launch.Docker.MemoryLimit
-	local.Options.ContainerCPUs = launch.Docker.CPULimit
-	local.Options.ContainerPIDs = launch.Docker.PIDsLimit
-	local.Options.ContainerPorts = append([]config.PortMapping(nil), launch.Docker.ExposedPorts...)
-	local.Options.ContainerNetwork = launch.Docker.NetworkName
-	local.Options.ContainerNetworkInternal = launch.ContainerNetworkInternal
-	local.Options.ContainerHostGateway = launch.ContainerHostGateway
-	local.Options.ContainerEnvironment = cloneStringMap(launch.ContainerEnvironment)
-	local.Options.ContainerServicePorts = cloneServicePortMappings(launch.ContainerServicePorts)
-	local.Options.ContainerDependencies = launch.ContainerDependencies.Clone()
-	local.Options.ContainerTmux = launch.ContainerTmux
-	local.Options.Memory = launch.UseMemory
-	local.Options.Yolo = launch.Yolo
-	local.Options.Fresh = launch.Fresh
-	local.Options.NewWorkstream = launch.NewWorkstream
-	local.Options.Workstream = launch.Workstream
+	if keepOptions {
+		return config.SaveLocalResult(path, local)
+	}
+	local.Options = optionsFromLaunch(local.Options, launch)
+	return config.SaveLocalResult(path, local)
+}
+
+// optionsFromLaunch projects a launch selection onto the persisted options
+// block, keeping the fields of base the selection does not carry.
+func optionsFromLaunch(base config.Options, launch launcher.LaunchConfig) config.Options {
+	options := base
+	options.Jail = launch.UseJail
+	options.Docker = launch.UseDocker
+	options.ContainerRuntime = config.EffectiveContainerRuntime(launch.ContainerRuntime)
+	options.ContainerContext = strings.TrimSpace(launch.ContainerContext)
+	options.Stacks = launch.Docker.Selection.Stacks
+	options.Services = append([]string(nil), launch.Services...)
+	options.ContainerNetworkAllowedDomains = append([]string(nil), launch.ContainerNetworkAllowedDomains...)
+	options.ContainerMemory = launch.Docker.MemoryLimit
+	options.ContainerCPUs = launch.Docker.CPULimit
+	options.ContainerPIDs = launch.Docker.PIDsLimit
+	options.ContainerPorts = append([]config.PortMapping(nil), launch.Docker.ExposedPorts...)
+	options.ContainerNetwork = launch.Docker.NetworkName
+	options.ContainerNetworkInternal = launch.ContainerNetworkInternal
+	options.ContainerHostGateway = launch.ContainerHostGateway
+	options.ContainerEnvironment = cloneStringMap(launch.ContainerEnvironment)
+	options.ContainerServicePorts = cloneServicePortMappings(launch.ContainerServicePorts)
+	options.ContainerDependencies = launch.ContainerDependencies.Clone()
+	options.ContainerTmux = launch.ContainerTmux
+	options.Memory = launch.UseMemory
+	options.Yolo = launch.Yolo
+	options.Fresh = launch.Fresh
+	options.NewWorkstream = launch.NewWorkstream
+	options.Workstream = launch.Workstream
 	// Workspace and Project are ai-memory scope names the operator chose, so
 	// they round-trip. ProjectDir deliberately does not: it defaults to the
 	// working directory, and persisting that derived value is what wrote an
 	// absolute path into options.workspace, which the next jail launch then
 	// forwarded to `ai-memory run --workspace` as a path-shaped scope name.
-	local.Options.Workspace = launch.Workspace
-	local.Options.Project = launch.Project
-	local.Options.JailFlags = launch.JailFlags
-	local.Options.ExtraArgs = launch.ExtraArgs
-	local.Options.ParamValues = launch.ParamValues
-	return config.SaveLocalResult(path, local)
+	options.Workspace = launch.Workspace
+	options.Project = launch.Project
+	options.JailFlags = launch.JailFlags
+	options.ExtraArgs = launch.ExtraArgs
+	options.ParamValues = launch.ParamValues
+	return options
 }
 
 // saveLocalSelection persists the selection and records the written file's
@@ -62,7 +82,18 @@ func saveIfRequestedResult(save bool, path string, local config.Local, launch la
 // refusing the file as repo-supplied input — the trust boundary is about who
 // wrote the file, and only the launcher can add a hash to the global config.
 func saveLocalSelection(globalPath string, save bool, path string, local config.Local, launch launcher.LaunchConfig, warningOut ...io.Writer) error {
-	result, err := saveIfRequestedResult(save, path, local, launch)
+	return saveLocalSelectionOptions(globalPath, save, false, path, local, launch, warningOut...)
+}
+
+// saveLocalSelectionKeeping is the interactive autosave: it always writes, and
+// keepOptions leaves the file's own options block untouched (see
+// saveIfRequestedResultKeeping).
+func saveLocalSelectionKeeping(globalPath string, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig, warningOut ...io.Writer) error {
+	return saveLocalSelectionOptions(globalPath, true, keepOptions, path, local, launch, warningOut...)
+}
+
+func saveLocalSelectionOptions(globalPath string, save, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig, warningOut ...io.Writer) error {
+	result, err := saveIfRequestedResultKeeping(save, keepOptions, path, local, launch)
 	if err != nil || !save {
 		return err
 	}

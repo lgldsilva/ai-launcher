@@ -97,6 +97,16 @@ approval record, service data) out of version control.
 2. **Selection precedence**: built-in defaults < local
    `.ai-launcher/config.yaml` < profile < explicit flags. Profiles only
    replace the blocks they define.
+   The interactive autosave is bounded by the same rule. Running a selection
+   from the TUI writes it back to the workspace file, but a profile replaces
+   the whole `options:` block, so autosaving after a profile load deleted
+   every option the file declared and the profile omitted — silently, on a
+   launch nobody asked to save. The TUI therefore reports the selection a
+   profile load produced (`Hooks.ProfileLoaded`), and the autosave keeps the
+   file's own options block whenever the launch matches it field for field —
+   the operator ran a profile, not a selection of their own. One edit to any
+   option after the load makes the selection theirs again and it autosaves in
+   full, as do Ctrl+S and `--save`, which are explicit.
 2b. **The local config is untrusted input**: `.ai-launcher/config.yaml` ships
    with the repository, so `enforceLocalConfigTrust` refuses one that selects
    an unresolvable agent, disables the sandbox while the global catalog

@@ -235,3 +235,114 @@ func TestTuiRunAutosaveFailureWarnsButProceeds(t *testing.T) {
 		t.Fatalf("errOut = %q; want a warning naming the failed save", errOut.String())
 	}
 }
+
+// stubRunTUIAfterProfile replaces the TUI with a stub that loads a profile
+// (reporting it through the ProfileLoaded hook, as loadProfile does) and then
+// confirms the given selection.
+func stubRunTUIAfterProfile(t *testing.T, loaded, confirmed launcher.LaunchConfig) func() {
+	t.Helper()
+	previous := runTUI
+	runTUI = func(_ config.Global, _ launcher.LaunchConfig, hooks tui.Hooks, _ string, _ tui.Options) (launcher.LaunchConfig, error) {
+		if hooks.ProfileLoaded != nil {
+			hooks.ProfileLoaded(loaded)
+		}
+		return confirmed, nil
+	}
+	return func() { runTUI = previous }
+}
+
+// Loading a profile replaces the whole options block, and the interactive
+// launch autosaves. Together they deleted every option the workspace file
+// declared and the profile omitted — here stacks and container_memory — on a
+// launch the operator never asked to save. The autosave must leave the file's
+// options alone when the profile ran unedited.
+func TestTuiRunKeepsLocalOptionsAfterUneditedProfileLoad(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: false\n  memory: false\n  stacks: [go]\n  container_memory: 4g\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobal(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What `options: {yolo: true}` alone produces once loadProfile has run.
+	profileSelection := launcher.LaunchConfig{
+		Agent: config.Agent{Command: "custom-cli"},
+		Yolo:  true,
+	}
+	restore := stubRunTUIAfterProfile(t, profileSelection, profileSelection)
+	defer restore()
+	req := &launchRequest{
+		opts:         cliOptions{globalPath: globalPath, localPath: localPath},
+		global:       global,
+		local:        local,
+		launchConfig: launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}},
+		errOut:       &bytes.Buffer{},
+	}
+	if proceed, err := req.confirmSelection(""); err != nil || !proceed {
+		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
+	}
+	saved, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if len(saved.Options.Stacks) != 1 || saved.Options.Stacks[0] != "go" {
+		t.Errorf("saved stacks = %v; the profile omits stacks, so the file's own value must survive", saved.Options.Stacks)
+	}
+	if saved.Options.ContainerMemory != "4g" {
+		t.Errorf("saved container_memory = %q; want the file's own 4g", saved.Options.ContainerMemory)
+	}
+	if saved.Options.Yolo {
+		t.Error("the profile's yolo must not be written to the workspace file either — the block is kept whole")
+	}
+	if saved.Agent != "custom-cli" {
+		t.Errorf("saved agent = %q; the agent selection still autosaves", saved.Agent)
+	}
+}
+
+// The exception is narrow: once the operator edits an option after loading a
+// profile, the selection is theirs and autosaves in full.
+func TestTuiRunAutosavesOptionsEditedAfterProfileLoad(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: false\n  memory: false\n  stacks: [go]\n  container_memory: 4g\n")
+	local, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobal(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileSelection := launcher.LaunchConfig{
+		Agent: config.Agent{Command: "custom-cli"},
+		Yolo:  true,
+	}
+	edited := profileSelection
+	edited.UseMemory = true // an options toggle after the load
+	restore := stubRunTUIAfterProfile(t, profileSelection, edited)
+	defer restore()
+	req := &launchRequest{
+		opts:         cliOptions{globalPath: globalPath, localPath: localPath},
+		global:       global,
+		local:        local,
+		launchConfig: launcher.LaunchConfig{Agent: config.Agent{Command: "custom-cli"}},
+		errOut:       &bytes.Buffer{},
+	}
+	if proceed, err := req.confirmSelection(""); err != nil || !proceed {
+		t.Fatalf("confirmSelection() = %t, %v; want proceed", proceed, err)
+	}
+	saved, err := config.LoadLocal(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocal() error = %v", err)
+	}
+	if !saved.Options.Memory || !saved.Options.Yolo {
+		t.Fatalf("saved options = memory:%t yolo:%t; an edited selection autosaves in full",
+			saved.Options.Memory, saved.Options.Yolo)
+	}
+	if len(saved.Options.Stacks) != 0 || saved.Options.ContainerMemory != "" {
+		t.Errorf("saved stacks = %v, container_memory = %q; the edited selection owns the block",
+			saved.Options.Stacks, saved.Options.ContainerMemory)
+	}
+}

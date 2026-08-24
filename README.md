@@ -676,7 +676,7 @@ rows declared by the agent's catalog entry follow them):
 | `a` / `+` / `/` | Mounts: open add-folder panel |
 | `Backspace` | Remove the selected mount (or edit path while adding) |
 | `d` / `Ctrl+D` | Dry-run (preview argv, stay open) |
-| `Ctrl+S` | Save the selection to `.ai-launcher/config.yaml` (running with `r` also autosaves, so the next open restores it) |
+| `Ctrl+S` | Save the selection to `.ai-launcher/config.yaml` (running with `r` also autosaves, so the next open restores it — except the options block of a profile you loaded and did not edit, which stays out of the workspace file) |
 | `Ctrl+P` | Save the selection as a named profile in the global config |
 | `?` | Help (full key list) |
 | `q` / `Esc` / `Ctrl+C` | Quit without running |
