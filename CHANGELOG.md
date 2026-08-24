@@ -13,6 +13,23 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — inert network-isolation configs now fail pre-flight instead of warning
+
+`container_network_internal: true` with no Compose services selected used to
+warn (`internal-network-requires-compose`) and launch anyway; so did
+`container_network_allowed_domains` without the internal network
+(`container-network-allowed-domains-without-internal-network`). Both are
+silent no-ops — the plain `docker run` backend has no Compose network, and
+without the internal network no egress proxy is ever injected — so the
+operator believes egress is locked down while it is fully open.
+
+Both are now **fatal** pre-flight issues: the launch refuses to proceed.
+
+**What you need to do:** either select at least one Compose service when
+setting `container_network_internal: true`, or set
+`container_network_internal: true` when configuring
+`container_network_allowed_domains` — or drop the inert setting.
+
 ### Changed — `--workspace` no longer sets the container project directory
 
 `options.workspace` and `options.project` are ai-memory *scope names* — the

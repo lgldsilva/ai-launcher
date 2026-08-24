@@ -299,12 +299,16 @@ generated Compose network `internal: true` (`internal/container/compose.go`),
 blocking every outbound route for every service on it — including the
 agent's own LLM API calls. There is no selective allowlist: it is either
 "the container backend has the same open egress it always had" or "nothing
-gets out at all." Two pre-flight warnings guard the two ways this surprises
-an operator: `internal-network-blocks-agent` fires whenever the toggle is on
-and a Compose service is selected (the common case), and
-`internal-network-requires-compose` fires when it is on with zero services
-selected — the plain `docker run` backend (`BuildRunCommand`) has no Compose
-network at all, so the toggle is a silent no-op there.
+gets out at all." Two pre-flight issues guard
+the two ways this surprises an operator, and they differ in severity because
+the surprises differ: `internal-network-blocks-agent` is a **warning**
+whenever the toggle is on and a Compose service is selected (the common case)
+— blocking everything is a legitimate operator choice;
+`internal-network-requires-compose` is **fatal** when it is on with zero
+services selected — the plain `docker run` backend (`BuildRunCommand`) has no
+Compose network at all, so the toggle is a silent no-op there, and a no-op
+security toggle is a false sense of security the launch refuses to proceed
+under rather than merely warn about.
 
 **Why Compose-only.** `internal: true` is a Compose Spec network-level
 attribute; there is no `docker run` equivalent short of a separate
@@ -313,7 +317,7 @@ building. `BuildCompose` already only runs when at least one infrastructure
 service is selected (see "The docker container backend replaces the jail"
 above and `internal/launcher/compose.go`'s service-count guard) — a launch
 with the container backend but no services goes through the plain `docker
-run` path today regardless of this toggle, so the requires-compose warning
+run` path today regardless of this toggle, so the requires-compose failure
 is not hypothetical.
 
 **Why the field is persisted separately from the resolved value.**
@@ -344,8 +348,10 @@ variants) pointing at it. `containerNetworkInternalIssues` softens its
 warning from `internal-network-blocks-agent` to `internal-network-restricts-agent`
 when domains are configured (still a warning — an incomplete allowlist fails
 silently as a blocked connection, not a clear error); a new
-`container-network-allowed-domains-without-internal-network` warning covers
-the inert case (domains configured, internal network off).
+`container-network-allowed-domains-without-internal-network` failure rejects
+the inert case (domains configured, internal network off) — the proxy would
+never be injected, so egress would stay fully open, which is the opposite of
+what the operator configuring the list means to enforce.
 
 **Why squid, not tinyproxy.** Squid's `acl ... dstdomain` supports real
 subdomain-wildcard matching and a `CONNECT`-method ACL for HTTPS tunneling;

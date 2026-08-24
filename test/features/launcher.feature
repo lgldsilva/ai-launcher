@@ -738,7 +738,7 @@ Feature: Launcher command contract
       internal-network-blocks-agent
       """
 
-  Scenario: Warns when the internal network has no Compose services to apply to
+  Scenario: Rejects when the internal network has no Compose services to apply to
     Given a validation configuration
       """
       agent: claude
@@ -1384,7 +1384,7 @@ Feature: Launcher command contract
       internal-network-restricts-agent
       """
 
-  Scenario: Warns when allowed domains are configured without the internal network
+  Scenario: Rejects when allowed domains are configured without the internal network
     Given a validation configuration
       """
       agent: claude
