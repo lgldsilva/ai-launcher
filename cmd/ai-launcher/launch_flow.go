@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -226,9 +227,16 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 		}
 		return !r.opts.save, nil
 	}
+	// The last selection a profile load produced, if any. It is what tells an
+	// unedited profile launch apart from options the operator chose.
+	var profileSelection *launcher.LaunchConfig
 	confirmed, err := runTUI(r.global, r.launchConfig, tui.Hooks{
 		Save: func(updated launcher.LaunchConfig) error {
 			return saveLocalSelection(r.opts.globalPath, true, r.opts.localPath, r.local, updated, r.errOut)
+		},
+		ProfileLoaded: func(loaded launcher.LaunchConfig) {
+			snapshot := loaded
+			profileSelection = &snapshot
 		},
 		SaveProfile: func(name string, updated launcher.LaunchConfig) error {
 			if err := config.SetProfile(&r.global, name, profileFromLaunch(updated)); err != nil {
@@ -261,10 +269,28 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 	// with provenance recorded, or the trust boundary would refuse the file
 	// the launcher itself wrote. Best-effort: a failed save never blocks a
 	// launch, it warns.
-	if err := saveLocalSelection(r.opts.globalPath, true, r.opts.localPath, r.local, r.launchConfig, r.errOut); err != nil {
+	//
+	// One exception: a profile the operator loaded and did not edit. Its
+	// options block replaced the workspace file's wholesale, so persisting it
+	// would delete every option the file declares and the profile omits —
+	// silently, on a launch the operator never asked to save. Ctrl+S and
+	// --save still write the full selection.
+	keepOptions := profileSelection != nil && sameLocalOptions(*profileSelection, r.launchConfig)
+	if err := saveLocalSelectionKeeping(r.opts.globalPath, keepOptions, r.opts.localPath, r.local, r.launchConfig, r.errOut); err != nil {
 		warnf(r.errOut, "could not save the selection to %s: %v", r.opts.localPath, err)
 	}
 	return true, nil
+}
+
+// sameLocalOptions reports whether two selections persist to the same options
+// block. Comparing the projection rather than the launch configs keeps the
+// answer about what would be written: a different agent, mount list or
+// permission set is not an options edit.
+func sameLocalOptions(a, b launcher.LaunchConfig) bool {
+	return reflect.DeepEqual(
+		optionsFromLaunch(config.Options{}, a),
+		optionsFromLaunch(config.Options{}, b),
+	)
 }
 
 // ensureDockerProjectDir gives Docker a concrete project directory when the

@@ -1117,3 +1117,31 @@ func TestSaveProfileRoundTripsContainerDependencies(t *testing.T) {
 		t.Fatalf("in-memory profile container_dependencies = %#v; want %#v", profile.Options.ContainerDependencies, deps)
 	}
 }
+
+// The launcher autosaves the local config after an interactive launch, so it
+// has to be able to tell a profile-supplied options block apart from one the
+// operator chose. loadProfile reports the selection it produced; without the
+// hook firing, the autosave writes the profile over the workspace file.
+func TestLoadProfileReportsTheLoadedSelection(t *testing.T) {
+	global := config.DefaultGlobal()
+	global.Profiles = map[string]config.Profile{
+		"fast": {Agent: "claude", Options: &config.Options{Yolo: true}},
+	}
+	model := NewModel(global, launcher.LaunchConfig{Permissions: map[string]bool{}})
+	var reported []launcher.LaunchConfig
+	model.hooks.ProfileLoaded = func(loaded launcher.LaunchConfig) {
+		reported = append(reported, loaded)
+	}
+	model.loadProfile("fast")
+	if len(reported) != 1 {
+		t.Fatalf("ProfileLoaded called %d times; want exactly one report per load", len(reported))
+	}
+	if !reported[0].Yolo {
+		t.Fatalf("reported selection = %#v; want the profile's options applied", reported[0])
+	}
+	// An unknown profile changes nothing, so it must not report either.
+	model.loadProfile("missing")
+	if len(reported) != 1 {
+		t.Fatalf("ProfileLoaded called %d times; an unknown profile loads nothing", len(reported))
+	}
+}

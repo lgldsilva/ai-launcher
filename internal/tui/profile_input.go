@@ -90,6 +90,9 @@ func (m *Model) loadProfile(name string) {
 	// depends on the UseJail the profile just set.
 	m.reapplyAutoMounts()
 	m.status = "Profile loaded: " + name
+	if m.hooks.ProfileLoaded != nil {
+		m.hooks.ProfileLoaded(m.launch)
+	}
 }
 
 // reapplyAutoMounts re-merges the home dotfile symlink targets that escape

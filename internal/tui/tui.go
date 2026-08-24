@@ -136,8 +136,15 @@ var (
 
 // Hooks groups the optional persistence callbacks invoked by the TUI.
 type Hooks struct {
-	Save          func(launcher.LaunchConfig) error
-	SaveProfile   func(name string, launch launcher.LaunchConfig) error
+	Save        func(launcher.LaunchConfig) error
+	SaveProfile func(name string, launch launcher.LaunchConfig) error
+	// ProfileLoaded reports the selection a profile load just produced. The
+	// launcher autosaves the local config after every interactive launch, and
+	// a profile replaces the options block wholesale — so the caller needs to
+	// know what the profile put there to tell "the operator loaded a profile"
+	// apart from "the operator chose these options", and avoid writing the
+	// former over the workspace file.
+	ProfileLoaded func(launcher.LaunchConfig)
 	ReviewCompose func(launcher.LaunchConfig) (*ComposeUpdateReview, error)
 }
 
