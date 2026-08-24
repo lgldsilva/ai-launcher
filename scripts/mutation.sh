@@ -21,11 +21,16 @@ fi
 mutation_output_dir=$(dirname -- "$mutation_output")
 mkdir -p "$mutation_output_dir"
 
-# A diff that only changes workflows, documentation, commands, or other files
-# outside the mutation scope has no mutants to generate. Treating that case as
-# a zero-percent mutation result turns a non-applicable gate into a failure.
+# A diff that only changes workflows, documentation, commands, test files, or
+# other files outside the mutation scope has no mutants to generate. Treating
+# that case as a zero-percent mutation result turns a non-applicable gate into
+# a failure. _test.go files are outside the scope for the same reason gremlins
+# never mutates them: they are the tests doing the killing, not the code under
+# mutation. Counting them made a test-only change start a run that could only
+# ever report 0.00%.
 mutation_scope=$(git diff --name-only "$mutation_base"... -- internal | awk '
   /^internal\/.*\.go$/ &&
+  $0 !~ /_test\.go$/ &&
   $0 !~ /^internal\/(tui|installer|selfupdate|cmd)\// &&
   $0 !~ /^internal\/launcher\/(executor|replace_.*)\.go$/ {
     print
@@ -93,6 +98,16 @@ run_mutation() {
 '
 }
 
+# mutant_total sums the mutant counts gremlins reports on its status line
+# ("Killed: N, Lived: N, Not covered: N", plus whatever statuses a future
+# version adds), so a run that generated nothing can be told apart from one
+# whose mutants survived.
+mutant_total() {
+  sed -n 's/^[[:space:]]*Killed:[[:space:]]*[0-9].*/&/p' "$mutation_log" | head -1 |
+    tr -cs '0-9' ' ' |
+    awk '{ total = 0; for (i = 1; i <= NF; i++) { total += $i }; print total + 0 }'
+}
+
 # enforce_thresholds fails the gate when the gremlins summary misses the
 # configured minimums; a run without a summary line is a failure too.
 enforce_thresholds() {
@@ -101,6 +116,18 @@ enforce_thresholds() {
   if [ -z "$efficacy" ] || [ -z "$mcover" ]; then
     printf '%s\n' 'FAIL: mutation run produced no efficacy/coverage summary.' >&2
     return 1
+  fi
+  # An eligible file can still yield no mutants: a change that only adds
+  # catalog entries or other data has no conditional, arithmetic or statement
+  # for a mutator to touch. There is no percentage to judge, and reading the
+  # 0.00% gremlins prints as a failure would gate the change on an empty
+  # sample. A run that failed to produce mutants for the wrong reason — a bad
+  # base, a broken exclusion, a build error — does not reach here: it exits
+  # non-zero or prints no summary, and both already fail above.
+  mutants=$(mutant_total)
+  if [ "$mutants" -eq 0 ]; then
+    printf 'SKIP: the diff generated no mutants (no mutable statements changed); mutation thresholds are not applicable.\n'
+    return 0
   fi
   if ! awk -v got="$efficacy" -v min="$mutation_efficacy_min" 'BEGIN { exit !(got + 0 >= min + 0) }'; then
     printf 'FAIL: mutation efficacy %s%% is below the %s%% minimum.\n' "$efficacy" "$mutation_efficacy_min" >&2

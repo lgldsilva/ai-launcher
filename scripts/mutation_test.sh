@@ -96,3 +96,137 @@ if [ ! -e "$eligible_docker_called" ]; then
 fi
 
 echo 'PASS: mutation wrapper runs the mutator for eligible Go changes'
+
+# A change that only touches _test.go files under internal/ used to look
+# eligible, start a real mutation run, and then fail on the 0.00% gremlins
+# reports for a diff with nothing to mutate.
+test_only_dir="$tmp_dir/test-only-repo"
+test_only_docker_called="$tmp_dir/test-only-docker-called"
+test_only_log_file="$tmp_dir/test-only-mutation.log"
+test_only_report_file="$tmp_dir/test-only-gremlins.json"
+mkdir -p "$test_only_dir/internal/config" "$test_only_dir/scripts"
+cp "$repo_dir/scripts/mutation.sh" "$test_only_dir/scripts/mutation.sh"
+chmod 755 "$test_only_dir/scripts/mutation.sh"
+
+git -C "$test_only_dir" init -q
+git -C "$test_only_dir" config user.email mutation-test@example.invalid
+git -C "$test_only_dir" config user.name mutation-test
+printf '%s\n' 'package config' 'func Value() int { return 1 }' >"$test_only_dir/internal/config/value.go"
+printf '%s\n' 'package config' 'import "testing"' 'func TestValue(t *testing.T) { _ = Value() }' \
+  >"$test_only_dir/internal/config/value_test.go"
+git -C "$test_only_dir" add internal/config
+git -C "$test_only_dir" -c core.hooksPath=/dev/null commit -qm base
+test_only_base=$(git -C "$test_only_dir" rev-parse HEAD)
+printf '%s\n' 'package config' 'import "testing"' 'func TestValue(t *testing.T) { if Value() != 1 { t.Fatal("no") } }' \
+  >"$test_only_dir/internal/config/value_test.go"
+git -C "$test_only_dir" add internal/config/value_test.go
+git -C "$test_only_dir" -c core.hooksPath=/dev/null commit -qm 'test only'
+
+if (
+  cd "$test_only_dir"
+  MUTATION_TEST_DOCKER_CALLED="$test_only_docker_called" \
+    PATH="$fake_bin:$PATH" \
+    MUTATION_BASE="$test_only_base" \
+    MUTATION_OUTPUT="$test_only_report_file" \
+    "$test_only_dir/scripts/mutation.sh"
+) >"$test_only_log_file" 2>&1; then
+  :
+else
+  echo "mutation wrapper failed for a diff that only changes test files"
+  sed -n '1,120p' "$test_only_log_file"
+  exit 1
+fi
+
+if [ -e "$test_only_docker_called" ]; then
+  echo "mutation wrapper invoked Docker for a diff that only changes test files"
+  sed -n '1,120p' "$test_only_log_file"
+  exit 1
+fi
+
+if ! grep -Fq 'SKIP: no mutation-eligible Go files changed' "$test_only_log_file"; then
+  echo "mutation wrapper did not explain the skipped run for a test-only diff"
+  sed -n '1,120p' "$test_only_log_file"
+  exit 1
+fi
+
+echo 'PASS: mutation wrapper skips diffs that only change test files'
+
+# summary_fixture builds a repo with an eligible production change plus a fake
+# docker that replays the given gremlins summary, so the threshold enforcement
+# can be exercised without running a real mutation pass.
+summary_fixture() {
+  fixture_name=$1
+  summary_body=$2
+  summary_dir="$tmp_dir/$fixture_name"
+  summary_bin="$summary_dir/bin"
+  mkdir -p "$summary_dir/internal/config" "$summary_dir/scripts" "$summary_bin"
+  cp "$repo_dir/scripts/mutation.sh" "$summary_dir/scripts/mutation.sh"
+  chmod 755 "$summary_dir/scripts/mutation.sh"
+  printf '#!/bin/sh\n%s\nexit 0\n' "$summary_body" >"$summary_bin/docker"
+  chmod 755 "$summary_bin/docker"
+
+  git -C "$summary_dir" init -q
+  git -C "$summary_dir" config user.email mutation-test@example.invalid
+  git -C "$summary_dir" config user.name mutation-test
+  printf '%s\n' 'package config' 'func Value() int { return 1 }' >"$summary_dir/internal/config/value.go"
+  git -C "$summary_dir" add internal/config/value.go
+  git -C "$summary_dir" -c core.hooksPath=/dev/null commit -qm base
+  summary_base=$(git -C "$summary_dir" rev-parse HEAD)
+  printf '%s\n' 'package config' 'func Value() int { return 2 }' >"$summary_dir/internal/config/value.go"
+  git -C "$summary_dir" add internal/config/value.go
+  git -C "$summary_dir" -c core.hooksPath=/dev/null commit -qm change
+}
+
+# A change to production code can still generate no mutants: adding catalog
+# entries or other data leaves no conditional, arithmetic or statement for a
+# mutator to touch. There is no percentage to judge, so the gate must not read
+# the 0.00% gremlins prints as a failure.
+summary_fixture no-mutants-repo \
+  'printf "Killed: 0, Lived: 0, Not covered: 0\nTest efficacy: 0.00%%\nMutator coverage: 0.00%%\n"'
+no_mutants_log="$tmp_dir/no-mutants.log"
+if (
+  cd "$summary_dir"
+  PATH="$summary_bin:$PATH" \
+    MUTATION_BASE="$summary_base" \
+    MUTATION_OUTPUT="$tmp_dir/no-mutants.json" \
+    "$summary_dir/scripts/mutation.sh"
+) >"$no_mutants_log" 2>&1; then
+  :
+else
+  echo "mutation wrapper failed a run that generated no mutants"
+  sed -n '1,120p' "$no_mutants_log"
+  exit 1
+fi
+
+if ! grep -Fq 'SKIP: the diff generated no mutants' "$no_mutants_log"; then
+  echo "mutation wrapper did not explain the empty mutant sample"
+  sed -n '1,120p' "$no_mutants_log"
+  exit 1
+fi
+
+echo 'PASS: mutation wrapper treats an empty mutant sample as not applicable'
+
+# The empty-sample exemption must not swallow a real miss: mutants that lived
+# still fail the gate.
+summary_fixture surviving-mutants-repo \
+  'printf "Killed: 1, Lived: 9, Not covered: 0\nTest efficacy: 10.00%%\nMutator coverage: 95.00%%\n"'
+surviving_log="$tmp_dir/surviving.log"
+if (
+  cd "$summary_dir"
+  PATH="$summary_bin:$PATH" \
+    MUTATION_BASE="$summary_base" \
+    MUTATION_OUTPUT="$tmp_dir/surviving.json" \
+    "$summary_dir/scripts/mutation.sh"
+) >"$surviving_log" 2>&1; then
+  echo "mutation wrapper passed a run whose mutants survived"
+  sed -n '1,120p' "$surviving_log"
+  exit 1
+fi
+
+if ! grep -Fq 'FAIL: mutation efficacy 10.00% is below' "$surviving_log"; then
+  echo "mutation wrapper did not report the efficacy miss"
+  sed -n '1,120p' "$surviving_log"
+  exit 1
+fi
+
+echo 'PASS: mutation wrapper still fails when mutants survive'
