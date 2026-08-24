@@ -13,16 +13,13 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
-func saveIfRequestedResult(save bool, path string, local config.Local, launch launcher.LaunchConfig) (config.LocalSaveResult, error) {
-	return saveIfRequestedResultKeeping(save, false, path, local, launch)
-}
-
-// saveIfRequestedResultKeeping is saveIfRequestedResult with the option to
-// leave the file's existing options block alone. keepOptions is what the
-// interactive autosave passes after a profile load the operator did not edit:
-// the selection that ran came from the profile, so writing it back would
-// erase every option the workspace file declares and the profile omits.
-func saveIfRequestedResultKeeping(save, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig) (config.LocalSaveResult, error) {
+// saveIfRequestedResult writes the selection to the local config when save is
+// set. keepOptions leaves the file's existing options block alone: it is what
+// the interactive autosave passes after a profile load the operator did not
+// edit, because the selection that ran came from the profile and writing it
+// back would erase every option the workspace file declares and the profile
+// omits.
+func saveIfRequestedResult(save, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig) (config.LocalSaveResult, error) {
 	if !save {
 		return config.LocalSaveResult{}, nil
 	}
@@ -87,13 +84,13 @@ func saveLocalSelection(globalPath string, save bool, path string, local config.
 
 // saveLocalSelectionKeeping is the interactive autosave: it always writes, and
 // keepOptions leaves the file's own options block untouched (see
-// saveIfRequestedResultKeeping).
+// saveIfRequestedResult).
 func saveLocalSelectionKeeping(globalPath string, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig, warningOut ...io.Writer) error {
 	return saveLocalSelectionOptions(globalPath, true, keepOptions, path, local, launch, warningOut...)
 }
 
 func saveLocalSelectionOptions(globalPath string, save, keepOptions bool, path string, local config.Local, launch launcher.LaunchConfig, warningOut ...io.Writer) error {
-	result, err := saveIfRequestedResultKeeping(save, keepOptions, path, local, launch)
+	result, err := saveIfRequestedResult(save, keepOptions, path, local, launch)
 	if err != nil || !save {
 		return err
 	}
