@@ -13,6 +13,17 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — the in-image launcher is part of the image tag
+
+Images that embed the ai-launcher binary (release agents, in-image
+ai-memory, the auxiliary tools) now hash that binary's content into their
+tag. Without it an upgraded launcher reused the image the previous version
+had built, and the container kept running the stale binary.
+
+**What you need to do:** nothing, but expect **one** rebuild of such images
+after this upgrade — their tag changes once. Selections that never embed the
+launcher keep their existing tag and cache.
+
 ### Fixed — the container backend rejects remote Docker daemons
 
 The backend bind-mounts host paths at the same path inside the container

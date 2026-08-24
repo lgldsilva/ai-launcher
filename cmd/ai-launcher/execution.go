@@ -116,17 +116,24 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, func(), 
 
 	// The image needs the launcher binary for release agents and for the
 	// explicit in-image ai-memory installation; script/npm/host-only agents
-	// without memory build without it.
-	needLauncher := container.SelectionNeedsMemory(sel) || container.SelectionNeedsTools(sel)
-	for _, agent := range sel.Agents {
-		if agent.Kind == container.InstallRelease {
-			needLauncher = true
-			break
-		}
+	// without memory build without it. When it is needed, its content hash
+	// joins the image identity so an upgraded launcher does not reuse the
+	// image the previous one built.
+	options := dockerfileOptions(r.launchConfig)
+	needLauncher := selectionNeedsLauncherBinary(sel)
+	if needLauncher {
+		options.LauncherHash = launcherExecutableHash()
+	}
+	// Producing the Linux launcher costs a cross-compile — or, for a release
+	// install with no source checkout, an HTTPS download of the release
+	// tarball — and a cached image consumes neither. Probe the cache first and
+	// build only on a miss.
+	_, cached, err := container.ImageExists(runtime, sel, options, r.launchConfig.ContainerContext, r.dockerRunner)
+	if err != nil {
+		return argv, noop, err
 	}
 	var launcherLinux string
-	if needLauncher {
-		var err error
+	if needLauncher && !cached {
 		launcherLinux, err = buildLauncherLinux(r.out, r.errOut)
 		if err != nil {
 			return argv, noop, err
@@ -138,7 +145,7 @@ func (r *launchRequest) prepareDockerIfNeeded(argv []string) ([]string, func(), 
 	if err != nil {
 		return argv, noop, fmt.Errorf("docker backend: %w", err)
 	}
-	_, cleanup, err := container.EnsureImageWithContextOptions(runtime, sel, dockerfileOptions(r.launchConfig), installConfigYAML, launcherLinux, r.launchConfig.ContainerContext, r.dockerRunner)
+	_, cleanup, err := container.EnsureImageWithContextOptions(runtime, sel, options, installConfigYAML, launcherLinux, r.launchConfig.ContainerContext, r.dockerRunner)
 	if err != nil {
 		return argv, noop, err
 	}
