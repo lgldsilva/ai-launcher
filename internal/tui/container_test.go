@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1041,5 +1042,78 @@ func TestStartContainerResourceInputPopulatesAllowedDomains(t *testing.T) {
 	model.startContainerResourceInput()
 	if model.textInputValue != "api.anthropic.com,github.com" {
 		t.Fatalf("textInputValue = %q; want \"api.anthropic.com,github.com\"", model.textInputValue)
+	}
+}
+
+// A profile that declares container_dependencies must land in the launch
+// config: the CLI --profile path honors it (command_flow.go merges it), so
+// the TUI dropping it meant the dependency-directory policy silently never
+// applied — and the next autosave wrote the stale local value back over the
+// profile.
+func TestLoadProfileAppliesContainerDependencies(t *testing.T) {
+	global := config.DefaultGlobal()
+	global.Profiles = map[string]config.Profile{
+		"deps": {
+			Agent: "claude",
+			Options: &config.Options{
+				ContainerDependencies: config.DependencySettings{
+					Policy: "none",
+					Overrides: map[string]config.DependencyOverride{
+						"go": {Source: "/opt/toolchains/go", Mode: config.MountReadOnly},
+					},
+				},
+			},
+		},
+	}
+	model := NewModel(global, launcher.LaunchConfig{Permissions: map[string]bool{}})
+	model.loadProfile("deps")
+	got := model.launch.ContainerDependencies
+	if got.Policy != "none" {
+		t.Fatalf("ContainerDependencies.Policy = %q; want %q", got.Policy, "none")
+	}
+	override, ok := got.Overrides["go"]
+	if !ok || override.Source != "/opt/toolchains/go" || override.Mode != config.MountReadOnly {
+		t.Fatalf("ContainerDependencies.Overrides = %#v; want the go override from the profile", got.Overrides)
+	}
+	// The launch must hold a clone: mutating the stored profile afterwards
+	// cannot leak into the in-flight selection.
+	delete(global.Profiles["deps"].Options.ContainerDependencies.Overrides, "go")
+	if len(model.launch.ContainerDependencies.Overrides) != 1 {
+		t.Fatal("loadProfile must clone the profile's dependency overrides")
+	}
+}
+
+// saveProfileAs keeps the in-memory profile map in sync with what the
+// SaveProfile hook persists (profileFromLaunch on the CLI side writes
+// ContainerDependencies): a field the persisted copy carries but the map
+// omits would come back empty on the next loadProfile of the same session.
+func TestSaveProfileRoundTripsContainerDependencies(t *testing.T) {
+	deps := config.DependencySettings{
+		Policy: "none",
+		Overrides: map[string]config.DependencyOverride{
+			"go": {Source: "/opt/toolchains/go", Mode: config.MountReadOnly},
+		},
+	}
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:                 config.Agent{Command: "claude"},
+		Permissions:           map[string]bool{},
+		ContainerDependencies: deps.Clone(),
+	})
+	var persisted launcher.LaunchConfig
+	model.hooks.SaveProfile = func(_ string, updated launcher.LaunchConfig) error {
+		persisted = updated
+		return nil
+	}
+	model.saveProfileAs("deps")
+	profile, ok := model.profiles["deps"]
+	if !ok || profile.Options == nil {
+		t.Fatalf("profile not registered in-memory: %#v", model.profiles)
+	}
+	if !reflect.DeepEqual(profile.Options.ContainerDependencies, persisted.ContainerDependencies) {
+		t.Fatalf("in-memory profile container_dependencies = %#v; the persisted selection has %#v",
+			profile.Options.ContainerDependencies, persisted.ContainerDependencies)
+	}
+	if !reflect.DeepEqual(profile.Options.ContainerDependencies, deps) {
+		t.Fatalf("in-memory profile container_dependencies = %#v; want %#v", profile.Options.ContainerDependencies, deps)
 	}
 }
