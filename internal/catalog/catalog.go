@@ -56,18 +56,48 @@ func (c Catalog) Agents() []AgentStatus {
 
 // Resolve finds an agent by command, name, or alias. Unknown commands are
 // returned as a bare AgentStatus together with an error.
+//
+// Only the matching agent's candidates are probed on PATH. Probing the whole
+// catalog (as Agents does for the TUI listing) made every CLI launch pay
+// exec.LookPath for every agent × alias just to pick one — and run() calls
+// Resolve twice per launch (selection + trust check).
 func (c Catalog) Resolve(command string) (AgentStatus, error) {
-	for _, status := range c.Agents() {
-		if status.Agent.Command == command || status.Agent.Name == command || contains(status.Agent.Aliases, command) {
-			return status, nil
+	for _, agent := range c.Global.Agents {
+		if !agentMatches(agent, command) {
+			continue
 		}
+		status := AgentStatus{Agent: agent, ResolvedCommand: agent.Command}
+		for _, candidate := range candidates(agent.Command, agent.Aliases, agent.Path) {
+			path, err := c.lookPath(candidate)
+			if err != nil {
+				continue
+			}
+			status.Path = path
+			status.ResolvedCommand = candidate
+			status.Installed = true
+			break
+		}
+		return status, nil
 	}
 	return AgentStatus{Agent: config.Agent{Name: command, Command: command}}, fmt.Errorf("agent %q is not in the catalog", command)
+}
+
+// agentMatches reports whether an agent answers to the given command,
+// catalog name, or one of its aliases.
+func agentMatches(agent config.Agent, command string) bool {
+	return agent.Command == command || agent.Name == command || contains(agent.Aliases, command)
 }
 
 func candidates(command string, aliases []string, configuredPath string) []string {
 	if configuredPath != "" {
 		return []string{configuredPath}
+	}
+	if len(aliases) == 0 {
+		trimmed := strings.TrimSpace(command)
+		if trimmed == "" {
+			return nil
+		}
+		return []string{trimmed}
 	}
 	result := make([]string, 0, len(aliases)+1)
 	seen := make(map[string]struct{}, len(aliases)+1)
