@@ -23,9 +23,12 @@ func loadLocalSelection(opts *cliOptions, global config.Global, errOut io.Writer
 		defaults := config.DefaultLocal()
 		return defaults, defaults, nil, nil
 	}
-	local, localErr := config.LoadLocal(opts.localPath)
+	local, warnings, localErr := config.LoadLocalWithWarnings(opts.localPath)
 	if localErr != nil {
 		warnf(errOut, valueFormat, localErr)
+	}
+	for _, warning := range warnings {
+		warnf(errOut, valueFormat, warning)
 	}
 	raw = cloneLocal(local)
 	if opts.profile == "" {

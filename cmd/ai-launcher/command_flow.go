@@ -223,9 +223,12 @@ func dispatchSideCommands(flags *flag.FlagSet, opts *cliOptions, home string, ou
 	if flagsWasSet(flags, "add") {
 		return config.Global{}, true, launchcmd.AddAgent(opts.globalPath, opts.addName, opts.addPath, opts.addCommand, opts.addDescription, out)
 	}
-	global, loadErr := config.LoadGlobal(opts.globalPath)
+	global, warnings, loadErr := config.LoadGlobalWithWarnings(opts.globalPath)
 	if loadErr != nil {
 		warnf(errOut, valueFormat, loadErr)
+	}
+	for _, warning := range warnings {
+		warnf(errOut, valueFormat, warning)
 	}
 	if handled, err := runGlobalCommands(opts, global, home, out, errOut); handled {
 		return global, true, err
