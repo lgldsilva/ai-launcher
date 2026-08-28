@@ -145,10 +145,13 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 // jailVersionIssues judges the ai-jail version ResolveHostBinaries detected.
 // It reads cfg.JailVersion and execs nothing, so pre-flight stays hermetic.
 //
-// Below the floor is fatal. The launcher composes one dialect of the ai-jail
-// flag surface, and an older build rejects flags it does not know with
-// "unknown option" — raised inside the wrapper, where an operator reads it as
-// the launcher being broken. Failing here names the actual problem.
+// Below the floor is fatal, for either of two reasons depending on how far
+// below. An ai-jail older than the argv dialect rejects flags it does not know
+// with "unknown option", raised inside the wrapper where an operator reads it
+// as the launcher being broken. An ai-jail that parses the argv fine but
+// mishandles it — every macOS build below 1.20.1 could exec a binary it never
+// vetted — fails silently instead, which is worse. Failing here names the
+// actual problem in both cases.
 //
 // At or above the untested bound is a warning, not a refusal: a newer upstream
 // may work perfectly, and blocking would strand everyone the day a release
@@ -168,7 +171,7 @@ func jailVersionIssues(cfg LaunchConfig) []Issue {
 		return []Issue{{
 			Code: "jail-version-too-old",
 			Message: fmt.Sprintf(
-				"ai-jail %s is older than the required %s; the launcher emits flags this build rejects — upgrade ai-jail, or launch with --no-jail",
+				"ai-jail %s is older than the required %s; see CHANGELOG.md for what that floor covers — upgrade ai-jail, or launch with --no-jail",
 				version, config.MinAIJailVersion),
 		}}
 	}
