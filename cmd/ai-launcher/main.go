@@ -229,7 +229,7 @@ func reportDoctor(out io.Writer) error {
 		}
 	}
 	if stale {
-		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits.")
+		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits, or accept the same one and do something else with it. See CHANGELOG.md for what each floor covers.")
 	}
 	for _, status := range untested {
 		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.UntestedCode, untestedAdvice(status))
