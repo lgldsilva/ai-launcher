@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/fsatomic"
 	"github.com/lgldsilva/ai-launcher/internal/installer"
 )
 
@@ -332,39 +333,16 @@ func replaceExecutableAt(exePath string, binary []byte, windows bool) error {
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	temporaryName, err := writeAtomicTemp(path, data, mode)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(temporaryName) }()
-	return os.Rename(temporaryName, path)
+	return fsatomic.WriteFile(path, data, mode, upgradeTempPattern)
 }
 
+// upgradeTempPattern names the intermediate file the upgrade writes beside its
+// destination. It is distinct from the other callers' patterns so a leftover
+// from an interrupted upgrade is identifiable as one.
+const upgradeTempPattern = ".ai-launcher-upgrade-*"
+
 func writeAtomicTemp(path string, data []byte, mode os.FileMode) (string, error) {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-upgrade-*")
-	if err != nil {
-		return "", err
-	}
-	temporaryName := temporary.Name()
-	keep := false
-	defer func() {
-		if !keep {
-			_ = os.Remove(temporaryName)
-		}
-	}()
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return "", err
-	}
-	if err := temporary.Chmod(mode); err != nil { // #nosec G302 -- the file is the executable being installed
-		_ = temporary.Close()
-		return "", err
-	}
-	if err := temporary.Close(); err != nil {
-		return "", err
-	}
-	keep = true
-	return temporaryName, nil
+	return fsatomic.WriteTemp(path, data, mode, upgradeTempPattern)
 }
 
 func replaceExecutableWindows(exePath, tmpName string) error {

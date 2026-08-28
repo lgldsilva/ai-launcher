@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lgldsilva/ai-launcher/internal/fsatomic"
 )
 
 // stubCreateTempFailure forces the temporary-file creation step to fail with
@@ -14,11 +16,11 @@ import (
 // read-only directory does not fail under root or on Windows.
 func stubCreateTempFailure(t *testing.T) {
 	t.Helper()
-	original := createTempFile
-	createTempFile = func(string, string) (*os.File, error) {
+	original := fsatomic.CreateTemp
+	fsatomic.CreateTemp = func(string, string) (*os.File, error) {
 		return nil, errors.New("forced temp-file failure")
 	}
-	t.Cleanup(func() { createTempFile = original })
+	t.Cleanup(func() { fsatomic.CreateTemp = original })
 }
 
 func TestLoadGlobalRejectsUnreadableDirectoryAndUnsupportedVersion(t *testing.T) {

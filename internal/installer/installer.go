@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
+	"github.com/lgldsilva/ai-launcher/internal/fsatomic"
 )
 
 const (
@@ -656,28 +657,7 @@ func (i *Installer) installFile(target string, data []byte) error {
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".ai-launcher-atomic-*")
-	if err != nil {
-		return err
-	}
-	temporaryName := temporary.Name()
-	defer func() { _ = os.Remove(temporaryName) }()
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryName, path)
+	return fsatomic.WriteFile(path, data, mode, ".ai-launcher-atomic-*")
 }
 
 func (i *Installer) loadState() (state, error) {

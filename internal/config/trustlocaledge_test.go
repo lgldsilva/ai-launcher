@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lgldsilva/ai-launcher/internal/fsatomic"
 )
 
 // forceTempFileFailure makes the atomic-write step fail deterministically. A
@@ -13,11 +15,11 @@ import (
 // the mode bits are ignored.
 func forceTempFileFailure(t *testing.T) {
 	t.Helper()
-	original := createTempFile
-	createTempFile = func(string, string) (*os.File, error) {
+	original := fsatomic.CreateTemp
+	fsatomic.CreateTemp = func(string, string) (*os.File, error) {
 		return nil, errors.New("no temporary files today")
 	}
-	t.Cleanup(func() { createTempFile = original })
+	t.Cleanup(func() { fsatomic.CreateTemp = original })
 }
 
 // The trust record is what lets the launcher honor an operator's own saved
@@ -203,8 +205,8 @@ func TestSaversWriteUserOnlyPermissions(t *testing.T) {
 // creation failure jumps straight past.
 func forceClosedTempFile(t *testing.T) {
 	t.Helper()
-	original := createTempFile
-	createTempFile = func(dir, pattern string) (*os.File, error) {
+	original := fsatomic.CreateTemp
+	fsatomic.CreateTemp = func(dir, pattern string) (*os.File, error) {
 		file, err := original(dir, pattern)
 		if err != nil {
 			return nil, err
@@ -214,7 +216,7 @@ func forceClosedTempFile(t *testing.T) {
 		}
 		return file, nil
 	}
-	t.Cleanup(func() { createTempFile = original })
+	t.Cleanup(func() { fsatomic.CreateTemp = original })
 }
 
 // A write that fails midway must not leave the previous config replaced by a

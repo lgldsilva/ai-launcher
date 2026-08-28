@@ -113,11 +113,6 @@ var memoryRunHarnesses = []string{
 	"antigravity", "antigravity-cli", "agy",
 }
 
-// createTempFile is an indirection over os.CreateTemp so tests can force the
-// temporary-file creation step to fail deterministically — a chmod-based
-// read-only directory does not fail under root or on Windows.
-var createTempFile = os.CreateTemp
-
 // MemoryRunHarnesses returns the harnesses `ai-memory run` accepts.
 func MemoryRunHarnesses() []string {
 	return append([]string(nil), memoryRunHarnesses...)
