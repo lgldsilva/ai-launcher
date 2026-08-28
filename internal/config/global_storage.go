@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/lgldsilva/ai-launcher/internal/fsatomic"
 )
 
 // LoadGlobal reads the global config, falling back to DefaultGlobal for a
@@ -258,48 +260,20 @@ func parseTrustedLocalEntry(raw any) (TrustedLocalEntry, bool) {
 	}
 }
 
-type atomicWriteError struct {
-	stage string
-	err   error
-}
-
-func (e *atomicWriteError) Error() string { return e.stage + ": " + e.err.Error() }
-func (e *atomicWriteError) Unwrap() error { return e.err }
-
 // atomicWriteFile writes data through a temporary file and renames it into
 // place. Callers create the destination directory and add their domain label
-// to errors, while this helper owns the failure-prone write lifecycle.
+// to errors, while fsatomic owns the failure-prone write lifecycle.
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	temporary, err := createTempFile(filepath.Dir(path), ".ai-launch-atomic-*.tmp")
-	if err != nil {
-		return &atomicWriteError{stage: "create temporary", err: err}
-	}
-	temporaryName := temporary.Name()
-	defer func() { _ = os.Remove(temporaryName) }()
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return &atomicWriteError{stage: "write", err: err}
-	}
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		return &atomicWriteError{stage: "protect", err: err}
-	}
-	if err := temporary.Close(); err != nil {
-		return &atomicWriteError{stage: "close", err: err}
-	}
-	if err := os.Rename(temporaryName, path); err != nil {
-		return &atomicWriteError{stage: "replace", err: err}
-	}
-	return nil
+	return fsatomic.WriteFile(path, data, mode, ".ai-launch-atomic-*.tmp")
 }
 
 func wrapAtomicWriteError(label string, err error) error {
-	var failure *atomicWriteError
+	var failure *fsatomic.WriteError
 	if errors.As(err, &failure) {
-		if label == "local config" && failure.stage == "create temporary" {
-			return fmt.Errorf("create temporary config: %w", failure.err)
+		if label == "local config" && failure.Stage == "create temporary" {
+			return fmt.Errorf("create temporary config: %w", failure.Err)
 		}
-		return fmt.Errorf("%s %s: %w", failure.stage, label, failure.err)
+		return fmt.Errorf("%s %s: %w", failure.Stage, label, failure.Err)
 	}
 	return err
 }
