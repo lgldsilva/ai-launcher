@@ -657,7 +657,7 @@ func (m *Model) optionRows() []optionRow {
 				}
 				m.launch.UseDocker = true
 				m.launch.UseJail = false
-				m.launch = ensureDockerProjectDir(m.launch)
+				m.launch = launcher.EnsureDockerProjectDir(m.launch)
 			}
 		}},
 		optionRow{name: config.AIMemoryCommand, on: m.launch.UseMemory, toggle: func(m *Model) { m.launch.UseMemory = !m.launch.UseMemory }},

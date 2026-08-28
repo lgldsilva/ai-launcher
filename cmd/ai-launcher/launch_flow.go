@@ -267,7 +267,7 @@ func (r *launchRequest) confirmSelection(initialStatus string) (bool, error) {
 	// The operator can switch from Jail to Docker inside the TUI after the
 	// initial CLI-side defaults were resolved. Apply the same cwd fallback here
 	// so that selecting Container never leaves Docker without a project mount.
-	r.launchConfig = ensureDockerProjectDir(confirmed)
+	r.launchConfig = launcher.EnsureDockerProjectDir(confirmed)
 	// Autosave: running a selection means wanting it back on the next open —
 	// with provenance recorded, or the trust boundary would refuse the file
 	// the launcher itself wrote. Best-effort: a failed save never blocks a
@@ -294,17 +294,6 @@ func sameLocalOptions(a, b launcher.LaunchConfig) bool {
 		optionsFromLaunch(config.Options{}, a),
 		optionsFromLaunch(config.Options{}, b),
 	)
-}
-
-// ensureDockerProjectDir gives Docker a concrete project directory when the
-// operator did not name one with --project-dir. Jail gets the current
-// directory implicitly, but Docker needs the same-path mount and WORKDIR to be
-// present in its run configuration.
-func ensureDockerProjectDir(cfg launcher.LaunchConfig) launcher.LaunchConfig {
-	if cfg.UseDocker && strings.TrimSpace(cfg.ProjectDir) == "" {
-		cfg.ProjectDir = mustGetwd()
-	}
-	return cfg
 }
 
 // rememberRecentAgent records the harness for the TUI MRU list (best-effort;

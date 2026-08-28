@@ -4,6 +4,7 @@ package launcher
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -394,4 +395,31 @@ func permissionHomeMount(cfg LaunchConfig, permissionID, subPath string) string 
 		return ""
 	}
 	return filepath.Join(cfg.HomeDir, subPath)
+}
+
+// EnsureDockerProjectDir gives Docker a concrete project directory when the
+// operator did not name one with --project-dir. Jail gets the current
+// directory implicitly, but Docker needs the same-path mount and WORKDIR to be
+// present in its run configuration.
+//
+// The fallback when os.Getwd() fails is ".", not "": an empty ProjectDir is
+// what this function exists to prevent, so returning one on the error path
+// hands the caller back the exact state it asked to be rid of. "." resolves
+// against the same directory Getwd was trying to name, and the docker backend
+// reports a bad path far more legibly than a missing one.
+//
+// It lives here rather than beside either caller because it had drifted into
+// two: the CLI applied it once around the TUI, and the TUI needed it again
+// because the model can switch backends after that point. The two copies
+// disagreed on the error path, one leaving ProjectDir empty.
+func EnsureDockerProjectDir(cfg LaunchConfig) LaunchConfig {
+	if !cfg.UseDocker || strings.TrimSpace(cfg.ProjectDir) != "" {
+		return cfg
+	}
+	dir, err := os.Getwd()
+	if err != nil || strings.TrimSpace(dir) == "" {
+		dir = "."
+	}
+	cfg.ProjectDir = dir
+	return cfg
 }
