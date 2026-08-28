@@ -99,13 +99,18 @@ const DefaultMemoryServerURL = ""
 //
 // Aliases count: clap accepts them exactly like the canonical name, and the
 // catalog reaches ai-memory through Agent.Command, which spells Kiro
-// "kiro-cli". Listing only the canonical "kiro" would make pre-flight refuse a
-// harness the installed ai-memory accepts.
+// "kiro-cli" and Antigravity "agy". Listing only the canonical "kiro" or
+// "antigravity" would make pre-flight refuse a harness the installed ai-memory
+// accepts. A catalog entry that sets Memory.RunHarness papers over the gap for
+// itself, but nothing forces it to, and an operator naming the agent directly
+// gets the refusal with no override in sight. All aliases here were verified
+// against ai-memory 1.32.2.
 var memoryRunHarnesses = []string{
 	"claude", "codex", "opencode", "pi", "crush", "omp", "kimi",
 	"command-code", "commandcode", "cmdc", "cmd",
 	"kiro", "kiro-cli",
-	"grok", "antigravity",
+	"grok",
+	"antigravity", "antigravity-cli", "agy",
 }
 
 // createTempFile is an indirection over os.CreateTemp so tests can force the
@@ -133,28 +138,49 @@ func SupportsMemoryRunHarness(name string) bool {
 // versions this launcher composes against. Older installs still launch;
 // `ai-launcher --doctor` reports them (see launcher.UpstreamReport).
 //
-// ai-jail 1.18.2 is a hard floor, not advice: the launcher emits --network,
-// which 1.17.x and older reject outright with "unknown option". There is no
-// argv that serves both dialects, so there is no compatibility to preserve —
-// 1.18.0 turned network access, the process environment and half a dozen
-// other capabilities into explicit opt-ins, and a launcher that stayed quiet
-// about them produced a sandbox with no network and no credentials.
+// ai-jail 1.20.1 is a security floor, and on macOS it is the first release in
+// the 1.19/1.20 line that works at all. Four bugs, all seatbelt-only — Linux
+// is unaffected by every one of them:
 //
-// 1.18.2 rather than 1.18.0 because linked git worktrees had their git dir
-// mounted read-only until the patch, which breaks `git commit` inside the
-// sandbox.
+//   - The sandbox could exec a binary it never vetted. 1.19.3 resolved the
+//     command through its symlink chain but canonicalized the chain away
+//     before it reached the profile, so the PATH entry execvp actually walks
+//     was never named. An unnamed entry does not make execvp fail; it
+//     continues down PATH and runs the first match inside an already-readable
+//     prefix. The same release made /opt readable, so a Homebrew copy would
+//     win: ai-jail resolved and granted one build of an agent and then ran a
+//     different one. A sandbox that vets one binary and executes another has
+//     given up the property it exists for.
+//   - DNS and TLS both failed under --network, because /etc, /var and /tmp
+//     are symlinks into /private and /etc/ssl/cert.pem was unreadable.
+//   - No Node script could run: anything calling realpath(3) on its entry
+//     point died with EPERM, which takes out every #!/usr/bin/env node CLI.
+//   - Claude Code could not read its own scratch dir; the second launch in a
+//     project failed with EEXIST on /tmp/claude-<uid>.
 //
-// The previous floor (1.16.0) was a security floor for the Docker socket:
-// through 1.15.x it was bind-mounted read-write on sight, so "docker off by
-// default" was not true of the resulting sandbox no matter what the launcher
-// emitted. appendDockerDecision still states it explicitly.
-// ai-memory 1.25.0 is a feature floor: `ai-memory run kiro` arrived in 1.24.0
-// and `ai-memory run command-code` in 1.25.0. The catalog offers both as
-// memory-capable agents, and memoryRunHarnesses promises pre-flight will let
-// them through — against an older ai-memory that promise turns into the opaque
-// clap rejection raised inside the jail that invariant 6b exists to prevent.
+// The flag surface did not move across any of this. 1.18.2 through 1.20.1
+// accept byte-for-byte the same argv this launcher builds — the floor is
+// about what the sandbox does with that argv, not about what it parses.
+//
+// The previous floor (1.18.2) was the argv floor: the launcher emits
+// --network, which 1.17.x and older reject outright with "unknown option",
+// and 1.18.0 turned network access, the process environment and half a dozen
+// other capabilities into explicit opt-ins. 1.18.2 rather than 1.18.0 because
+// linked git worktrees had their git dir mounted read-only until the patch,
+// which breaks `git commit` inside the sandbox. The one before that (1.16.0)
+// was a security floor for the Docker socket: through 1.15.x it was
+// bind-mounted read-write on sight, so "docker off by default" was not true
+// of the resulting sandbox no matter what the launcher emitted.
+// appendDockerDecision still states it explicitly.
+//
+// ai-memory 1.25.0 is a feature floor, one release per harness the catalog
+// offers: `ai-memory run kiro` arrived in 1.24.0, `run antigravity` (aliases
+// antigravity-cli, agy) also in 1.24.0, and `run command-code` in 1.25.0.
+// memoryRunHarnesses promises pre-flight will let all three through — against
+// an older ai-memory that promise turns into the opaque clap rejection raised
+// inside the jail that invariant 6b exists to prevent.
 const (
-	MinAIJailVersion   = "1.18.2"
+	MinAIJailVersion   = "1.20.1"
 	MinAIMemoryVersion = "1.25.0"
 )
 
@@ -166,19 +192,21 @@ const (
 // The floor alone only ever looked down, which leaves the launcher unable to
 // notice the failure mode that actually costs an afternoon: upstream keeping
 // every flag this launcher emits while changing what they *mean*. ai-jail
-// 1.18.0 is exactly that. It accepts the same argv and made network access,
-// the process environment, GPU, display, X11, host shared memory and agent
-// credential state explicit opt-ins, so the sandbox this launcher composes
-// today comes up with no network and a nearly empty environment — the agent
-// cannot reach its API and ai-memory loses AI_MEMORY_SERVER_URL,
-// AI_MEMORY_AUTH_TOKEN and AI_MEMORY_NATIVE_BIN. The Gherkin contract cannot
-// catch that: it locks the shape of the argv, not its meaning.
+// 1.18.0 was exactly that — it accepted the same argv and made network
+// access, the process environment, GPU, display, X11, host shared memory and
+// agent credential state explicit opt-ins, so a launcher that stayed quiet
+// produced a sandbox with no network and a nearly empty environment. The
+// Gherkin contract cannot catch that: it locks the shape of the argv, not its
+// meaning. These bounds are the part that can.
 //
-// ai-memory has no such break; its bound records how far the `run` wrapper
-// surface was actually read (1.28.1).
+// Both bounds record how far the upstream surface was actually read, not a
+// guess: ai-jail through 1.20.1 (no flag added, renamed or removed since
+// 1.18.0; the argv verified against the installed binary) and ai-memory
+// through 1.34.0 (the `run` grammar and its harness list unchanged since
+// 1.25.0).
 const (
-	UntestedAIJailVersion   = "1.19.0"
-	UntestedAIMemoryVersion = "1.29.0"
+	UntestedAIJailVersion   = "1.21.0"
+	UntestedAIMemoryVersion = "1.35.0"
 )
 
 // Shared catalog names and platform identifiers. Keeping these values in the

@@ -29,8 +29,14 @@ Upstream floors are pinned in `internal/config` and reported by
 
 | Tool | Minimum | Why |
 | --- | --- | --- |
-| `ai-jail` | 1.16.0 | Up to 1.15.x the Docker socket was bind-mounted read-write on sight, which is host root ([issue #88](https://github.com/akitaonrails/ai-jail/issues/88)) |
-| `ai-memory` | 1.19.0 | Managed-workstream and harness surface the launcher composes against |
+| `ai-jail` | 1.20.1 | Up to 1.20.0 on macOS the sandbox could exec a binary it never vetted: the `PATH` entry `execvp` walks was never named in the seatbelt profile, so it ran the first match inside an already-readable prefix — ai-jail granted one build of an agent and started another. Same release fixes DNS and TLS failing under `--network`. Linux is unaffected by both. The earlier 1.16.0 floor still holds underneath: up to 1.15.x the Docker socket was bind-mounted read-write on sight, which is host root ([issue #88](https://github.com/akitaonrails/ai-jail/issues/88)) |
+| `ai-memory` | 1.25.0 | Last of the three releases adding a managed harness the catalog offers (`kiro` and `antigravity` in 1.24.0, `command-code` in 1.25.0). Below it, pre-flight passes a harness the wrapper then rejects inside the jail |
+
+`--doctor` also probes the launcher-managed ai-memory native binary under
+`~/.local/share/ai-launcher/bin` against the same floor. It is a second install
+with its own lifecycle — only `--install` / `--upgrade` moves it — so a current
+`ai-memory` on `PATH` says nothing about the copy exported as
+`AI_MEMORY_NATIVE_BIN`.
 
 ## Reporting a vulnerability
 

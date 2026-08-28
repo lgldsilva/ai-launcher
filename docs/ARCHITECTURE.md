@@ -538,22 +538,42 @@ handling — it only forwards ai-jail's write toggle.
 
 ## Upstream version compatibility
 
-The launcher composes a specific upstream surface, and that floor is pinned in
-two constants in `internal/config`: `MinAIJailVersion` (`1.16.0`) and
-`MinAIMemoryVersion` (`1.19.0`). `ai-launcher --doctor` probes the installed
-binaries with `ai-jail --version` / `ai-memory --version` (5-second timeout
-each) and reports `ai-jail-version-too-old` / `ai-memory-version-too-old` when
-the installed version is below the floor. A probe that fails or cannot be
-parsed stays silent.
+The launcher composes a specific upstream surface, bounded at both ends by four
+constants in `internal/config`: `MinAIJailVersion` (`1.20.1`) and
+`MinAIMemoryVersion` (`1.25.0`) are the floor, `UntestedAIJailVersion`
+(`1.21.0`) and `UntestedAIMemoryVersion` (`1.35.0`) the first version the argv
+has *not* been validated against. Below the floor is `…-version-too-old`; at or
+above the ceiling is `…-version-untested`, which warns and never blocks.
 
-The probe lives in `--doctor` and **not** in pre-flight validation on purpose.
-`Validator.Validate` runs on every launch and inside the Bubble Tea update
-loop; forking two children there costs ~300 ms of startup latency and blocks
-the UI, and the same check would be invisible in `--dry-run`, which returns
-before validation. Validation stays hermetic — PATH lookups and `Stat` only.
+The ceiling exists because the floor only ever looked down. The failure that
+costs an afternoon is upstream keeping every flag the launcher emits while
+changing what they *mean* — ai-jail 1.18.0 is the worked example — and the
+Gherkin contract cannot catch it, because it locks the shape of the argv, not
+its meaning.
 
-The Gherkin contract plus these constants are the drift detector: bumping the
-floor means reviewing the upstream changelog and updating the contract in the
+`ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version`
+(5-second timeout each), plus the launcher-managed ai-memory native binary
+under `~/.local/share/ai-launcher/bin` as a third row
+(`ai-memory-native-too-old`): it is a separate install that only moves when
+`--install` / `--upgrade` runs, so the copy on `PATH` cannot vouch for it. A
+probe that fails or cannot be parsed stays silent, and an absent managed runner
+adds no row at all. "Version unknown" has to stay distinguishable from "version
+too old", or a host where the probe merely failed would be refused a launch it
+can perform.
+
+Pre-flight sees one of these: the ai-jail version, via `jailVersionIssues`. It
+still execs nothing. `ResolveHostBinaries` — which is already outside the
+hermetic path, because it resolves host paths — calls `DetectJailVersion` and
+stores the result on `LaunchConfig.JailVersion`; `Validator.Validate` only
+reads that field. The probe is memoized with a `sync.Once`, and that cache is
+not an optimization: the TUI rebuilds its argv preview through
+`ResolveHostBinaries` on every keystroke, so an un-memoized probe would exec
+ai-jail once per rendered frame. An operator's ai-jail does not change
+mid-session, so one probe per process is also the correct answer. Everything
+`Validate` itself does stays PATH lookups and `Stat`.
+
+The Gherkin contract plus these constants are the drift detector: moving either
+bound means reading the upstream changelog and updating the contract in the
 same commit.
 
 ## Build metadata vs. config schema

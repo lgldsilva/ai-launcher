@@ -13,6 +13,62 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — ai-jail 1.20.1 is the new floor
+
+`MinAIJailVersion` moves from `1.18.2` to `1.20.1`. This is a security floor,
+not a feature one: the flag surface did not move at all across the range, and
+the argv ai-launcher builds is accepted byte-for-byte by every version in it.
+
+What moved is what the sandbox does with that argv. Up to 1.20.0 on macOS,
+ai-jail could exec a binary it never vetted. 1.19.3 started resolving the
+command through its symlink chain but canonicalized the chain away before it
+reached the seatbelt profile, so the `PATH` entry `execvp` actually walks was
+never named. An unnamed entry does not make `execvp` fail — it continues down
+`PATH` and runs the first match inside an already-readable prefix. The same
+release made `/opt` readable, so a Homebrew copy would win: ai-jail resolved
+and granted one build of an agent, then started a different one. A sandbox that
+vets one binary and executes another has given up the property it exists for.
+
+Three other macOS breaks ship in the same release: DNS and TLS both failed
+under `--network`, no Node script with a shebang could run (`realpath(3)` on
+the entry point died with `EPERM`), and Claude Code could not read its own
+scratch dir, so the second launch in a project failed with `EEXIST`.
+
+Linux is unaffected by all four. The floor is single-valued anyway, because a
+per-OS floor is a second thing to keep true and the Linux cost is one upgrade.
+
+**What you need to do:** upgrade ai-jail to 1.20.1 or newer —
+`brew upgrade ai-jail`, `yay -S ai-jail-bin`, `cargo install ai-jail`, or
+`mise use -g github:akitaonrails/ai-jail`. `ai-launcher --doctor` names the
+installed version and the required one. Until then, launches refuse with
+`jail-version-too-old`; `--no-jail` runs without the sandbox.
+
+### Added — `--doctor` reports the managed ai-memory runner
+
+`--install` / `--upgrade` place a native ai-memory binary under
+`~/.local/share/ai-launcher/bin`, which the launcher exports as
+`AI_MEMORY_NATIVE_BIN`. It is a second install with its own lifecycle: the copy
+on `PATH` moves when Homebrew or cargo says so, this one only when the launcher
+is asked to move it. A machine can therefore run a current ai-memory and export
+a copy from months earlier.
+
+`--doctor` now probes it on its own line, against the same floor
+(`ai-memory-native-too-old`). Before, the healthy `PATH` install vouched for the
+stale one, and a harness the catalog offers but the old runner does not know
+came back as the opaque wrapper rejection raised inside the jail — the exact
+error pre-flight refuses to let through, arriving by a route pre-flight could
+not see. An absent managed runner is not a finding and adds no row.
+
+### Fixed — `agy` and `antigravity-cli` are accepted as memory harnesses
+
+`memoryRunHarnesses` carried `antigravity` but neither alias, while the catalog
+spells the agent `agy` (its own executable name). The catalog entry sets
+`memory.run_harness`, which papered over the gap for itself, but nothing forces
+an entry to — an operator naming the agent directly got
+`memory-harness-unsupported` for a harness the installed ai-memory accepts. All
+three spellings verified against ai-memory 1.32.2.
+
+
 ### Changed — `allow_tcp_ports` is refused instead of ignored
 
 Through ai-jail 1.17.x `--allow-tcp-port` was lockdown-only and silently

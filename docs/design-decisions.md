@@ -45,15 +45,20 @@ workstream/workspace/project scope. The contract asserts what ai-launcher
 **emits**, never what upstream **accepts**: a new upstream release that
 renames a flag installs cleanly and CI stays green. That gap is closed by
 version pinning, not by the contract alone — `config.MinAIJailVersion`
-(`1.16.0`) and `config.MinAIMemoryVersion` (`1.19.0`) declare the supported
-floor in exactly one place, and `ai-launcher --doctor` probes
-`ai-jail --version` / `ai-memory --version` (5s timeout), reporting
-`ai-jail-version-too-old` / `ai-memory-version-too-old` when the installed
-binary is below it. Report, never block: the user may knowingly run ahead. The
-probe is a separate command rather than a pre-flight check because
-`Validator.Validate` runs on every launch and inside the TUI update loop —
-forking two children there buys ~300 ms of latency and a frozen UI for a
-diagnostic nobody asked for. The jail flags live in a declarative structure
+(`1.20.1`) and `config.MinAIMemoryVersion` (`1.25.0`) declare the supported
+floor in exactly one place, with `UntestedAIJailVersion` (`1.21.0`) and
+`UntestedAIMemoryVersion` (`1.35.0`) closing the range at the top, and
+`ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version` (5s
+timeout), reporting `…-version-too-old` below the floor and
+`…-version-untested` at or above the ceiling. Above the ceiling it reports and
+never blocks: the user may knowingly run ahead, and refusing would strand
+everyone the day upstream ships. Below the floor it does block, because there
+the argv is known not to work. The probe is a `--doctor` command rather than a
+per-launch fork because `Validator.Validate` runs on every launch and inside
+the TUI update loop — forking children there buys ~300 ms of latency and a
+frozen UI for a diagnostic nobody asked for. Pre-flight does judge the ai-jail
+version, but from a `sync.Once`-cached value `ResolveHostBinaries` already
+collected outside the hermetic path, so `Validate` itself still execs nothing. The jail flags live in a declarative structure
 (tri-state `config.JailFlags`) that mirrors ai-jail's own auto / on / off
 model, so absorbing a new ai-jail version is adding a row to a table, not
 rewriting `if`s — and the process for a bump is: review the upstream
