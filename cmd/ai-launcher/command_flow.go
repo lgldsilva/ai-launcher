@@ -148,7 +148,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	// The docker backend mounts the current project; default the workspace to
 	// the working directory when neither workspace nor project were configured
 	// (the jail gets the cwd implicitly, docker needs it explicitly — M6).
-	launchConfig = ensureDockerProjectDir(launchConfig)
+	launchConfig = launcher.EnsureDockerProjectDir(launchConfig)
 	launchConfig = finalizeLaunchConfig(launchConfig, global, home, errOut)
 	if composeCommand {
 		return runComposeCommand(composeArgs, launchConfig, global, opts, in, out, errOut)

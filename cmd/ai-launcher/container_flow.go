@@ -173,7 +173,7 @@ func generateContainerArtifacts(local config.Local, agent config.Agent, global c
 		Permissions:              copyPermissions(local.Permissions),
 	}
 	launchConfig.Docker.AddHostGateway = effectiveContainerHostGateway(local.Options.ContainerHostGateway)
-	launchConfig = ensureDockerProjectDir(launchConfig)
+	launchConfig = launcher.EnsureDockerProjectDir(launchConfig)
 	launchConfig = finalizeLaunchConfig(launchConfig, global, home, out)
 	if choice == composeUpdatePrompt {
 		var err error
