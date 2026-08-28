@@ -421,7 +421,7 @@ func TestDoctorReturnsErrorWhenUpstreamIsTooOld(t *testing.T) {
 
 // stubUpstreamVersions puts ai-jail and ai-memory stubs reporting the given
 // versions at the front of PATH.
-func stubUpstreamVersions(t *testing.T, versions map[string]string) {
+func stubUpstreamVersions(t *testing.T, versions map[string]string) string {
 	t.Helper()
 	binDir := t.TempDir()
 	for name, want := range versions {
@@ -432,6 +432,32 @@ func stubUpstreamVersions(t *testing.T, versions map[string]string) {
 		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Point HOME at an empty directory so the managed native runner probe finds
+	// nothing. Without this the report grows a third row read from whichever
+	// ~/.local/share/ai-launcher/bin the developer happens to have, and a test
+	// about PATH versions would fail on the state of a file it never mentions.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
+// stubManagedNativeRunner writes a fake managed ai-memory reporting version
+// under home, so a test can exercise the runner row without owning the whole
+// probe. home comes from stubUpstreamVersions rather than the environment:
+// reading it back out of HOME would be taking a path from a mutable global to
+// build a path to write to, which is the shape gosec flags and is no easier to
+// read than passing it.
+func stubManagedNativeRunner(t *testing.T, home, version string) {
+	t.Helper()
+	dir := filepath.Join(home, ".local", "share", "ai-launcher", "bin")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\necho \"ai-memory " + version + "\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "ai-memory"), []byte(script), 0o700); err != nil { // #nosec G306 -- test stub
+		t.Fatal(err)
+	}
 }
 
 func TestDoctorSucceedsWhenUpstreamMeetsFloor(t *testing.T) {
@@ -465,9 +491,32 @@ func TestDoctorWarnsWithoutFailingAboveTheTestedCeiling(t *testing.T) {
 	if !strings.Contains(out, "ai-jail-version-untested") {
 		t.Fatalf("--doctor output = %q; want the untested code for ai-jail", out)
 	}
-	// The advice has to name what actually breaks, or it is noise.
-	if !strings.Contains(out, "no network") || !strings.Contains(out, "--no-jail") {
-		t.Fatalf("--doctor output = %q; want concrete advice about the 1.18 capability opt-ins", out)
+	// The advice has to say what the report means and against what range, or
+	// it is a bare code the operator cannot act on. It deliberately no longer
+	// carries a per-release case study: the ai-jail 1.18.0 one outlived its
+	// own accuracy and named a release now below the floor.
+	if !strings.Contains(out, "has not been validated") || !strings.Contains(out, config.MinAIJailVersion) {
+		t.Fatalf("--doctor output = %q; want the validated-range advice naming the floor", out)
+	}
+}
+
+// The managed native runner has its own upgrade lifecycle, so a current
+// ai-memory on PATH says nothing about the copy Environment() exports as
+// AI_MEMORY_NATIVE_BIN. --doctor reports it on its own line or the operator
+// never learns that `--upgrade` is owed.
+func TestDoctorReportsAStaleManagedNativeRunner(t *testing.T) {
+	home := stubUpstreamVersions(t, map[string]string{
+		"ai-jail":   config.MinAIJailVersion,
+		"ai-memory": config.UntestedAIMemoryVersion,
+	})
+	stubManagedNativeRunner(t, home, "1.24.0")
+
+	out, err := runDryRun(t, "--doctor")
+	if err == nil {
+		t.Fatalf("--doctor output = %q; a runner below the floor is a failure, not a note", out)
+	}
+	if !strings.Contains(out, "ai-memory (managed) 1.24.0") {
+		t.Fatalf("--doctor output = %q; want the managed runner on its own line", out)
 	}
 }
 

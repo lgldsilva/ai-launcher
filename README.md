@@ -34,7 +34,9 @@ ai-jail does not exist — the launcher disables the sandbox with a warning and
 runs the rest.
 
 `ai-memory run` accepts a fixed harness list — `claude`, `codex`, `opencode`,
-`pi`, `crush`, `omp`, `kimi`, `grok` — and rejects anything else. A catalog
+`pi`, `crush`, `omp`, `kimi`, `grok`, `command-code`, `kiro` and `antigravity`,
+the last three with the aliases their own CLIs are spelled with (`cmd`,
+`kiro-cli`, `agy`) — and rejects anything else. A catalog
 agent outside that list either declares `memory.run_harness` to map onto one of
 them (as `oc` does onto `opencode`) or declares `supports_memory: false`;
 pre-flight fails with `memory-harness-unsupported` rather than letting the
@@ -768,7 +770,7 @@ The full schema (fields, defaults, ai-jail `jail_flags`) is in
 via the Docker permission / `--docker`, and refused explicitly otherwise — do
 not pass the host socket unless you would hand the same workload `sudo`.
 
-The `jail_flags` block of `.ai-launch.yaml` mirrors the ai-jail v1.16 CLI. Its
+The `jail_flags` block of `.ai-launch.yaml` mirrors the ai-jail v1.20 CLI. Its
 booleans are tri-state and match ai-jail's own model: unset leaves the
 capability in ai-jail's *auto* mode (enabled when the resource exists), while
 `true` and `false` force it on or off. Forcing on is a real state, not a
@@ -800,11 +802,16 @@ Layers of defense:
   that is a `jail_flags` decision. **Docker is the exception**: it is forced
   off with `--no-docker` unless you opt in, because auto mode for that one
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
-- `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.16.0,
-  `ai-memory` ≥ 1.19.0): it probes `--version` and reports
-  (`ai-jail-version-too-old` / `ai-memory-version-too-old`) when the installed
-  binary is older. It is a separate command on purpose — pre-flight validation
-  never execs the upstream binaries, so a launch costs no extra processes.
+- `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
+  `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
+  (`ai-jail` < 1.21.0, `ai-memory` < 1.35.0). It probes `--version` and reports
+  an install that is older (`ai-jail-version-too-old` /
+  `ai-memory-version-too-old`) or newer than the validated range
+  (`…-version-untested`). It also probes the launcher-managed ai-memory native
+  binary separately (`ai-memory-native-too-old`), because that copy only moves
+  when `--install` / `--upgrade` runs and can sit years behind the one on
+  `PATH`. Only ai-jail's version is re-checked at launch — `--doctor` execs the
+  binaries, pre-flight just reads what the one cached probe found.
 - Every install from a GitHub release asset is SHA-256 checksum-verified
   (`.sha256`, `.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release
   body); `allow_unverified: true` exists, but it is an explicit operator
@@ -870,7 +877,7 @@ Documentation and UI strings in this repository are **English**.
 - [x] Interactive TUI with real execution (`r` / Ctrl+Enter runs; Space/Enter select)
 - [x] Named profiles and harness-declared parameters
 - [x] Installer with mandatory SHA-256 checksum
-- [x] Full ai-jail v1.16 capability surface (tri-state auto / force-on / force-off)
+- [x] Full ai-jail v1.20 capability surface (tri-state auto / force-on / force-off)
 - [x] `--dry-run` runs pre-flight validation before printing the command
 - [x] Windows as a first-class citizen without jail
 - [x] Gherkin contract suite against ai-jail/ai-memory drift

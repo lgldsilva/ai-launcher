@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -75,12 +76,34 @@ func Environment(cfg LaunchConfig) []string {
 	// directory is user-writable, so the file can change before the child
 	// execs it (accepted TOCTOU; the wrapper fails visibly, not silently).
 	if native := managedNativeRunnerPath(cfg.HomeDir); native != "" {
-		if info, err := os.Stat(native); err == nil && info.Mode().IsRegular() &&
-			(isWindows() || info.Mode().Perm()&0o111 != 0) {
+		if statExecutable(native) == nil {
 			env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
 		}
 	}
 	return env
+}
+
+// statExecutable reports whether path is a regular file this process could
+// exec, returning the stat error otherwise. Windows has no exec bit, so the
+// regular-file check is all there is to make there.
+//
+// The check is best-effort by nature — the managed directory is user-writable,
+// so the file can change between this call and the child's exec (accepted
+// TOCTOU; the wrapper then fails visibly rather than silently).
+// It is a variable so tests can decide what exists without creating files
+// whose exec bit chmod cannot control under root or on Windows.
+var statExecutable = func(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	if !isWindows() && info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%s is not executable", path)
+	}
+	return nil
 }
 
 // JailEnvPassthrough returns the environment variable names the sandbox must

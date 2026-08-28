@@ -23,6 +23,34 @@ func stubVersionCommand(t *testing.T, outputs map[string]string, errs map[string
 		return nil, errors.New("unexpected probe of " + path)
 	}
 	t.Cleanup(func() { runVersionCommand = original })
+	// Neutralize the managed-runner probe by default. Left alone it reads the
+	// developer's own ~/.local/share/ai-launcher/bin, which is the machine
+	// dependence the lookPathCommand seam was introduced to remove: a report
+	// would carry a third row on one box and two on CI.
+	stubManagedRunner(t, "")
+}
+
+// stubExecutableStat replaces the exec-bit check with a fixture set, so a test
+// can describe which paths exist without touching the filesystem.
+func stubExecutableStat(t *testing.T, executable map[string]bool) {
+	t.Helper()
+	original := statExecutable
+	statExecutable = func(path string) error {
+		if executable[path] {
+			return nil
+		}
+		return errors.New("no such file: " + path)
+	}
+	t.Cleanup(func() { statExecutable = original })
+}
+
+// stubManagedRunner points the managed native runner probe at path, or
+// disables it when path is empty.
+func stubManagedRunner(t *testing.T, path string) {
+	t.Helper()
+	original := managedRunnerProbePath
+	managedRunnerProbePath = func() string { return path }
+	t.Cleanup(func() { managedRunnerProbePath = original })
 }
 
 func lookPathAll(command string) (string, error) { return "/bin/" + command, nil }
@@ -96,6 +124,7 @@ func TestUpstreamReportDetectsTwoSegmentSemver(t *testing.T) {
 // evidence of an outdated one.
 func TestUpstreamReportNeverGuessesFromAFailedProbe(t *testing.T) {
 	t.Run("binary missing", func(t *testing.T) {
+		stubManagedRunner(t, "")
 		report := UpstreamReport(func(string) (string, error) {
 			return "", errors.New("missing")
 		}, "linux")
@@ -132,6 +161,7 @@ func TestUpstreamReportNeverGuessesFromAFailedProbe(t *testing.T) {
 }
 
 func TestUpstreamReportSkipsAIJailOnWindows(t *testing.T) {
+	stubManagedRunner(t, "")
 	probed := make([]string, 0)
 	original := runVersionCommand
 	runVersionCommand = func(path string) ([]byte, error) {
@@ -207,8 +237,8 @@ func TestUpstreamReportFlagsInstallsAboveTheTestedCeiling(t *testing.T) {
 // this the report would cry wolf on every install the launcher does support.
 func TestUpstreamReportAcceptsTheVersionJustBelowTheCeiling(t *testing.T) {
 	stubVersionCommand(t, map[string]string{
-		"/bin/ai-jail":   "ai-jail 1.18.9",
-		"/bin/ai-memory": "ai-memory 1.28.1",
+		"/bin/ai-jail":   "ai-jail 1.20.9",
+		"/bin/ai-memory": "ai-memory 1.34.0",
 	}, nil)
 	for _, status := range UpstreamReport(lookPathAll, "linux") {
 		if status.TooNew {
@@ -297,5 +327,54 @@ func TestDetectJailVersionCachesAFailedProbe(t *testing.T) {
 	}
 	if calls > 1 {
 		t.Errorf("probed %d times after a failure; want the outcome memoized", calls)
+	}
+}
+
+// The managed native runner is a second ai-memory install with its own
+// lifecycle: PATH's copy moves when Homebrew or cargo says so, this one only
+// when `--install` / `--upgrade` runs. Reporting only the first lets a current
+// install vouch for a stale one, and the stale one is what Environment()
+// exports as AI_MEMORY_NATIVE_BIN.
+func TestUpstreamReportJudgesTheManagedRunnerSeparately(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":       "ai-jail " + config.MinAIJailVersion,
+		"/bin/ai-memory":     "ai-memory 1.32.2",
+		"/managed/ai-memory": "ai-memory 1.24.0",
+	}, nil)
+	stubManagedRunner(t, "/managed/ai-memory")
+	stubExecutableStat(t, map[string]bool{"/managed/ai-memory": true})
+
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 3 {
+		t.Fatalf("report = %#v; want a third row for the managed runner", report)
+	}
+	managed := report[2]
+	if managed.Command != ManagedRunnerCommand {
+		t.Fatalf("third row = %q; want the managed runner", managed.Command)
+	}
+	if !managed.TooOld {
+		t.Errorf("managed TooOld = false for %q against floor %s", managed.Version, config.MinAIMemoryVersion)
+	}
+	if report[1].TooOld {
+		t.Errorf("PATH ai-memory TooOld = true for %q; only the managed copy is stale", report[1].Version)
+	}
+	if managed.Code != "ai-memory-native-too-old" {
+		t.Errorf("managed code = %q; want a code distinct from the PATH install's", managed.Code)
+	}
+}
+
+// Most operators never run --install, and the wrapper only consults
+// AI_MEMORY_NATIVE_BIN under its Docker shell. A file nobody asked for must not
+// add a row, because a Missing row fails the doctor's exit code.
+func TestUpstreamReportOmitsAnAbsentManagedRunner(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail " + config.MinAIJailVersion,
+		"/bin/ai-memory": "ai-memory " + config.MinAIMemoryVersion,
+	}, nil)
+	stubManagedRunner(t, "/managed/ai-memory")
+	stubExecutableStat(t, map[string]bool{})
+
+	if report := UpstreamReport(lookPathAll, "linux"); len(report) != 2 {
+		t.Fatalf("report = %#v; an absent managed runner is not a finding", report)
 	}
 }

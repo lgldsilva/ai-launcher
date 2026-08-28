@@ -77,6 +77,9 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 	report = append(report, probeUpstream(lookPath, config.AIMemoryCommand,
 		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
 		"ai-memory-version-too-old", "ai-memory-version-untested"))
+	if managed := probeManagedRunner(); managed != nil {
+		report = append(report, *managed)
+	}
 	return report
 }
 
@@ -114,6 +117,53 @@ func probeJailVersion() string {
 		return ""
 	}
 	return semverPattern.FindString(string(output))
+}
+
+// ManagedRunnerCommand labels the launcher-managed ai-memory native binary in
+// the doctor report. It is deliberately not config.AIMemoryCommand: the two
+// are separate installs that drift apart, and a report that spelled them the
+// same way would let the newer one vouch for the older.
+const ManagedRunnerCommand = "ai-memory (managed)"
+
+// managedRunnerProbePath resolves the managed native runner. It is a seam so
+// tests can point the probe at a fixture instead of the operator's home.
+var managedRunnerProbePath = func() string { return managedNativeRunnerPath("") }
+
+// probeManagedRunner reports the launcher-managed ai-memory native binary that
+// Environment() exports as AI_MEMORY_NATIVE_BIN, or nil when there is none.
+//
+// It exists because the PATH probe cannot speak for this file. They are two
+// installs with two lifecycles: `ai-memory` on PATH is upgraded by whatever
+// installed it (Homebrew, cargo, mise), while the managed copy under
+// ~/.local/share/ai-launcher/bin only ever moves when `--install` / `--upgrade`
+// runs. A machine can therefore sit on a current PATH install and a managed
+// runner from months earlier, and the doctor would report the healthy one while
+// the launch exports the stale one.
+//
+// What that costs is the failure invariant 6b exists to prevent. The managed
+// runner is what the ai-memory Docker shell wrapper execs for `run`, so a copy
+// predating a harness the catalog offers rejects it with the opaque clap error
+// raised inside the jail — the precise error memoryHarnessIssues refuses to let
+// through, arriving anyway through a path pre-flight cannot see.
+//
+// Absence is not a finding: most operators never run `--install`, and the
+// wrapper only consults the variable at all under the Docker shell. A missing
+// or unreadable file returns nil rather than a "not found" row that would fail
+// the doctor's exit code over a file nobody asked for.
+func probeManagedRunner() *UpstreamStatus {
+	path := managedRunnerProbePath()
+	if path == "" {
+		return nil
+	}
+	status := probeUpstream(
+		func(string) (string, error) { return path, statExecutable(path) },
+		ManagedRunnerCommand,
+		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
+		"ai-memory-native-too-old", "ai-memory-native-untested")
+	if status.Missing || status.Version == "" {
+		return nil
+	}
+	return &status
 }
 
 // probeUpstream resolves one tool and reads its --version output. untested is

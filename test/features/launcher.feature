@@ -922,7 +922,7 @@ Feature: Launcher command contract
       goos: linux
       jail: true
       memory: false
-      jail_version: 1.19.0
+      jail_version: 1.21.0
       """
     When launcher preflight is checked
     Then issue codes equal
@@ -930,10 +930,49 @@ Feature: Launcher command contract
       jail-version-untested
       """
 
+  # 1.19.1 was inside the supported range until the floor moved to 1.20.1. On
+  # macOS every release below that could exec a binary the sandbox never
+  # vetted, so this is the one version whose verdict this bump inverts — the
+  # scenario exists to make that inversion visible rather than incidental.
+  Scenario: Refuses the ai-jail the 1.20.1 security floor left behind
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: 1.19.1
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-version-too-old
+      """
+
   Scenario: Accepts the Kiro harness ai-memory gained in 1.24
     Given a validation configuration
       """
       agent: kiro-cli
+      goos: linux
+      jail: false
+      memory: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """
+
+  # The catalog spells Antigravity "agy" (its own executable name), while
+  # ai-memory names the harness "antigravity" and accepts "agy" as an alias.
+  # Pre-flight has to agree with clap on both spellings or it refuses a harness
+  # the installed ai-memory would have taken.
+  Scenario: Accepts the Antigravity harness ai-memory gained in 1.24
+    Given a validation configuration
+      """
+      agent: agy
       goos: linux
       jail: false
       memory: true

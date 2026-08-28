@@ -242,17 +242,15 @@ func reportDoctor(out io.Writer) error {
 
 // untestedAdvice explains what an upstream above the validated range means for
 // the argv this launcher builds. A newer upstream is not automatically broken,
-// which is why --doctor reports it and the launch still proceeds — but ai-jail
-// 1.18.0 is a concrete case where the same flags changed meaning, so it gets a
-// concrete warning instead of a generic one.
+// which is why --doctor reports it and the launch still proceeds.
+//
+// There used to be a second, ai-jail-specific branch here describing the 1.18.0
+// capability migration. It said the launcher did not emit the new opt-in flags
+// yet and told the operator to reach for --no-jail — advice that stopped being
+// true once the launcher started emitting --network and --env, and that named a
+// release now below MinAIJailVersion. One generic sentence outlives the next
+// upstream release; a hand-written case study does not.
 func untestedAdvice(status launcher.UpstreamStatus) string {
-	if status.Command == config.AIJailCommand {
-		return "ai-jail 1.18.0 made network access, the process environment, GPU, display, X11, " +
-			"host shared memory and agent credential state explicit opt-ins. ai-launcher does not " +
-			"emit those flags yet, so a sandboxed agent comes up with no network and ai-memory " +
-			"loses its server URL, auth token and native binary. Use --no-jail, or pin ai-jail " +
-			"below " + status.Untested + ", until ai-launcher emits the new capability flags."
-	}
 	return "ai-launcher composes against " + status.Command + " >= " + status.Minimum +
 		" and < " + status.Untested + "; this install is newer, so the wrapper surface it " +
 		"exposes has not been validated against the argv ai-launcher builds."
