@@ -184,12 +184,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Same reason the gate job calls the Makefile: this used to be a copy of
+      # the command, and it drifted. Sonar measured four packages while the
+      # Makefile measured five, so a package with passing tests reported 0% on
+      # the quality gate. The profile target is the boundary; the gate itself
+      # belongs to the test job, not here.
       - name: Coverage
         if: ${{ env.SONAR_TOKEN != '' }}
-        run: |
-          go test -covermode=atomic \
-            -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container \
-            -coverprofile=coverage.out ./internal/config ./internal/catalog ./internal/launcher ./internal/container
+        run: make coverage-profile
       # Official SonarSource action pinned by SHA (an npx install trips the
       # githubactions:S6505 supply-chain rule and fails the new-security gate).
       - name: SonarCloud analysis (waits for the quality gate)

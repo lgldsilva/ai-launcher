@@ -34,7 +34,7 @@ MUTATION_EFFICACY_MIN ?= 70
 MUTATION_COVERAGE_MIN ?= 90
 MUTATION_OUTPUT ?= .mutation/gremlins.json
 
-.PHONY: build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec sec-static sec-vuln test-unit test-property test-gherkin test-race test-coverage test-mutation-script test-mutation test-all
+.PHONY: coverage-profile build build-linux build-macos build-windows build-release release-checksums release-local test fmt lint lint-full lint-dist sec sec-static sec-vuln test-unit test-property test-gherkin test-race test-coverage test-mutation-script test-mutation test-all
 
 build:
 	$(GO) build -buildvcs=false $(LDFLAGS) -o bin/ai-launcher ./cmd/ai-launcher
@@ -121,8 +121,16 @@ test-race:
 # of the same package — the denominator inflates with blocks that no longer
 # exist and the reported number collapses (91.8% -> 76.6% on the same tree).
 # The gate then fails, or passes, according to what happens to be in the cache.
-test-coverage:
+coverage-profile:
 	$(GO) test -count=1 -covermode=atomic -coverpkg=$(COVERAGE_COVERPKG) -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
+
+# The profile is a separate target because CI needs it twice: once behind the
+# gate here, and once on its own for the SonarCloud upload. That second use
+# used to be a copy of the command inside the workflow, which drifted exactly
+# as the comment above the CI gate warned it would — Sonar measured four
+# packages while the Makefile measured five, so a new package read as 0%
+# covered on the quality gate and nowhere else.
+test-coverage: coverage-profile
 	@logic_profile=$$(mktemp); \
 	trap 'rm -f "$$logic_profile"' EXIT; \
 	awk 'NR == 1 || $$1 !~ /internal\/launcher\/(executor.*|replace_.*)\.go:/' $(COVERAGE_FILE) > "$$logic_profile"; \
