@@ -178,3 +178,36 @@ func TestWriteFileReportsAFailedRename(t *testing.T) {
 		t.Errorf("directory = %v; the temporary must be cleaned up after a failed rename", entries)
 	}
 }
+
+// The mode is applied before the rename precisely so a config carrying an auth
+// token is never briefly world-readable, which makes a failed chmod a refusal
+// rather than something to shrug off and rename anyway.
+//
+// A pipe is the portable way to reach it: writes succeed, fchmod does not.
+// Making the file itself unchmoddable would need either root or a filesystem
+// this test cannot assume.
+func TestWriteTempRefusesWhenTheModeCannotBeApplied(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+
+	original := CreateTemp
+	CreateTemp = func(string, string) (*os.File, error) { return writer, nil }
+	t.Cleanup(func() { CreateTemp = original })
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	_, err = WriteTemp(path, []byte("token: secret"), 0o600, ".test-*")
+
+	var failure *WriteError
+	if !errors.As(err, &failure) {
+		t.Fatalf("WriteTemp() = %v; want a *WriteError", err)
+	}
+	if failure.Stage != "protect" {
+		t.Errorf("Stage = %q; want \"protect\"", failure.Stage)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Stat(path) err = %v; a refused write must not create the destination", err)
+	}
+}

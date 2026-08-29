@@ -2,6 +2,8 @@ package launcher
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -376,5 +378,37 @@ func TestUpstreamReportOmitsAnAbsentManagedRunner(t *testing.T) {
 
 	if report := UpstreamReport(lookPathAll, "linux"); len(report) != 2 {
 		t.Fatalf("report = %#v; an absent managed runner is not a finding", report)
+	}
+}
+
+// statExecutable is what decides whether AI_MEMORY_NATIVE_BIN gets exported
+// and whether the managed runner gets a doctor row. Its three verdicts are
+// distinct on purpose: a directory and a non-executable file are both "there
+// but unusable", and reporting them as "absent" would hide a broken install.
+func TestStatExecutable(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := statExecutable(dir); err == nil {
+		t.Error("statExecutable(directory) = nil; a directory cannot be exec'd")
+	}
+	if err := statExecutable(filepath.Join(dir, "absent")); err == nil {
+		t.Error("statExecutable(absent) = nil; want the stat error")
+	}
+
+	runner := filepath.Join(dir, "ai-memory")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\n"), 0o700); err != nil { // #nosec G306 -- test fixture must be executable
+		t.Fatal(err)
+	}
+	if err := statExecutable(runner); err != nil {
+		t.Errorf("statExecutable(executable) = %v; want nil", err)
+	}
+}
+
+// The probe's default has to resolve the same path the installer writes to and
+// Environment() exports, or --doctor would report on a file nothing uses.
+func TestManagedRunnerProbePathMatchesTheInstalledLocation(t *testing.T) {
+	got := managedRunnerProbePath()
+	if got != managedNativeRunnerPath("") {
+		t.Errorf("managedRunnerProbePath() = %q; want the managed install location %q", got, managedNativeRunnerPath(""))
 	}
 }

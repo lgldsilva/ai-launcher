@@ -1,6 +1,15 @@
 GO ?= go
 COVERAGE_FILE ?= coverage.out
-COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher ./internal/container
+COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher ./internal/container ./internal/fsatomic
+# -coverpkg needs import paths where COVERAGE_PACKAGES has directories, and the
+# two used to be written out separately. They drifted the first time a package
+# was added: the new one was tested, passed, and still reported 0% coverage,
+# because it was in the list of packages to run and not in the list to measure.
+# Deriving one from the other makes that impossible.
+COVERAGE_MODULE := github.com/lgldsilva/ai-launcher
+comma := ,
+space := $(empty) $(empty)
+COVERAGE_COVERPKG := $(subst $(space),$(comma),$(patsubst ./%,$(COVERAGE_MODULE)/%,$(COVERAGE_PACKAGES)))
 COVERAGE_MIN ?= 90
 DIST_DIR ?= dist
 # Build metadata injected into cmd/ai-launcher's version/commit/date vars.
@@ -113,7 +122,7 @@ test-race:
 # exist and the reported number collapses (91.8% -> 76.6% on the same tree).
 # The gate then fails, or passes, according to what happens to be in the cache.
 test-coverage:
-	$(GO) test -count=1 -covermode=atomic -coverpkg=github.com/lgldsilva/ai-launcher/internal/config,github.com/lgldsilva/ai-launcher/internal/catalog,github.com/lgldsilva/ai-launcher/internal/launcher,github.com/lgldsilva/ai-launcher/internal/container -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
+	$(GO) test -count=1 -covermode=atomic -coverpkg=$(COVERAGE_COVERPKG) -coverprofile=$(COVERAGE_FILE) $(COVERAGE_PACKAGES)
 	@logic_profile=$$(mktemp); \
 	trap 'rm -f "$$logic_profile"' EXIT; \
 	awk 'NR == 1 || $$1 !~ /internal\/launcher\/(executor.*|replace_.*)\.go:/' $(COVERAGE_FILE) > "$$logic_profile"; \
