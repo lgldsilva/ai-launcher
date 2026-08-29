@@ -179,14 +179,19 @@ func TestWriteFileReportsAFailedRename(t *testing.T) {
 	}
 }
 
-// The mode is applied before the rename precisely so a config carrying an auth
-// token is never briefly world-readable, which makes a failed chmod a refusal
-// rather than something to shrug off and rename anyway.
+// Everything between the write and the rename is a refusal point, and the
+// refusal has to name which one it was — a caller that renamed anyway would
+// publish a file at whatever mode CreateTemp chose, and one of these callers
+// writes a config that may carry an auth token.
 //
-// A pipe is the portable way to reach it: writes succeed, fchmod does not.
-// Making the file itself unchmoddable would need either root or a filesystem
+// A pipe is the portable way in: writes succeed, and one of the two steps
+// after them does not. Which one is the kernel's business — fchmod on a pipe
+// returns EINVAL on macOS and succeeds on Linux, where fsync fails instead —
+// so the test asserts the property that matters (refused, named, nothing
+// created) rather than pinning a stage that is not the same everywhere.
+// Making the destination itself unchmoddable would need root or a filesystem
 // this test cannot assume.
-func TestWriteTempRefusesWhenTheModeCannotBeApplied(t *testing.T) {
+func TestWriteTempRefusesWhenTheTemporaryCannotBeFinished(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -204,8 +209,8 @@ func TestWriteTempRefusesWhenTheModeCannotBeApplied(t *testing.T) {
 	if !errors.As(err, &failure) {
 		t.Fatalf("WriteTemp() = %v; want a *WriteError", err)
 	}
-	if failure.Stage != "protect" {
-		t.Errorf("Stage = %q; want \"protect\"", failure.Stage)
+	if failure.Stage != "protect" && failure.Stage != "flush" {
+		t.Errorf("Stage = %q; want the step that failed, one of \"protect\" or \"flush\"", failure.Stage)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("Stat(path) err = %v; a refused write must not create the destination", err)
