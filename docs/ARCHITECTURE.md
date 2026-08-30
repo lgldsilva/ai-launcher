@@ -140,6 +140,15 @@ approval record, service data) out of version control.
    install fails, unless an explicit `allow_unverified: true` in the recipe.
    A recipe that publishes release assets always installs from them; the
    unverified `source_url` path is reserved for recipes with no assets.
+   A `source_url` is classified before it is installed (`internal/sourcehealth`,
+   pure and I/O-free): a one-shot vendor bootstrapper is **executed** and the
+   executable it produces is resolved (target path, then the command and its
+   aliases on PATH), while a managed wrapper (ai-memory's `bin/ai-memory`) is
+   **stored** as the command. Storing a bootstrapper at the command path makes it
+   find its own `BINARY_PATH` already present, print "already installed", and exit
+   0. So the script's content decides the install shape and its behaviour decides
+   the verdict: no source install reports success until `<command> --version`
+   answers with a version, and a failed escalation restores the bytes it replaced.
    Sources are tried in descending order of strength: the GitHub API's own
    asset digest, then a checksum asset, then the **release body** text. That
    last one is weaker than it looks and is deliberately last — release notes

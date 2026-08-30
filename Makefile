@@ -1,6 +1,6 @@
 GO ?= go
 COVERAGE_FILE ?= coverage.out
-COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher ./internal/container ./internal/fsatomic
+COVERAGE_PACKAGES ?= ./internal/config ./internal/catalog ./internal/launcher ./internal/container ./internal/fsatomic ./internal/sourcehealth
 # -coverpkg needs import paths where COVERAGE_PACKAGES has directories, and the
 # two used to be written out separately. They drifted the first time a package
 # was added: the new one was tested, passed, and still reported 0% coverage,

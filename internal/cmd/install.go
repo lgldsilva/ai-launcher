@@ -315,12 +315,12 @@ func installWithoutRecipe(client *installer.Installer, target installTarget, sel
 		}
 		ctx, cancel := withInstallTimeout(context.Background())
 		defer cancel()
-		result, err := client.InstallSource(ctx, target.Name, target.Command, target.Path, target.SourceURL, force)
+		result, err := client.InstallSource(ctx, target.Name, target.Command, target.Aliases, target.Path, target.SourceURL, force)
 		if err != nil {
 			trace.Printf("source install failed name=%q error=%v", target.Name, err)
 			return "", err
 		}
-		trace.Printf("source install result name=%q status=%q path=%q", result.Name, result.Status, result.Path)
+		trace.Printf("source install result name=%q status=%q version=%q configured=%q path=%q", result.Name, result.Status, result.Version, target.Path, result.Path)
 		_, _ = fmt.Fprintf(out, "%s: %s (%s)\n", result.Name, result.Status, result.Path)
 		return result.Path, nil
 	}
