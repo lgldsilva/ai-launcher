@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -50,6 +51,16 @@ type Installer struct {
 	GOOS       string
 	GOARCH     string
 	CurrentDir string
+	// Run executes a command and returns its combined output plus the exit
+	// error, if any. It is a field so source installs (which must run vendor
+	// bootstrappers and probe the resulting command) are unit-testable without
+	// spawning shells; the installer package is outside the coverage boundary,
+	// so the seam is what makes the behaviour assertable.
+	Run func(ctx context.Context, name string, args ...string) (string, error)
+	// LookPath resolves a command name against PATH. A field for the same
+	// reason: after a vendor installer runs, the executable may land somewhere
+	// other than the configured target.
+	LookPath func(name string) (string, error)
 }
 
 // Result reports the outcome of an install attempt: Status is one of
@@ -85,6 +96,16 @@ type stateEntry struct {
 	Asset      string `json:"asset"`
 	Path       string `json:"path"`
 	UpdatedAt  string `json:"updated_at"`
+	// Kind records how the source script was installed: "wrapper" when the
+	// script itself is the command, "installer" when it was executed and the
+	// executable it produced was resolved. Recorded because the two need
+	// different idempotence checks — comparing bytes proves nothing about an
+	// installer, whose target must NOT contain its own script.
+	Kind string `json:"kind,omitempty"`
+	// ScriptDigest is the sha256 of the source script, so a non-forced run can
+	// tell "unchanged" from "changed upstream" without shipping whole files in
+	// the state document.
+	ScriptDigest string `json:"script_digest,omitempty"`
 }
 
 // New returns an Installer rooted at homeDir using the public GitHub API.
@@ -99,6 +120,8 @@ func New(homeDir string) *Installer {
 		GOOS:       runtime.GOOS,
 		GOARCH:     runtime.GOARCH,
 		CurrentDir: mustCurrentDir(),
+		Run:        runCombinedOutput,
+		LookPath:   exec.LookPath,
 	}
 }
 
@@ -206,46 +229,6 @@ func (i *Installer) downloadVerifiedBinary(ctx context.Context, asset Asset, lat
 		return nil, fmt.Errorf("extract %s: %w", asset.Name, err)
 	}
 	return binaryBytes, nil
-}
-
-// InstallSource installs a versionless wrapper or script from a trusted HTTPS
-// source. It is intentionally separate from releases: ai-memory's command is
-// a shell wrapper while its native runner is managed by the wrapper itself.
-func (i *Installer) InstallSource(ctx context.Context, name, command, configuredPath, sourceURL string, force bool) (Result, error) {
-	if strings.TrimSpace(sourceURL) == "" {
-		return Result{Name: name}, errors.New("source URL is empty")
-	}
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(sourceURL)), "https://") {
-		return Result{Name: name}, errors.New("source URL must use HTTPS")
-	}
-	target, err := i.targetPath(configuredPath, command)
-	if err != nil {
-		return Result{Name: name}, fmt.Errorf(namedErrorFormat, name, err)
-	}
-	data, err := i.download(ctx, Asset{Name: sourceURL, BrowserDownloadURL: sourceURL})
-	if err != nil {
-		return Result{Name: name}, fmt.Errorf("download %s: %w", name, err)
-	}
-	if len(data) == 0 || !bytes.HasPrefix(data, []byte("#!")) {
-		return Result{Name: name}, errors.New("source does not look like an executable script")
-	}
-	if !force {
-		if existing, readErr := os.ReadFile(target); readErr == nil && bytes.Equal(existing, data) && isExecutable(target) { // #nosec G304 -- target is the install path derived from the user's own configuration
-			return Result{Name: name, Path: target, Status: "current"}, nil
-		}
-	}
-	if err := i.installFile(target, data); err != nil {
-		return Result{Name: name}, fmt.Errorf("install %s: %w", name, err)
-	}
-	currentState, err := i.loadState()
-	if err != nil {
-		return Result{Name: name}, err
-	}
-	currentState.Installs[target] = stateEntry{Repository: sourceURL, Tag: "source", Asset: sourceURL, Path: target, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err := i.saveState(currentState); err != nil {
-		return Result{Name: name, Path: target}, err
-	}
-	return Result{Name: name, Path: target, Status: "installed"}, nil
 }
 
 func (i *Installer) platform() string {

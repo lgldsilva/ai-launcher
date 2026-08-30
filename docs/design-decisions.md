@@ -487,6 +487,39 @@ being exposed.
 without a selection change and invalidate the content-hash/cache promise.
 Pinned images make Compose output deterministic and make failures reproducible.
 
+## Source installs are classified, and verified by behaviour
+
+**Decision.** `internal/sourcehealth` answers two questions in pure code, with no
+filesystem, exec or network: what kind of script a `source_url` download is — a
+one-shot vendor **installer** (execute it, keep what it produced) or a managed
+**wrapper** (store it, it *is* the command) — and what a `<command> --version`
+probe proved about the result. Success requires evidence: a version token, or a
+wrapper that answers without installer text. An installer answer, or no runnable
+executable, fails the install and restores the bytes that were replaced.
+
+**Why.** The catalog records ten official `curl | bash` installers as
+`source_url` (see the previous section), but `InstallSource` wrote whatever it
+downloaded to the command's own PATH entry and never ran it. Those bootstrappers
+compute `BINARY_PATH="$TARGET_DIR/<cmd>"` and bail out when that path is occupied
+— by themselves — printing "already installed" and exiting **0**. Eight agent
+CLIs were dead or shadowed at once this way, each recorded in `install-state.json`
+as a successful install, so a later run reported `current` and `--force` re-broke
+commands that had been working. Byte-identity as the idempotence test was the
+second half of the bug: for an installer, byte-identity *is* the failure state.
+
+**Why the classifier is pure and gated.** `internal/installer` and `internal/cmd`
+sit outside the logic coverage boundary, so a decision made inline there would
+ship untested and unmutated. The classification lives in its own package, listed
+in the Makefile's `COVERAGE_PACKAGES` — which the Makefile itself warns is the
+single place to update, because `-coverpkg` derives from it and a package added to
+one list and not the other reports 0% while its tests pass.
+
+**Why text alone is not enough.** `curl -fsSL` appears in the ai-memory managed
+wrapper too, so a marker list broad enough to catch every installer would also
+classify a working wrapper as one and throw it away. Text decides the shape; the
+probe decides whether to believe it; and a recipe whose stored file starts
+answering like an installer is repaired rather than reported as current.
+
 ## Official vendor installers are recorded with allow_unverified
 
 **Decision.** The mainstream coding agents (claude, codex, opencode, kimi,

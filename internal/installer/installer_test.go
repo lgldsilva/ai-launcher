@@ -163,16 +163,16 @@ func TestInstallSourceUpdatesHTTPSWrapper(t *testing.T) {
 	client.HTTPClient = server.Client()
 	client.StatePath = filepath.Join(root, "state.json")
 	target := filepath.Join(root, "bin", "wrapper")
-	first, err := client.InstallSource(context.Background(), "Wrapper", "wrapper", target, server.URL, false)
+	first, err := client.InstallSource(context.Background(), "Wrapper", "wrapper", nil, target, server.URL, false)
 	if err != nil || first.Status != "installed" {
 		t.Fatalf("first source install = %#v, err=%v", first, err)
 	}
-	second, err := client.InstallSource(context.Background(), "Wrapper", "wrapper", target, server.URL, false)
+	second, err := client.InstallSource(context.Background(), "Wrapper", "wrapper", nil, target, server.URL, false)
 	if err != nil || second.Status != "current" {
 		t.Fatalf("second source install = %#v, err=%v", second, err)
 	}
 	version.Store(1)
-	third, err := client.InstallSource(context.Background(), "Wrapper", "wrapper", target, server.URL, false)
+	third, err := client.InstallSource(context.Background(), "Wrapper", "wrapper", nil, target, server.URL, false)
 	if err != nil || third.Status != "installed" {
 		t.Fatalf("updated source install = %#v, err=%v", third, err)
 	}
