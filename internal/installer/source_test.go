@@ -476,44 +476,82 @@ func TestInstallSourceDoesNotBoundInstallerToProbeTimeout(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), parentDeadline)
 	defer cancel()
 
-	var installerDeadline time.Time
-	var sawInstaller, sawProbe bool
-	var probeRemaining time.Duration
-	inner := fixture.client.Run
-	fixture.client.Run = func(runCtx context.Context, name string, args ...string) (string, error) {
-		if len(args) > 0 && args[len(args)-1] == "--version" {
-			sawProbe = true
-			if deadline, ok := runCtx.Deadline(); ok {
-				probeRemaining = time.Until(deadline)
-			}
-		} else {
-			sawInstaller = true
-			if deadline, ok := runCtx.Deadline(); ok {
-				installerDeadline = deadline
-			}
-		}
-		return inner(runCtx, name, args...)
-	}
-
+	seen := watchSourceRunDeadlines(fixture)
 	if _, err := fixture.client.InstallSource(ctx, "Tool", "tool", nil, target, fixture.sourceURL, false); err != nil {
 		t.Fatalf("InstallSource: %v", err)
 	}
-	if !sawInstaller {
+	assertInstallerInheritsParentDeadline(t, seen, parentDeadline)
+	assertProbeStaysOnProbeTimeout(t, seen)
+}
+
+// sourceRunDeadlines is what the exec seam observed: which calls ran and
+// how long each context still had to live.
+type sourceRunDeadlines struct {
+	installerDeadline time.Time
+	sawInstaller      bool
+	sawProbe          bool
+	probeRemaining    time.Duration
+}
+
+func isVersionProbe(args []string) bool {
+	return len(args) > 0 && args[len(args)-1] == "--version"
+}
+
+func recordDeadline(ctx context.Context) (time.Time, time.Duration, bool) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return time.Time{}, 0, false
+	}
+	return deadline, time.Until(deadline), true
+}
+
+func (s *sourceRunDeadlines) observe(ctx context.Context, args []string) {
+	deadline, remaining, hasDeadline := recordDeadline(ctx)
+	if isVersionProbe(args) {
+		s.sawProbe = true
+		if hasDeadline {
+			s.probeRemaining = remaining
+		}
+		return
+	}
+	s.sawInstaller = true
+	if hasDeadline {
+		s.installerDeadline = deadline
+	}
+}
+
+func watchSourceRunDeadlines(fixture *sourceFixture) *sourceRunDeadlines {
+	seen := &sourceRunDeadlines{}
+	inner := fixture.client.Run
+	fixture.client.Run = func(runCtx context.Context, name string, args ...string) (string, error) {
+		seen.observe(runCtx, args)
+		return inner(runCtx, name, args...)
+	}
+	return seen
+}
+
+func assertInstallerInheritsParentDeadline(t *testing.T, seen *sourceRunDeadlines, parent time.Time) {
+	t.Helper()
+	if !seen.sawInstaller {
 		t.Fatal("installer was never invoked")
 	}
-	if installerDeadline.IsZero() {
+	if seen.installerDeadline.IsZero() {
 		t.Fatal("installer ctx had no deadline; production always passes the parent install timeout")
 	}
-	if remaining := time.Until(installerDeadline); remaining <= probeTimeout {
+	if remaining := time.Until(seen.installerDeadline); remaining <= probeTimeout {
 		t.Errorf("installer remaining %v is at or below probeTimeout %v — a vendor download would be killed", remaining, probeTimeout)
 	}
-	if drift := installerDeadline.Sub(parentDeadline); drift < -time.Second || drift > time.Second {
+	if drift := seen.installerDeadline.Sub(parent); drift < -time.Second || drift > time.Second {
 		t.Errorf("installer deadline drifted from parent by %v", drift)
 	}
-	if !sawProbe {
+}
+
+func assertProbeStaysOnProbeTimeout(t *testing.T, seen *sourceRunDeadlines) {
+	t.Helper()
+	if !seen.sawProbe {
 		t.Fatal("probe was never invoked")
 	}
-	if probeRemaining <= 0 || probeRemaining > probeTimeout+time.Second {
-		t.Errorf("probe remaining %v, want about probeTimeout %v", probeRemaining, probeTimeout)
+	if seen.probeRemaining <= 0 || seen.probeRemaining > probeTimeout+time.Second {
+		t.Errorf("probe remaining %v, want about probeTimeout %v", seen.probeRemaining, probeTimeout)
 	}
 }
