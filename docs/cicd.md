@@ -67,8 +67,10 @@ cleanly while the secret does not exist, so forks and early setup stay green.
 pinned by commit SHA. The scanner runs with
 `-Dsonar.host.url=https://sonarcloud.io` and `-Dsonar.qualitygate.wait=true`;
 `sonar-project.properties` at the repo root is host-agnostic (sources, test
-inclusions, coverage exclusions aligned with the 90% gate) and never carries
-host, org, key, or token — those arrive as `-D` flags.
+inclusions, coverage exclusions aligned with the 90% gate, and analysis
+exclusions for generated/third-party trees such as
+`internal/sourcehealth/testdata/**`) and never carries host, org, key, or
+token — those arrive as `-D` flags.
 
 ## Required secrets and variables
 

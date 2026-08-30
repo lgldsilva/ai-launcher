@@ -520,6 +520,13 @@ classify a working wrapper as one and throw it away. Text decides the shape; the
 probe decides whether to believe it; and a recipe whose stored file starts
 answering like an installer is repaired rather than reported as current.
 
+**Why the probe bound is not the installer bound.** `<command> --version` is
+capped at 20s so a hung binary cannot freeze `--install`. The vendor
+bootstrapper that *produces* that binary is a different process: it downloads
+its own release (Antigravity is ~180 MB) and must inherit the parent
+install-step timeout (`installStepTimeout` in `internal/cmd`, 10 minutes).
+Wrapping that invocation in the probe deadline kills a working install.
+
 ## Official vendor installers are recorded with allow_unverified
 
 **Decision.** The mainstream coding agents (claude, codex, opencode, kimi,

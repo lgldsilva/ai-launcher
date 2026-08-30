@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // The fixtures below model the two shapes a source_url recipe can hold. The
@@ -455,5 +456,64 @@ func TestInstallSourceReinstallsWhenTheRecipeMovesOn(t *testing.T) {
 	stored, err := os.ReadFile(fixture.target) // #nosec G304
 	if err != nil || !strings.Contains(string(stored), "v2") {
 		t.Errorf("target not updated to the new recipe: %q, %v", stored, err)
+	}
+}
+
+// TestInstallSourceDoesNotBoundInstallerToProbeTimeout is the product
+// hypothesis that was true: run() used to wrap every exec — including the
+// vendor bootstrapper — in probeTimeout (20s). A real vendor download
+// (Antigravity ~180 MB) would be killed. Probes stay short; the installer
+// inherits the parent install-step deadline.
+func TestInstallSourceDoesNotBoundInstallerToProbeTimeout(t *testing.T) {
+	fixture := newSourceFixture(t, deadlockInstallerScript)
+	target := fixture.target
+	fixture.installEffect = func(t *testing.T) error {
+		writeExecutable(t, target, workingBinaryScript)
+		return nil
+	}
+
+	parentDeadline := time.Now().Add(10 * time.Minute)
+	ctx, cancel := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancel()
+
+	var installerDeadline time.Time
+	var sawInstaller, sawProbe bool
+	var probeRemaining time.Duration
+	inner := fixture.client.Run
+	fixture.client.Run = func(runCtx context.Context, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[len(args)-1] == "--version" {
+			sawProbe = true
+			if deadline, ok := runCtx.Deadline(); ok {
+				probeRemaining = time.Until(deadline)
+			}
+		} else {
+			sawInstaller = true
+			if deadline, ok := runCtx.Deadline(); ok {
+				installerDeadline = deadline
+			}
+		}
+		return inner(runCtx, name, args...)
+	}
+
+	if _, err := fixture.client.InstallSource(ctx, "Tool", "tool", nil, target, fixture.sourceURL, false); err != nil {
+		t.Fatalf("InstallSource: %v", err)
+	}
+	if !sawInstaller {
+		t.Fatal("installer was never invoked")
+	}
+	if installerDeadline.IsZero() {
+		t.Fatal("installer ctx had no deadline; production always passes the parent install timeout")
+	}
+	if remaining := time.Until(installerDeadline); remaining <= probeTimeout {
+		t.Errorf("installer remaining %v is at or below probeTimeout %v — a vendor download would be killed", remaining, probeTimeout)
+	}
+	if drift := installerDeadline.Sub(parentDeadline); drift < -time.Second || drift > time.Second {
+		t.Errorf("installer deadline drifted from parent by %v", drift)
+	}
+	if !sawProbe {
+		t.Fatal("probe was never invoked")
+	}
+	if probeRemaining <= 0 || probeRemaining > probeTimeout+time.Second {
+		t.Errorf("probe remaining %v, want about probeTimeout %v", probeRemaining, probeTimeout)
 	}
 }

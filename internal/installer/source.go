@@ -25,7 +25,8 @@ const (
 	// probeTimeout bounds one `<command> --version` probe. Probes are the only
 	// evidence that a source install produced a working command, so they must
 	// never be able to hang an install run; 20s is generous for a wrapper that
-	// shells out to a native runner on first use.
+	// shells out to a native runner on first use. Vendor bootstrapper execution
+	// does not use this bound — see runInstaller.
 	probeTimeout = 20 * time.Second
 	// installerTailChars is how much trailing installer output is kept for an
 	// error message — enough to name the failure, not a whole download log.
@@ -107,7 +108,10 @@ func (i *Installer) InstallSource(ctx context.Context, name, command string, ali
 		}
 		probe := i.probeCommand(ctx, target)
 		if probe.State == sourcehealth.ProbeHealthy || probe.State == sourcehealth.ProbeSilent {
-			return i.finishSource(name, target, target, sourceURL, data, sourceKindWrapper, probe, "installed")
+			return i.finishSource(sourceRecord{
+				name: name, key: target, resolved: target, sourceURL: sourceURL,
+				data: data, kind: sourceKindWrapper, probe: probe, status: "installed",
+			})
 		}
 		// The wrapper candidate answered like an installer: fall through to the
 		// executing path rather than advertising a command that is not there.
@@ -139,7 +143,10 @@ func (i *Installer) existingSourceResult(ctx context.Context, name, target strin
 	if verdict == sourcehealth.ExistingCurrentWrapper {
 		kind = sourceKindWrapper
 	}
-	result, err := i.finishSource(name, target, target, sourceURL, data, kind, probe, "current")
+	result, err := i.finishSource(sourceRecord{
+		name: name, key: target, resolved: target, sourceURL: sourceURL,
+		data: data, kind: kind, probe: probe, status: "current",
+	})
 	return result, true, err
 }
 
@@ -177,7 +184,7 @@ func (i *Installer) runVendorInstaller(ctx context.Context, name, command string
 	}
 	defer func() { _ = os.RemoveAll(filepath.Dir(staged)) }()
 
-	output, runErr := i.run(ctx, sourcehealth.Interpreter(data), staged)
+	output, runErr := i.runInstaller(ctx, sourcehealth.Interpreter(data), staged)
 	// The installer's own exit status is not the verdict: several vendors exit
 	// non-zero after a successful install when an interactive post-install
 	// login is declined in a non-interactive run. What counts is whether an
@@ -196,7 +203,10 @@ func (i *Installer) runVendorInstaller(ctx context.Context, name, command string
 		restoreFile(target, previous, hadPrevious)
 		return Result{Name: name, Path: resolved}, fmt.Errorf("%s: installed %q but it does not behave like a command (probe verdict %s)", name, resolved, probe.State)
 	}
-	return i.finishSource(name, target, resolved, sourceURL, data, sourceKindInstaller, probe, "installed")
+	return i.finishSource(sourceRecord{
+		name: name, key: target, resolved: resolved, sourceURL: sourceURL,
+		data: data, kind: sourceKindInstaller, probe: probe, status: "installed",
+	})
 }
 
 // storedScriptIsInstaller was folded into sourcehealth.DecideExisting, which
@@ -287,37 +297,59 @@ func (i *Installer) probeCommand(ctx context.Context, path string) sourcehealth.
 	return sourcehealth.ClassifyProbe(output, err == nil)
 }
 
-// run invokes the exec seam, falling back to the real one when a caller built
-// an Installer literal without it.
+// run invokes the exec seam under probeTimeout. Only version probes use this.
 func (i *Installer) run(ctx context.Context, name string, args ...string) (string, error) {
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	return i.invoke(pctx, name, args...)
+}
+
+// runInstaller invokes a staged vendor bootstrapper without the probe bound.
+// The parent context already carries installStepTimeout (10 minutes); a 20s
+// wrap here would kill a real vendor download (Antigravity ~180 MB).
+func (i *Installer) runInstaller(ctx context.Context, name string, args ...string) (string, error) {
+	return i.invoke(ctx, name, args...)
+}
+
+func (i *Installer) invoke(ctx context.Context, name string, args ...string) (string, error) {
 	runFn := i.Run
 	if runFn == nil {
 		runFn = runCombinedOutput
 	}
-	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	return runFn(pctx, name, args...)
+	return runFn(ctx, name, args...)
+}
+
+// sourceRecord is the state finishSource writes after a source install.
+type sourceRecord struct {
+	name      string
+	key       string
+	resolved  string
+	sourceURL string
+	data      []byte
+	kind      string
+	probe     sourcehealth.Probe
+	status    string
 }
 
 // finishSource records the install and reports it, carrying the probed version.
-func (i *Installer) finishSource(name, key, resolved, sourceURL string, data []byte, kind string, probe sourcehealth.Probe, status string) (Result, error) {
+func (i *Installer) finishSource(rec sourceRecord) (Result, error) {
 	currentState, err := i.loadState()
 	if err != nil {
-		return Result{Name: name, Path: resolved}, err
+		return Result{Name: rec.name, Path: rec.resolved}, err
 	}
-	currentState.Installs[key] = stateEntry{
-		Repository:   sourceURL,
+	currentState.Installs[rec.key] = stateEntry{
+		Repository:   rec.sourceURL,
 		Tag:          "source",
-		Asset:        sourceURL,
-		Path:         resolved,
-		Kind:         kind,
-		ScriptDigest: digestHex(data),
+		Asset:        rec.sourceURL,
+		Path:         rec.resolved,
+		Kind:         rec.kind,
+		ScriptDigest: digestHex(rec.data),
 		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := i.saveState(currentState); err != nil {
-		return Result{Name: name, Path: resolved}, err
+		return Result{Name: rec.name, Path: rec.resolved}, err
 	}
-	return Result{Name: name, Version: probe.Version, Path: resolved, Status: status}, nil
+	return Result{Name: rec.name, Version: rec.probe.Version, Path: rec.resolved, Status: rec.status}, nil
 }
 
 // digestHex is the short-form sha256 used to notice an upstream script change.

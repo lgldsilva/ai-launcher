@@ -212,11 +212,11 @@ func TestClassifyScriptOnRealVendorCorpus(t *testing.T) {
 		if got := ClassifyScript(script); got != KindInstaller {
 			t.Errorf("%s: ClassifyScript = %v, want KindInstaller", name, got)
 		}
-		if got := Interpreter(script); got == "" {
+		if Interpreter(script) == "" {
 			t.Errorf("%s: Interpreter returned empty", name)
 		}
 	}
-	wrapper, err := os.ReadFile(filepath.Join(dir, "ai-memory.wrapper.sh"))
+	wrapper, err := os.ReadFile(filepath.Join(dir, "ai-memory.wrapper.sh")) // #nosec G304 -- fixed testdata path
 	if err != nil {
 		t.Fatalf("read wrapper: %v", err)
 	}

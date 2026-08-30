@@ -8,3 +8,7 @@ command and must never be classified as an installer.
 They are kept verbatim because hand-written excerpts hid a real gap during
 development: the Claude installer prints `Usage: <path>/claude [stable|latest…]`,
 which no marker list covered, so a transcription-only fixture would have passed.
+
+SonarCloud excludes this directory (`sonar.exclusions` in
+`sonar-project.properties`) so the corpus is not scored as first-party shell.
+Do not rewrite these files to satisfy scanner rules.
