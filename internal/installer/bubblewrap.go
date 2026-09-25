@@ -19,9 +19,12 @@ const (
 // packageManager is one way to install bubblewrap. Earlier rows win. A row
 // is skipped when any command in BlockedBy is already on PATH, so an AUR
 // helper does not run beside pacman and yum does not run beside dnf.
+// Script, when set, is the body of `sh -c`: apt-get has no single flag that
+// both refreshes the index and installs.
 type packageManager struct {
 	Command   string
 	Args      []string
+	Script    string
 	Env       []string
 	Sudo      bool
 	BlockedBy []string
@@ -35,20 +38,20 @@ func bubblewrapManagers() []packageManager {
 		"xbps-install", "eopkg", "urpmi", "emerge", "slackpkg", "opkg", "nix", "guix",
 	}
 	return []packageManager{
-		{Command: "apt-get", Args: []string{"install", "-y", bubblewrapPackage}, Env: []string{"DEBIAN_FRONTEND=noninteractive"}, Sudo: true},
+		{Command: "apt-get", Script: "apt-get update && apt-get install -y " + bubblewrapPackage, Env: []string{"DEBIAN_FRONTEND=noninteractive"}, Sudo: true},
 		{Command: "dnf", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true},
 		{Command: "yum", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"dnf"}},
 		{Command: "microdnf", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"dnf", "yum"}},
 		{Command: "pacman", Args: []string{"-S", noConfirmFlag, bubblewrapPackage}, Sudo: true},
 		{Command: "zypper", Args: []string{"--non-interactive", "install", bubblewrapPackage}, Sudo: true},
 		{Command: "apk", Args: []string{"add", "--no-interactive", bubblewrapPackage}, Sudo: true},
-		{Command: "xbps-install", Args: []string{"-y", bubblewrapPackage}, Sudo: true},
+		{Command: "xbps-install", Args: []string{"-S", "-y", bubblewrapPackage}, Sudo: true},
 		{Command: "eopkg", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true},
 		{Command: "urpmi", Args: []string{"--auto", bubblewrapPackage}, Sudo: true},
 		{Command: "emerge", Args: []string{"--ask=n", "sys-apps/bubblewrap"}, Sudo: true},
 		{Command: "slackpkg", Args: []string{"install", bubblewrapPackage}, Sudo: true},
 		{Command: "opkg", Args: []string{"install", bubblewrapPackage}, Sudo: true},
-		{Command: "nix", Args: []string{"profile", "install", "nixpkgs#bubblewrap"}},
+		{Command: "nix", Args: []string{"--extra-experimental-features", "nix-command flakes", "profile", "install", "nixpkgs#bubblewrap"}},
 		{Command: "guix", Args: []string{"install", bubblewrapPackage}},
 		{Command: "pamac", Args: []string{"install", "--no-confirm", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"pacman"}},
 		{Command: "yay", Args: []string{"-S", noConfirmFlag, bubblewrapPackage}, BlockedBy: []string{"pacman", "pamac"}},
@@ -85,7 +88,7 @@ func ResolveBubblewrap(goos, bwrapBin string, root bool, lookPath func(string) (
 	return BubblewrapPlan{
 		Needed: true,
 		Argv:   manager.execArgv(sudo),
-		Text:   strings.Join(manager.pasteArgv(sudo), " "),
+		Text:   manager.display(sudo),
 	}
 }
 
@@ -100,7 +103,12 @@ func selectBubblewrapManager(lookPath func(string) (string, error)) (packageMana
 }
 
 func (m packageManager) body() []string {
-	argv := append([]string{m.Command}, m.Args...)
+	var argv []string
+	if m.Script != "" {
+		argv = []string{"sh", "-c", m.Script}
+	} else {
+		argv = append([]string{m.Command}, m.Args...)
+	}
 	if len(m.Env) > 0 {
 		argv = append(append([]string{"env"}, m.Env...), argv...)
 	}
@@ -122,6 +130,25 @@ func (m packageManager) pasteArgv(sudo bool) []string {
 		return append([]string{"sudo"}, m.body()...)
 	}
 	return m.body()
+}
+
+// display is the copy-paste form. Arguments with spaces or shell
+// metacharacters are quoted, so `nix-command flakes` stays one argument
+// and `&&` stays inside `sh -c`.
+func (m packageManager) display(sudo bool) string {
+	argv := m.pasteArgv(sudo)
+	parts := make([]string, len(argv))
+	for i, arg := range argv {
+		parts[i] = shellQuoteIfNeeded(arg)
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuoteIfNeeded(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t'\"$&;|<>()*?[]{}\\") {
+		return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	}
+	return s
 }
 
 func commandFound(lookPath func(string) (string, error), name string) bool {

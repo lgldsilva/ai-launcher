@@ -1,0 +1,10 @@
+# Root argv, the command the launcher runs when it is uid 0.
+# Image: quay.io/fedora/fedora-minimal:41
+# Install: microdnf install -y bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    image: quay.io/fedora/fedora-minimal:41
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

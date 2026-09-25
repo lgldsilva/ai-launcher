@@ -1,0 +1,10 @@
+# Root argv, the command the launcher runs when it is uid 0.
+# Image: mageia:9
+# Install: urpmi --auto bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    image: mageia:9
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

@@ -1,0 +1,10 @@
+# Root argv, the command the launcher runs when it is uid 0.
+# Image: gentoo/stage3:amd64
+# Install: emerge --ask=n sys-apps/bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    image: gentoo/stage3:amd64
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

@@ -1,0 +1,10 @@
+# Root argv, the command the launcher runs when it is uid 0.
+# Image: amazonlinux:2
+# Install: yum install -y bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    image: amazonlinux:2
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

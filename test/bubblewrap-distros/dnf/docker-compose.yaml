@@ -1,0 +1,10 @@
+# Root argv, the command the launcher runs when it is uid 0.
+# Image: fedora:41
+# Install: dnf install -y bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    image: fedora:41
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

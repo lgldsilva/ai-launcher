@@ -1,0 +1,9 @@
+# The image only installs yay. The command under test is the launcher argv.
+# Install: yay -S --noconfirm bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    build: .
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

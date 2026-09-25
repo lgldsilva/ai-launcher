@@ -273,7 +273,7 @@ func TestLinuxJailNamesThePackageCommandWithoutSudoNonInteractive(t *testing.T) 
 	// Root is injected. The printed command differs for uid 0 and for a
 	// normal user, and neither form passes sudo -n.
 	user := bwrapNotFoundMessage(t, func() bool { return false })
-	if !strings.Contains(user, "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
+	if !strings.Contains(user, "sudo env DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update && apt-get install -y bubblewrap'") {
 		t.Fatalf("message = %q; a normal user is told to run sudo", user)
 	}
 	if strings.Contains(user, "sudo -n") {
@@ -283,7 +283,7 @@ func TestLinuxJailNamesThePackageCommandWithoutSudoNonInteractive(t *testing.T) 
 	if strings.Contains(root, "sudo") {
 		t.Fatalf("message = %q; uid 0 runs the package manager directly", root)
 	}
-	if !strings.Contains(root, "env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
+	if !strings.Contains(root, "env DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update && apt-get install -y bubblewrap'") {
 		t.Fatalf("message = %q; want the package command", root)
 	}
 	for _, message := range []string{user, root} {

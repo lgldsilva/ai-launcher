@@ -55,8 +55,24 @@ func TestResolveBubblewrapSkipsSudoForRootAndForAHostWithoutSudo(t *testing.T) {
 	if strings.Contains(strings.Join(noSudo.Argv, " "), "sudo") {
 		t.Fatalf("argv = %v; sudo is not on PATH", noSudo.Argv)
 	}
-	if got := strings.Join(noSudo.Argv, " "); got != "env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap" {
+	if got := strings.Join(noSudo.Argv, " "); got != "env DEBIAN_FRONTEND=noninteractive sh -c apt-get update && apt-get install -y bubblewrap" {
 		t.Fatalf("argv = %q", got)
+	}
+}
+
+func TestResolveBubblewrapSyncsXbpsAndEnablesNixFlakes(t *testing.T) {
+	xbps := ResolveBubblewrap("linux", "", true, lookPathPresent(map[string]bool{"xbps-install": true}))
+	if got := strings.Join(xbps.Argv, " "); got != "xbps-install -S -y bubblewrap" {
+		t.Fatalf("xbps argv = %q", got)
+	}
+	nix := ResolveBubblewrap("linux", "", true, lookPathPresent(map[string]bool{"nix": true}))
+	want := "nix --extra-experimental-features nix-command flakes profile install nixpkgs#bubblewrap"
+	if got := strings.Join(nix.Argv, " "); got != want {
+		t.Fatalf("nix argv = %q", got)
+	}
+	quoted := "nix --extra-experimental-features 'nix-command flakes' profile install nixpkgs#bubblewrap"
+	if nix.Text != quoted {
+		t.Fatalf("nix text = %q", nix.Text)
 	}
 }
 
@@ -135,7 +151,8 @@ func TestEnsureBubblewrapPrintsTheCommandWithoutRunningIt(t *testing.T) {
 	if len(ran) != 0 {
 		t.Fatal("package install ran without --install-system-deps")
 	}
-	if !strings.Contains(out.String(), "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
+	want := "sudo env DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update && apt-get install -y bubblewrap'"
+	if !strings.Contains(out.String(), want) {
 		t.Fatalf("out = %q", out.String())
 	}
 	if strings.Contains(out.String(), "sudo -n") {

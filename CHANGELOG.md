@@ -25,6 +25,10 @@ ai-memory themselves stay on the checksum-verified release. Without
 
 **What you need to do:** nothing on macOS. On Linux, install `bubblewrap`
 or pass `--install-system-deps` the next time you install ai-jail.
+`apt-get` refreshes package lists first, `xbps-install` syncs (`-S`), and
+`nix profile install` turns on `nix-command` and `flakes` for that one
+command. A default Nix install leaves both features off, so the profile
+command is rejected without them.
 
 ### Changed — the validated upstream range now includes ai-jail 2.2 and ai-memory 2.4
 

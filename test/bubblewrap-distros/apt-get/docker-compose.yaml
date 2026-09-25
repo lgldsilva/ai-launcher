@@ -1,0 +1,10 @@
+# Root argv, the command the launcher runs when it is uid 0.
+# Image: debian:bookworm-slim
+# Install: env DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update && apt-get install -y bubblewrap'
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    image: debian:bookworm-slim
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

@@ -569,8 +569,10 @@ the executable behind /root.
   `dnf`, `yum`, `microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`,
   `eopkg`, `urpmi`, `emerge`, `slackpkg`, `opkg`, `nix`, `guix`, and, only
   when the native manager is absent, `pamac`, `yay`, `paru`, or Linuxbrew).
-  It does not install `ai-jail-bin` or `ai-memory-bin`. macOS does not need
-  it; the sandbox is `sandbox-exec`.
+  `apt-get` refreshes its index first, `xbps-install` passes `-S`, and
+  `nix` enables `nix-command` and `flakes` for that command. It does not
+  install `ai-jail-bin` or `ai-memory-bin`. macOS does not need it; the
+  sandbox is `sandbox-exec`.
 - **`ai-memory install-instructions` in the install flow.** `--install`
   provisions binaries globally; `install-instructions` writes a routing block
   into `CLAUDE.md` / `AGENTS.md` **in the current checkout**. Folding a

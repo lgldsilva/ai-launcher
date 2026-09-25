@@ -472,7 +472,9 @@ manager it finds. `--install-system-deps` runs that command with `sudo -n`
 (no sudo for `nix` and `guix`). The order is `apt-get`, `dnf`, `yum`,
 `microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`,
 `emerge`, `slackpkg`, `opkg`, `nix`, `guix`, then `pamac`, `yay`, `paru`,
-and Linuxbrew only when no native manager is present. macOS uses
+and Linuxbrew only when no native manager is present. `apt-get` updates
+its index before installing, `xbps-install` syncs with `-S`, and `nix`
+enables `nix-command` and `flakes` for that command. macOS uses
 `sandbox-exec` and skips this step. A launch with the jail on and no
 `bwrap` fails preflight with `bwrap-not-found`.
 
