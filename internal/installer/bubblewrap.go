@@ -58,7 +58,9 @@ func bubblewrapManagers() []packageManager {
 }
 
 // BubblewrapPlan is the install command for a missing bwrap, or a zero plan
-// when the host does not need one.
+// when the host does not need one. Argv is what the launcher executes.
+// Text is what a person can copy: it has no sudo -n, because -n refuses to
+// ask for a password.
 type BubblewrapPlan struct {
 	Needed bool
 	Argv   []string
@@ -68,7 +70,10 @@ type BubblewrapPlan struct {
 // ResolveBubblewrap decides whether this host still needs the bubblewrap
 // package. goos other than linux, a bwrap on PATH, or a set BWRAP_BIN all
 // produce an empty plan. bwrapBin is the value of BWRAP_BIN, not a lookup.
-func ResolveBubblewrap(goos, bwrapBin string, lookPath func(string) (string, error)) BubblewrapPlan {
+// root is true when the process is uid 0: sudo is not used, because a
+// container image often has no sudo binary. sudo is also skipped when it is
+// not on PATH.
+func ResolveBubblewrap(goos, bwrapBin string, root bool, lookPath func(string) (string, error)) BubblewrapPlan {
 	if goos != "linux" || strings.TrimSpace(bwrapBin) != "" || commandFound(lookPath, "bwrap") {
 		return BubblewrapPlan{}
 	}
@@ -76,8 +81,12 @@ func ResolveBubblewrap(goos, bwrapBin string, lookPath func(string) (string, err
 	if !ok {
 		return BubblewrapPlan{Needed: true, Text: "install the bubblewrap package and ensure bwrap is on PATH"}
 	}
-	argv := manager.argv()
-	return BubblewrapPlan{Needed: true, Argv: argv, Text: strings.Join(argv, " ")}
+	sudo := manager.Sudo && !root && commandFound(lookPath, "sudo")
+	return BubblewrapPlan{
+		Needed: true,
+		Argv:   manager.execArgv(sudo),
+		Text:   strings.Join(manager.pasteArgv(sudo), " "),
+	}
 }
 
 func selectBubblewrapManager(lookPath func(string) (string, error)) (packageManager, bool) {
@@ -90,15 +99,29 @@ func selectBubblewrapManager(lookPath func(string) (string, error)) (packageMana
 	return packageManager{}, false
 }
 
-func (m packageManager) argv() []string {
+func (m packageManager) body() []string {
 	argv := append([]string{m.Command}, m.Args...)
 	if len(m.Env) > 0 {
 		argv = append(append([]string{"env"}, m.Env...), argv...)
 	}
-	if m.Sudo {
-		argv = append([]string{"sudo", "-n"}, argv...)
-	}
 	return argv
+}
+
+// execArgv is the launcher's command. -n stops sudo from waiting on a
+// password that this process cannot type.
+func (m packageManager) execArgv(sudo bool) []string {
+	if sudo {
+		return append([]string{"sudo", "-n"}, m.body()...)
+	}
+	return m.body()
+}
+
+// pasteArgv is the command printed for a person. sudo may ask for a password.
+func (m packageManager) pasteArgv(sudo bool) []string {
+	if sudo {
+		return append([]string{"sudo"}, m.body()...)
+	}
+	return m.body()
 }
 
 func commandFound(lookPath func(string) (string, error), name string) bool {
@@ -130,7 +153,7 @@ func (i *Installer) EnsureBubblewrap(ctx context.Context, systemDeps bool, out, 
 	if lookPath == nil {
 		lookPath = func(string) (string, error) { return "", fmt.Errorf("lookpath unset") }
 	}
-	plan := ResolveBubblewrap(i.GOOS, os.Getenv("BWRAP_BIN"), lookPath)
+	plan := ResolveBubblewrap(i.GOOS, os.Getenv("BWRAP_BIN"), os.Geteuid() == 0, lookPath)
 	if !plan.Needed {
 		return
 	}

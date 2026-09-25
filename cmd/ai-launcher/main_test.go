@@ -397,6 +397,14 @@ func TestVersionFlagPrintsBuildMetadata(t *testing.T) {
 	}
 }
 
+func TestInstallSystemDepsRequiresAnInstallCommand(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: claude\n")
+	_, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--install-system-deps")
+	if err == nil || !strings.Contains(err.Error(), "--install-system-deps requires --install or --upgrade") {
+		t.Fatalf("error = %v; the flag alone must not launch", err)
+	}
+}
+
 func TestDoctorReturnsErrorWhenUpstreamIsMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	_, err := runDryRun(t, "--doctor")

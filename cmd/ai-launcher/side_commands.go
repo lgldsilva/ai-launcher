@@ -39,6 +39,9 @@ func resolveConfigPaths(opts *cliOptions, home string) {
 // runGlobalCommands handles the commands that only need the trusted global
 // config. handled is true when one of them ran.
 func runGlobalCommands(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) (bool, error) {
+	if opts.installSystemDeps && !opts.install && !opts.upgrade {
+		return true, fmt.Errorf("--install-system-deps requires --install or --upgrade")
+	}
 	if opts.install || opts.upgrade {
 		return true, launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, opts.installSystemDeps, out, errOut)
 	}

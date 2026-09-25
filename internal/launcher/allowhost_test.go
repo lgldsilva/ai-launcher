@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -244,6 +245,48 @@ func TestAllowHostsOnDockerWarnsInsteadOfLockingNetwork(t *testing.T) {
 	issue, ok := issueByCode(linuxValidator().Validate(cfg), "allow-host-without-jail")
 	if !ok || !issue.Warning {
 		t.Fatalf("issue = %#v; docker must warn that allow_hosts is not applied", issue)
+	}
+}
+
+func TestLinuxJailTreatsBwrapBinAsPresent(t *testing.T) {
+	cfg := LaunchConfig{
+		Agent:    config.Agent{Command: "claude"},
+		UseJail:  true,
+		BwrapBin: "/nix/store/eeee/bin/bwrap",
+	}
+	issues := (&Validator{
+		GOOS: "linux",
+		LookPath: func(name string) (string, error) {
+			if name == "bwrap" {
+				return "", errors.New("missing")
+			}
+			return "/bin/" + name, nil
+		},
+	}).Validate(cfg)
+	if _, ok := issueByCode(issues, "bwrap-not-found"); ok {
+		t.Fatalf("issues = %#v; BwrapBin must satisfy the preflight", issues)
+	}
+}
+
+func TestLinuxJailNamesThePackageCommandWithoutSudoNonInteractive(t *testing.T) {
+	issues := (&Validator{
+		GOOS: "linux",
+		LookPath: func(name string) (string, error) {
+			if name == "bwrap" {
+				return "", errors.New("missing")
+			}
+			return "/bin/" + name, nil
+		},
+	}).Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true})
+	issue, ok := issueByCode(issues, "bwrap-not-found")
+	if !ok {
+		t.Fatalf("issues = %#v; want bwrap-not-found", issues)
+	}
+	if !strings.Contains(issue.Message, "--install-system-deps") {
+		t.Fatalf("message = %q; want the install flag", issue.Message)
+	}
+	if strings.Contains(issue.Message, "sudo -n") {
+		t.Fatalf("message = %q; the suggested command must be pasteable", issue.Message)
 	}
 }
 

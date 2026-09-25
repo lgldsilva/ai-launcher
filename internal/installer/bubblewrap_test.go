@@ -19,40 +19,59 @@ func lookPathPresent(present map[string]bool) func(string) (string, error) {
 }
 
 func TestResolveBubblewrapSkipsNonLinuxAndExistingBwrap(t *testing.T) {
-	withApt := lookPathPresent(map[string]bool{"apt-get": true})
-	if plan := ResolveBubblewrap("darwin", "", withApt); plan.Needed {
+	withApt := lookPathPresent(map[string]bool{"apt-get": true, "sudo": true})
+	if plan := ResolveBubblewrap("darwin", "", false, withApt); plan.Needed {
 		t.Fatalf("darwin plan = %#v; macOS uses sandbox-exec", plan)
 	}
 	withBwrap := lookPathPresent(map[string]bool{"bwrap": true, "apt-get": true})
-	if plan := ResolveBubblewrap("linux", "", withBwrap); plan.Needed {
+	if plan := ResolveBubblewrap("linux", "", false, withBwrap); plan.Needed {
 		t.Fatalf("plan = %#v; bwrap on PATH needs no package", plan)
 	}
-	if plan := ResolveBubblewrap("linux", "/nix/store/bwrap", withApt); plan.Needed {
+	if plan := ResolveBubblewrap("linux", "/nix/store/bwrap", false, withApt); plan.Needed {
 		t.Fatalf("plan = %#v; BWRAP_BIN is already a choice", plan)
 	}
 }
 
 func TestResolveBubblewrapMatchesEveryManager(t *testing.T) {
 	for _, manager := range bubblewrapManagers() {
-		present := map[string]bool{manager.Command: true}
-		plan := ResolveBubblewrap("linux", "", lookPathPresent(present))
-		if !plan.Needed || strings.Join(plan.Argv, " ") != strings.Join(manager.argv(), " ") {
-			t.Fatalf("%s plan = %#v; want %v", manager.Command, plan, manager.argv())
+		present := map[string]bool{manager.Command: true, "sudo": true}
+		plan := ResolveBubblewrap("linux", "", false, lookPathPresent(present))
+		if !plan.Needed || strings.Join(plan.Argv, " ") != strings.Join(manager.execArgv(manager.Sudo), " ") {
+			t.Fatalf("%s argv = %#v; want %v", manager.Command, plan.Argv, manager.execArgv(manager.Sudo))
+		}
+		if strings.Contains(plan.Text, " -n ") || strings.HasPrefix(plan.Text, "sudo -n ") {
+			t.Fatalf("%s text = %q; the printed command must not pass sudo -n", manager.Command, plan.Text)
 		}
 	}
 }
 
+func TestResolveBubblewrapSkipsSudoForRootAndForAHostWithoutSudo(t *testing.T) {
+	apt := lookPathPresent(map[string]bool{"apt-get": true, "sudo": true})
+	asRoot := ResolveBubblewrap("linux", "", true, apt)
+	if strings.Contains(strings.Join(asRoot.Argv, " "), "sudo") {
+		t.Fatalf("root argv = %v; sudo is not installed in a typical root container", asRoot.Argv)
+	}
+	noSudo := ResolveBubblewrap("linux", "", false, lookPathPresent(map[string]bool{"apt-get": true}))
+	if strings.Contains(strings.Join(noSudo.Argv, " "), "sudo") {
+		t.Fatalf("argv = %v; sudo is not on PATH", noSudo.Argv)
+	}
+	if got := strings.Join(noSudo.Argv, " "); got != "env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap" {
+		t.Fatalf("argv = %q", got)
+	}
+}
+
 func TestResolveBubblewrapPrefersPacmanOverAURHelpers(t *testing.T) {
-	present := map[string]bool{"pacman": true, "pamac": true, "yay": true, "paru": true, "brew": true}
-	plan := ResolveBubblewrap("linux", "", lookPathPresent(present))
-	if got, want := plan.Argv, (packageManager{Command: "pacman", Args: []string{"-S", "--noconfirm", bubblewrapPackage}, Sudo: true}).argv(); strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("argv = %v; want pacman %v", got, want)
+	present := map[string]bool{"pacman": true, "pamac": true, "yay": true, "paru": true, "brew": true, "sudo": true}
+	plan := ResolveBubblewrap("linux", "", false, lookPathPresent(present))
+	want := (packageManager{Command: "pacman", Args: []string{"-S", "--noconfirm", bubblewrapPackage}, Sudo: true}).execArgv(true)
+	if strings.Join(plan.Argv, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v; want pacman %v", plan.Argv, want)
 	}
 }
 
 func TestResolveBubblewrapPrefersDnfOverYum(t *testing.T) {
-	plan := ResolveBubblewrap("linux", "", lookPathPresent(map[string]bool{"dnf": true, "yum": true, "microdnf": true}))
-	if len(plan.Argv) == 0 || plan.Argv[2] != "dnf" {
+	plan := ResolveBubblewrap("linux", "", false, lookPathPresent(map[string]bool{"dnf": true, "yum": true, "microdnf": true, "sudo": true}))
+	if len(plan.Argv) < 3 || plan.Argv[2] != "dnf" {
 		t.Fatalf("argv = %v; want dnf", plan.Argv)
 	}
 }
@@ -66,7 +85,7 @@ func TestPropertyBubblewrapPlanPicksTheEarliestUnblockedManager(t *testing.T) {
 				present[manager.Command] = true
 			}
 		}
-		plan := ResolveBubblewrap("linux", "", lookPathPresent(present))
+		plan := ResolveBubblewrap("linux", "", false, lookPathPresent(present))
 		want, ok := firstUnblocked(managers, present)
 		if !ok {
 			if plan.Needed && plan.Argv != nil {
@@ -74,8 +93,9 @@ func TestPropertyBubblewrapPlanPicksTheEarliestUnblockedManager(t *testing.T) {
 			}
 			return
 		}
-		if strings.Join(plan.Argv, " ") != strings.Join(want.argv(), " ") {
-			rt.Fatalf("argv = %v; want %v", plan.Argv, want.argv())
+		sudo := want.Sudo && present["sudo"]
+		if strings.Join(plan.Argv, " ") != strings.Join(want.execArgv(sudo), " ") {
+			rt.Fatalf("argv = %v; want %v", plan.Argv, want.execArgv(sudo))
 		}
 	})
 }
@@ -101,10 +121,11 @@ func firstUnblocked(managers []packageManager, present map[string]bool) (package
 }
 
 func TestEnsureBubblewrapPrintsTheCommandWithoutRunningIt(t *testing.T) {
+	t.Setenv("BWRAP_BIN", "")
 	var ran []string
 	client := New(t.TempDir())
 	client.GOOS = "linux"
-	client.LookPath = lookPathPresent(map[string]bool{"apt-get": true})
+	client.LookPath = lookPathPresent(map[string]bool{"apt-get": true, "sudo": true})
 	client.Run = func(context.Context, string, ...string) (string, error) {
 		ran = append(ran, "ran")
 		return "", nil
@@ -114,16 +135,20 @@ func TestEnsureBubblewrapPrintsTheCommandWithoutRunningIt(t *testing.T) {
 	if len(ran) != 0 {
 		t.Fatal("package install ran without --install-system-deps")
 	}
-	if !strings.Contains(out.String(), "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
+	if !strings.Contains(out.String(), "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
 		t.Fatalf("out = %q", out.String())
+	}
+	if strings.Contains(out.String(), "sudo -n") {
+		t.Fatalf("out = %q; the printed command must be pasteable", out.String())
 	}
 }
 
 func TestEnsureBubblewrapRunsSudoWhenAsked(t *testing.T) {
+	t.Setenv("BWRAP_BIN", "")
 	var got []string
 	client := New(t.TempDir())
 	client.GOOS = "linux"
-	client.LookPath = lookPathPresent(map[string]bool{"apk": true})
+	client.LookPath = lookPathPresent(map[string]bool{"apk": true, "sudo": true})
 	client.Run = func(_ context.Context, name string, args ...string) (string, error) {
 		got = append([]string{name}, args...)
 		return "", errors.New("sudo: a password is required")

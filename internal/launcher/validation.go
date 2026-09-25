@@ -290,13 +290,13 @@ func memoryHarnessIssues(cfg LaunchConfig) []Issue {
 // bubblewrapIssue reports a Linux jail that cannot find bwrap. The suggested
 // command is the first package manager on PATH. BWRAP_BIN counts as present.
 func bubblewrapIssue(goos, bwrapBin string, lookPath func(string) (string, error)) (Issue, bool) {
-	plan := installer.ResolveBubblewrap(goos, bwrapBin, lookPath)
+	plan := installer.ResolveBubblewrap(goos, bwrapBin, os.Geteuid() == 0, lookPath)
 	if !plan.Needed {
 		return Issue{}, false
 	}
-	message := "ai-jail on Linux needs bwrap from the bubblewrap package"
+	message := "ai-jail on Linux needs bwrap from the bubblewrap package. Run `ai-launcher --install --agent ai-jail --install-system-deps`"
 	if plan.Text != "" {
-		message += ": " + plan.Text
+		message += ", or: " + plan.Text
 	}
 	message += ". Ubuntu 24.04+ and Debian 13+ may also need the AppArmor exception in the ai-jail README"
 	return Issue{Code: "bwrap-not-found", Message: message}, true
