@@ -131,18 +131,18 @@ func (i *Installer) EnsureBubblewrap(ctx context.Context, systemDeps bool, out, 
 		return
 	}
 	if plan.Argv == nil {
-		fmt.Fprintf(errOut, "bubblewrap: %s\n", plan.Text)
+		_, _ = fmt.Fprintf(errOut, "bubblewrap: %s\n", plan.Text)
 		return
 	}
 	if !systemDeps {
-		fmt.Fprintf(out, "bubblewrap: bwrap is not installed. Re-run with --install-system-deps, or run: %s\n", plan.Text)
+		_, _ = fmt.Fprintf(out, "bubblewrap: bwrap is not installed. Re-run with --install-system-deps, or run: %s\n", plan.Text)
 		return
 	}
 	if i.Run == nil {
-		fmt.Fprintf(errOut, "bubblewrap: cannot run %s\n", plan.Text)
+		_, _ = fmt.Fprintf(errOut, "bubblewrap: cannot run %s\n", plan.Text)
 		return
 	}
 	if _, err := i.Run(ctx, plan.Argv[0], plan.Argv[1:]...); err != nil {
-		fmt.Fprintf(errOut, "bubblewrap: %s failed: %v\n", plan.Text, err)
+		_, _ = fmt.Fprintf(errOut, "bubblewrap: %s failed: %v\n", plan.Text, err)
 	}
 }
