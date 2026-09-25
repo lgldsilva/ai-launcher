@@ -43,6 +43,10 @@ type LaunchConfig struct {
 	// memory is off or the probe failed. Same rule as JailVersion: filled
 	// outside Build, read by it.
 	MemoryVersion string
+	// MemoryAutowire keeps ai-memory's own hook install when the operator
+	// exported AI_MEMORY_RUN_AUTOWIRE=true. Otherwise a 2.3+ run is passed
+	// --no-autowire, because the launcher's --install already owns that step.
+	MemoryAutowire bool
 	// JailEnv names the environment variables to forward into the sandbox with
 	// ai-jail's --env. Filled by ResolveHostBinaries from JailEnvPassthrough,
 	// so Build stays free of environment reads and --dry-run shows exactly the
@@ -177,7 +181,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		// does: ai-jail's managed-harness parser bails on any other dash token
 		// before the harness name. ai-memory pulls the flag back out of the
 		// native arguments.
-		if MemoryDisablesAutowire(cfg.MemoryVersion) {
+		if disableMemoryAutowire(cfg) {
 			command = append(command, "--no-autowire")
 		}
 	} else {
@@ -256,7 +260,12 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 	run.TmuxMounts = container.ResolveTmuxMounts(cfg.HomeDir, cfg.ContainerTmux, container.ExistsOnHost)
 	if cfg.UseMemory {
 		run.MemoryHarness = memoryRunHarness(cfg.Agent)
-		run.NoAutowire = MemoryDisablesAutowire(cfg.MemoryVersion)
+		// The image's ai-memory is not the host binary. An argv flag would
+		// be an unknown option on a pre-2.3 image; the env var is ignored
+		// there and honored from 2.3 on.
+		if disableMemoryAutowire(cfg) {
+			run.Env = append(run.Env, "AI_MEMORY_RUN_AUTOWIRE=false")
+		}
 	}
 	run.GHConfig = permissionHomeMount(cfg, config.PermissionGitHub, ".config/gh")
 	run.SSHConfig = permissionHomeMount(cfg, config.PermissionSSH, ".ssh")

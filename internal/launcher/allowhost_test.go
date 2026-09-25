@@ -142,3 +142,120 @@ func TestAllowHostIssues(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionGatesIncludeTheFirstAcceptingRelease(t *testing.T) {
+	if !MemoryDisablesAutowire("2.3.0") || MemoryDisablesAutowire("2.2.9") || MemoryDisablesAutowire("") {
+		t.Fatal("MemoryDisablesAutowire must be true at 2.3.0 and false below it or when unreadable")
+	}
+	if !jailSupportsAllowHost("2.0.0") || jailSupportsAllowHost("1.9.9") || jailSupportsAllowHost("") {
+		t.Fatal("jailSupportsAllowHost must be true at 2.0.0 and false below it or when unreadable")
+	}
+}
+
+func TestBuildOmitsNoAutowireUntilAIMemory23(t *testing.T) {
+	for _, version := range []string{"", "2.2.0"} {
+		argv := mustBuild(t, LaunchConfig{
+			Agent:         config.Agent{Command: "claude"},
+			UseMemory:     true,
+			MemoryVersion: version,
+		})
+		if strings.Contains(strings.Join(argv, " "), "--no-autowire") {
+			t.Fatalf("version %q argv = %v; --no-autowire would be an unknown option", version, argv)
+		}
+	}
+}
+
+func TestBuildKeepsAutowireWhenTheOperatorOptsIn(t *testing.T) {
+	argv := mustBuild(t, LaunchConfig{
+		Agent:          config.Agent{Command: "claude"},
+		UseMemory:      true,
+		MemoryVersion:  "2.4.0",
+		MemoryAutowire: true,
+	})
+	if strings.Contains(strings.Join(argv, " "), "--no-autowire") {
+		t.Fatalf("argv = %v; AI_MEMORY_RUN_AUTOWIRE=true must keep autowire", argv)
+	}
+}
+
+func TestAllowHostsWithMemoryRequiresHTTPSOnTheList(t *testing.T) {
+	base := LaunchConfig{
+		Agent:       config.Agent{Command: "claude"},
+		UseJail:     true,
+		UseMemory:   true,
+		JailVersion: "2.2.0",
+		JailFlags:   config.JailFlags{AllowHosts: []string{"api.anthropic.com"}},
+	}
+	cases := []struct {
+		name   string
+		url    string
+		want   string
+		absent bool
+	}{
+		{"default loopback", "", "allow-host-memory-needs-https", false},
+		{"explicit http", "http://127.0.0.1:49374", "allow-host-memory-needs-https", false},
+		{"https host missing", "https://aimemory.example", "allow-host-omits-memory-server", false},
+		{"https host listed via parent", "https://memory.aimemory.example/wiki", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			cfg.MemoryServerURL = tc.url
+			if tc.name == "https host listed via parent" {
+				cfg.JailFlags.AllowHosts = append(append([]string{}, cfg.JailFlags.AllowHosts...), "aimemory.example")
+			}
+			issues := linuxValidator().Validate(cfg)
+			if tc.absent {
+				if _, ok := issueByCode(issues, "allow-host-memory-needs-https"); ok {
+					t.Fatalf("issues = %#v; a listed https server must be allowed", issues)
+				}
+				if _, ok := issueByCode(issues, "allow-host-omits-memory-server"); ok {
+					t.Fatalf("issues = %#v; parent domain must cover the memory host", issues)
+				}
+				return
+			}
+			if _, ok := issueByCode(issues, tc.want); !ok {
+				t.Fatalf("issues = %#v; want %s", issues, tc.want)
+			}
+		})
+	}
+}
+
+func TestOpenCode2RequiresAIMemory23WhenTheVersionIsKnown(t *testing.T) {
+	cfg := LaunchConfig{
+		Agent:         config.Agent{Command: "opencode2", SupportsMemory: true},
+		UseMemory:     true,
+		MemoryVersion: "2.2.0",
+	}
+	if _, ok := issueByCode(linuxValidator().Validate(cfg), "memory-harness-version"); !ok {
+		t.Fatal("opencode2 was allowed on ai-memory 2.2.0")
+	}
+	cfg.MemoryVersion = ""
+	if _, ok := issueByCode(linuxValidator().Validate(cfg), "memory-harness-version"); ok {
+		t.Fatal("an unreadable ai-memory version must not invent a harness refusal")
+	}
+}
+
+func TestAllowHostsOnDockerWarnsInsteadOfLockingNetwork(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.JailFlags.AllowHosts = []string{"api.anthropic.com"}
+	issue, ok := issueByCode(linuxValidator().Validate(cfg), "allow-host-without-jail")
+	if !ok || !issue.Warning {
+		t.Fatalf("issue = %#v; docker must warn that allow_hosts is not applied", issue)
+	}
+}
+
+func linuxValidator() *Validator {
+	return &Validator{
+		GOOS:     "linux",
+		LookPath: func(string) (string, error) { return "/bin/tool", nil },
+	}
+}
+
+func mustBuild(t *testing.T, cfg LaunchConfig) []string {
+	t.Helper()
+	argv, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return argv
+}

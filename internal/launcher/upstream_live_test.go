@@ -46,6 +46,10 @@ func TestLiveUpstreamScenarios(t *testing.T) {
 		livePreflightRefusesNetworkConflict(t, bin)
 	})
 
+	t.Run("preflight refuses allow_hosts when memory uses plain HTTP", func(t *testing.T) {
+		livePreflightRefusesPlainHTTPMemory(t, bin)
+	})
+
 	t.Run("ai-memory accepts no-autowire and the 2.4 harness names", func(t *testing.T) {
 		liveMemoryAcceptsNoAutowire(t, memoryPath)
 	})
@@ -111,6 +115,17 @@ func livePreflightRefusesNetworkConflict(t *testing.T, bin string) {
 // must not call --no-autowire unexpected, and each alias must get past
 // parsing. A dead server stops the run before any agent starts, so this does
 // not open a workstream.
+func livePreflightRefusesPlainHTTPMemory(t *testing.T, bin string) {
+	t.Helper()
+	stdout, stderr, err := runLauncher(t, bin, trustedMemoryAllowHostConfig(t, "http://127.0.0.1:49374"), nil)
+	if err == nil {
+		t.Fatalf("launcher accepted filtered egress for an http memory server\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "allow-host-memory-needs-https") {
+		t.Fatalf("stderr = %s; want allow-host-memory-needs-https", stderr)
+	}
+}
+
 func liveMemoryAcceptsNoAutowire(t *testing.T, memoryPath string) {
 	t.Helper()
 	text := runMemory(t, memoryPath, "not-a-harness", "--no-autowire")
@@ -227,6 +242,38 @@ func trustedAllowHostConfig(t *testing.T, networkForced bool) []string {
 		Version: config.CurrentVersion,
 		Agent:   "claude",
 		Options: config.Options{Jail: true, Memory: false, JailFlags: flags},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.RecordTrustedLocalConfig(globalPath, localPath); err != nil {
+		t.Fatal(err)
+	}
+	return []string{
+		"--config", globalPath,
+		"--local-config", localPath,
+		"--agent", "claude",
+		"--dry-run",
+	}
+}
+
+func trustedMemoryAllowHostConfig(t *testing.T, serverURL string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+	localPath := filepath.Join(dir, "local.yaml")
+	global := config.DefaultGlobal()
+	global.MemoryServerURL = serverURL
+	if err := config.SaveGlobal(globalPath, global); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveLocal(localPath, config.Local{
+		Version: config.CurrentVersion,
+		Agent:   "claude",
+		Options: config.Options{
+			Jail:      true,
+			Memory:    true,
+			JailFlags: config.JailFlags{AllowHosts: []string{"api.anthropic.com"}},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}

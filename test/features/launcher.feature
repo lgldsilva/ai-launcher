@@ -813,11 +813,10 @@ Feature: Launcher command contract
       claude
       """
 
-  # Through ai-jail 1.17.x --allow-tcp-port was lockdown-only and silently
-  # ignored otherwise. From 1.18.0 it fails closed and aborts the launch, so
-  # the launcher refuses first, with its own message.
   # ai-jail 2.0 filtered egress replaces unrestricted --network. The host
   # list is only emitted when the detected jail is new enough to accept it.
+  # With memory on, the server must be https and its host must be listed:
+  # the proxy is CONNECT-only and answers plain HTTP with 405.
   Scenario: Emits allow-host and drops unrestricted network
     Given a launch configuration
       """
@@ -881,6 +880,97 @@ Feature: Launcher command contract
       allow-host-conflicts-with-network
       """
 
+  Scenario: Refuses allow_hosts when memory would call plain HTTP
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: true
+      jail_version: "2.2.0"
+      memory_server_url: http://127.0.0.1:49374
+      jail_flags:
+        allow_hosts: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-memory-needs-https
+      """
+
+  Scenario: Refuses allow_hosts that omit the https memory server
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: true
+      jail_version: "2.2.0"
+      memory_server_url: https://aimemory.example
+      jail_flags:
+        allow_hosts: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-omits-memory-server
+      """
+
+  Scenario: Emits allow-host for an https memory server that is listed
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: true
+      jail_version: "2.2.0"
+      memory_version: "2.4.0"
+      memory_server_url: https://aimemory.example
+      permissions:
+        network: true
+      jail_flags:
+        allow_hosts:
+          - api.anthropic.com
+          - aimemory.example
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --allow-host
+      api.anthropic.com
+      --allow-host
+      aimemory.example
+      ai-memory
+      run
+      claude
+      --no-autowire
+      """
+
+  Scenario: Emits --no-autowire after the harness inside the jail
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: true
+      jail_version: "2.2.0"
+      memory_version: "2.4.0"
+      permissions:
+        network: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --network
+      ai-memory
+      run
+      claude
+      --no-autowire
+      """
+
   Scenario: Emits --no-autowire after the harness on ai-memory 2.3+
     Given a launch configuration
       """
@@ -900,6 +990,9 @@ Feature: Launcher command contract
       --no-autowire
       """
 
+  # Through ai-jail 1.17.x --allow-tcp-port was lockdown-only and silently
+  # ignored otherwise. From 1.18.0 it fails closed and aborts the launch, so
+  # the launcher refuses first, with its own message.
   Scenario: Refuses a launch carrying allow_tcp_ports
     Given a validation configuration
       """

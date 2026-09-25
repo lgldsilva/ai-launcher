@@ -50,9 +50,6 @@ type RunConfig struct {
 	// the image. The image must therefore contain ai-memory; this is separate
 	// from the host-side launcher wrapper used by the jail backend.
 	UseMemory bool
-	// NoAutowire appends --no-autowire after the harness. Set when the host
-	// ai-memory is >= 2.3, where run autowires hooks unless told not to.
-	NoAutowire bool
 	// MemoryHarness is the token accepted by `ai-memory run`. It can differ
 	// from AgentExecutable for local wrappers such as oc -> opencode.
 	MemoryHarness string
@@ -284,9 +281,6 @@ func (c RunConfig) InContainerCommand() []string {
 			command = append(command, "--executable", executable)
 		}
 		command = append(command, harness)
-		if c.NoAutowire {
-			command = append(command, "--no-autowire")
-		}
 		command = append(command, c.AgentArgs...)
 	}
 	if c.Tmux {

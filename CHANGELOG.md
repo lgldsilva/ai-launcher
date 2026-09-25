@@ -27,6 +27,29 @@ stops calling 2.2 / 2.4 untested. A managed ai-memory older than the one on
 `PATH` is now reported as `ai-memory-native-behind-path`; `ai-launcher
 --upgrade` refreshes that copy.
 
+### Fixed — filtered egress no longer sends ai-memory into a 405
+
+ai-jail's `--allow-host` proxy accepts CONNECT and answers any plain HTTP
+request with 405, including `ai-memory run`'s default
+`http://127.0.0.1:49374/workstream/runs`. Pre-flight now refuses
+`allow_hosts` together with memory unless `memory_server_url` is https and
+that host is on the list (`allow-host-memory-needs-https`,
+`allow-host-omits-memory-server`). The container backend warns
+`allow-host-without-jail` because it never emits the flag.
+
+Harness names added after the 1.25 floor (`opencode2` and the 2.4 aliases)
+are refused when the detected ai-memory is older than 2.3
+(`memory-harness-version`). An unreadable version is not treated as old.
+
+`AI_MEMORY_RUN_AUTOWIRE=true` in the environment keeps upstream autowire.
+Otherwise a 2.3+ launch still passes `--no-autowire`. Inside a container the
+same choice is the env var, not the flag, so an image built with an older
+ai-memory does not reject an unknown option.
+
+ai-jail may write `allow_hosts` into the project `.ai-jail` when save-config
+is on. Later launches that no longer pass the list still warn that the file's
+copy was ignored. Clear it in that file, or set `save_config: false`.
+
 ### Added — filtered egress via `jail_flags.allow_hosts`
 
 ai-jail 2.0.0 added a third network mode: `--allow-host`, which cannot be

@@ -10,6 +10,30 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/container"
 )
 
+func TestPrepareDockerRunDisablesAutowireByEnvNotArgv(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.UseMemory = true
+	cfg.MemoryVersion = "2.4.0"
+	run, err := prepareDockerRunConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsArg(run.Env, "AI_MEMORY_RUN_AUTOWIRE=false") {
+		t.Fatalf("env = %#v; want AI_MEMORY_RUN_AUTOWIRE=false", run.Env)
+	}
+	if containsArg(run.InContainerCommand(), "--no-autowire") {
+		t.Fatalf("container argv = %#v; --no-autowire is an unknown option on a pre-2.3 image", run.InContainerCommand())
+	}
+	cfg.MemoryVersion = "2.2.0"
+	run, err = prepareDockerRunConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsArg(run.Env, "AI_MEMORY_RUN_AUTOWIRE=false") {
+		t.Fatalf("env = %#v; 2.2.0 must not be told to disable a feature it does not have", run.Env)
+	}
+}
+
 func dockerLaunchConfig(t *testing.T) LaunchConfig {
 	t.Helper()
 	stubAllMountSourcesExist(t)

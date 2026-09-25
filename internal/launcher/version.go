@@ -206,15 +206,33 @@ func probeMemoryVersion() string {
 	return semverPattern.FindString(string(output))
 }
 
-// MemoryDisablesAutowire reports whether this launch should pass --no-autowire.
-// The flag arrived in ai-memory 2.3.0; an older CLI rejects it as an unknown
-// option, and an unreadable probe is not evidence that the CLI is new enough.
+// MemoryDisablesAutowire reports whether ai-memory is new enough that its
+// default autowire should be turned off. The flag arrived in 2.3.0; an older
+// CLI rejects it as an unknown option, and an unreadable probe is not
+// evidence that the CLI is new enough.
 func MemoryDisablesAutowire(version string) bool {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		return false
 	}
 	return compareVersions(version, config.MinNoAutowireAIMemoryVersion) >= 0
+}
+
+// disableMemoryAutowire is the launch decision: new enough, and the operator
+// did not export AI_MEMORY_RUN_AUTOWIRE=true.
+func disableMemoryAutowire(cfg LaunchConfig) bool {
+	return cfg.UseMemory && !cfg.MemoryAutowire && MemoryDisablesAutowire(cfg.MemoryVersion)
+}
+
+// AutowireOptIn reports whether value is the operator asking to keep
+// ai-memory's autowire. Accepted spellings match the usual env booleans.
+func AutowireOptIn(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // probeUpstream resolves one tool and reads its --version output. untested is
