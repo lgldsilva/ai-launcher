@@ -44,17 +44,31 @@ func validAllowHost(host string) bool {
 		return false
 	}
 	for _, label := range strings.Split(host, ".") {
-		if label == "" || len(label) > 63 {
+		if !validAllowLabel(label) {
 			return false
 		}
-		if label[0] == '-' || label[len(label)-1] == '-' {
+	}
+	return true
+}
+
+func validAllowLabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for _, r := range label {
+		if !allowHostRune(r) {
 			return false
 		}
-		for _, r := range label {
-			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
-				return false
-			}
-		}
+	}
+	return true
+}
+
+func allowHostRune(r rune) bool {
+	if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
+		return false
 	}
 	return true
 }
