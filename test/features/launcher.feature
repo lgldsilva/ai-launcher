@@ -816,6 +816,90 @@ Feature: Launcher command contract
   # Through ai-jail 1.17.x --allow-tcp-port was lockdown-only and silently
   # ignored otherwise. From 1.18.0 it fails closed and aborts the launch, so
   # the launcher refuses first, with its own message.
+  # ai-jail 2.0 filtered egress replaces unrestricted --network. The host
+  # list is only emitted when the detected jail is new enough to accept it.
+  Scenario: Emits allow-host and drops unrestricted network
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.2.0"
+      permissions:
+        jail: true
+        network: true
+      jail_flags:
+        allow_hosts:
+          - api.anthropic.com
+          - github.com
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --allow-host
+      api.anthropic.com
+      --allow-host
+      github.com
+      claude
+      """
+
+  Scenario: Refuses allow_hosts on an ai-jail older than 2.0
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "1.20.1"
+      jail_flags:
+        allow_hosts: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-requires-ai-jail-2
+      """
+
+  Scenario: Refuses allow_hosts combined with unrestricted network
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.2.0"
+      jail_flags:
+        network: true
+        allow_hosts: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-conflicts-with-network
+      """
+
+  Scenario: Emits --no-autowire after the harness on ai-memory 2.3+
+    Given a launch configuration
+      """
+      agent: claude
+      jail: false
+      memory: true
+      memory_version: "2.4.0"
+      fresh: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      claude
+      --fresh
+      --no-autowire
+      """
+
   Scenario: Refuses a launch carrying allow_tcp_ports
     Given a validation configuration
       """
@@ -922,7 +1006,7 @@ Feature: Launcher command contract
       goos: linux
       jail: true
       memory: false
-      jail_version: 1.21.0
+      jail_version: "2.3.0"
       """
     When launcher preflight is checked
     Then issue codes equal

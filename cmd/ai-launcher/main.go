@@ -209,6 +209,7 @@ func reportDoctor(out io.Writer) error {
 	var blocked []string
 	stale := false
 	var untested []launcher.UpstreamStatus
+	var behind []launcher.UpstreamStatus
 	for _, status := range launcher.UpstreamReport(nil, "") {
 		switch {
 		case status.Missing:
@@ -227,12 +228,18 @@ func reportDoctor(out io.Writer) error {
 		default:
 			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
 		}
+		if status.Behind {
+			behind = append(behind, status)
+		}
 	}
 	if stale {
 		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits, or accept the same one and do something else with it. See CHANGELOG.md for what each floor covers.")
 	}
 	for _, status := range untested {
 		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.UntestedCode, untestedAdvice(status))
+	}
+	for _, status := range behind {
+		_, _ = fmt.Fprintf(out, "\n%s: the managed runner %s is older than ai-memory %s on PATH. Launches export it as AI_MEMORY_NATIVE_BIN; run `ai-launcher --upgrade` to refresh it.\n", status.BehindCode, status.Version, status.BehindOf)
 	}
 	if len(blocked) > 0 {
 		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))

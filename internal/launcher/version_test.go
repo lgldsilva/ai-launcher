@@ -239,8 +239,8 @@ func TestUpstreamReportFlagsInstallsAboveTheTestedCeiling(t *testing.T) {
 // this the report would cry wolf on every install the launcher does support.
 func TestUpstreamReportAcceptsTheVersionJustBelowTheCeiling(t *testing.T) {
 	stubVersionCommand(t, map[string]string{
-		"/bin/ai-jail":   "ai-jail 1.20.9",
-		"/bin/ai-memory": "ai-memory 1.34.0",
+		"/bin/ai-jail":   "ai-jail 2.2.0",
+		"/bin/ai-memory": "ai-memory 2.4.0",
 	}, nil)
 	for _, status := range UpstreamReport(lookPathAll, "linux") {
 		if status.TooNew {
@@ -362,6 +362,34 @@ func TestUpstreamReportJudgesTheManagedRunnerSeparately(t *testing.T) {
 	}
 	if managed.Code != "ai-memory-native-too-old" {
 		t.Errorf("managed code = %q; want a code distinct from the PATH install's", managed.Code)
+	}
+	if !managed.Behind || managed.BehindOf != "1.32.2" {
+		t.Errorf("managed behind = %v of %q; 1.24.0 is also behind the PATH copy", managed.Behind, managed.BehindOf)
+	}
+}
+
+func TestUpstreamReportFlagsAManagedRunnerInsideTheRangeButBehindPATH(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":       "ai-jail 2.2.0",
+		"/bin/ai-memory":     "ai-memory 2.4.0",
+		"/managed/ai-memory": "ai-memory 1.34.0",
+	}, nil)
+	stubManagedRunner(t, "/managed/ai-memory")
+	stubExecutableStat(t, map[string]bool{"/managed/ai-memory": true})
+
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 3 {
+		t.Fatalf("report = %#v; want the managed row", report)
+	}
+	managed := report[2]
+	if managed.TooOld || managed.TooNew {
+		t.Fatalf("managed = %#v; 1.34.0 is inside the tested range", managed)
+	}
+	if !managed.Behind || managed.BehindCode != "ai-memory-native-behind-path" || managed.BehindOf != "2.4.0" {
+		t.Fatalf("managed behind = %#v; want it older than PATH 2.4.0", managed)
+	}
+	if report[1].Behind {
+		t.Fatal("the PATH install is not behind itself")
 	}
 }
 

@@ -520,6 +520,25 @@ func TestDoctorReportsAStaleManagedNativeRunner(t *testing.T) {
 	}
 }
 
+// A managed runner inside the tested range can still be the binary the launch
+// exports, months behind the PATH install. That is a warning, not a refusal:
+// the floor is met, and blocking doctor would hide the versions above it.
+func TestDoctorReportsManagedRunnerBehindPathWithoutFailing(t *testing.T) {
+	home := stubUpstreamVersions(t, map[string]string{
+		"ai-jail":   "2.2.0",
+		"ai-memory": "2.4.0",
+	})
+	stubManagedNativeRunner(t, home, "1.34.0")
+
+	out, err := runDryRun(t, "--doctor")
+	if err != nil {
+		t.Fatalf("run(--doctor) error = %v; a runner inside the range must not fail doctor\n%s", err, out)
+	}
+	if !strings.Contains(out, "ai-memory-native-behind-path") || !strings.Contains(out, "2.4.0") {
+		t.Fatalf("--doctor output = %q; want the managed runner named as behind PATH", out)
+	}
+}
+
 func TestLaunchFailureHintWorkstreamConflict(t *testing.T) {
 	got := launchFailureHint(`server returned 409 Conflict: {"error":"workstream is already active: owned by host:1 until 2099"}`)
 	if !strings.Contains(got, "workstream") || !strings.Contains(got, "--new") {

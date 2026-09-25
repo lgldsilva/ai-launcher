@@ -103,13 +103,16 @@ const DefaultMemoryServerURL = ""
 // "antigravity" would make pre-flight refuse a harness the installed ai-memory
 // accepts. A catalog entry that sets Memory.RunHarness papers over the gap for
 // itself, but nothing forces it to, and an operator naming the agent directly
-// gets the refusal with no override in sight. All aliases here were verified
-// against ai-memory 1.32.2.
+// gets the refusal with no override in sight. The names below were verified
+// against ai-memory 2.4.0 (RunHarnessChoice). A claude* wildcard that upstream
+// also accepts is intentionally absent: pre-flight stays a closed list, and a
+// per-account wrapper uses run_harness: claude.
 var memoryRunHarnesses = []string{
-	"claude", "codex", "opencode", "pi", "crush", "omp", "kimi",
+	"claude", "claude-code", "codex", "opencode", "open-code", "opencode2", "opencode-v2", "open-code2",
+	"pi", "crush", "omp", "oh-my-pi", "kimi", "kimi-code",
 	"command-code", "commandcode", "cmdc", "cmd",
 	"kiro", "kiro-cli",
-	"grok",
+	"grok", "grok-build",
 	"antigravity", "antigravity-cli", "agy",
 }
 
@@ -195,14 +198,26 @@ const (
 // meaning. These bounds are the part that can.
 //
 // Both bounds record how far the upstream surface was actually read, not a
-// guess: ai-jail through 1.20.1 (no flag added, renamed or removed since
-// 1.18.0; the argv verified against the installed binary) and ai-memory
-// through 1.34.0 (the `run` grammar and its harness list unchanged since
-// 1.25.0).
+// guess. ai-jail 1.21.0 through 2.2.0 kept every flag this launcher already
+// emitted; 2.0.0 added opt-in flags (--allow-host, --audit-log,
+// --env-from-file) and 2.2.0 added --secret, none of which the default argv
+// sends. ai-memory 1.35.0 through 2.4.0 kept the `run` grammar
+// (--workspace, --project, --workstream, --new, --executable, harness,
+// --fresh). 2.3.0 added --no-autowire, which is emitted only at or above
+// MinNoAutowireAIMemoryVersion, and the harness opencode2.
 const (
-	UntestedAIJailVersion   = "1.21.0"
-	UntestedAIMemoryVersion = "1.35.0"
+	UntestedAIJailVersion   = "2.3.0"
+	UntestedAIMemoryVersion = "2.5.0"
 )
+
+// MinAllowHostAIJailVersion is the first ai-jail that accepts --allow-host.
+// Older releases reject the flag outright, so the launcher refuses a configured
+// allow list below this instead of emitting it.
+const MinAllowHostAIJailVersion = "2.0.0"
+
+// MinNoAutowireAIMemoryVersion is the first ai-memory whose `run` accepts
+// --no-autowire. Below it the flag is an unknown option, so it is omitted.
+const MinNoAutowireAIMemoryVersion = "2.3.0"
 
 // Shared catalog names and platform identifiers. Keeping these values in the
 // config package avoids slightly different spellings in the CLI, catalog and

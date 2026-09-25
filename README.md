@@ -789,7 +789,8 @@ synonym for unset, so both forms are always emitted:
 | `deny_paths` | list | `--deny-path <PATH>` per entry |
 | `deny_path_exceptions` | list | `--deny-path-except <PATH>` per entry |
 | `hide_dotdirs` | list | `--hide-dotdir <NAME>` per entry |
-| `allow_tcp_ports` | list of int | `--allow-tcp-port <PORT>` per entry (lockdown only) |
+| `allow_tcp_ports` | list of int | refused: ai-jail rejects `--allow-tcp-port` |
+| `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0 and when `network: true` |
 
 ## Security
 
@@ -804,13 +805,14 @@ Layers of defense:
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
-  (`ai-jail` < 1.21.0, `ai-memory` < 1.35.0). It probes `--version` and reports
+  (`ai-jail` < 2.3.0, `ai-memory` < 2.5.0). It probes `--version` and reports
   an install that is older (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`) or newer than the validated range
   (`…-version-untested`). It also probes the launcher-managed ai-memory native
   binary separately (`ai-memory-native-too-old`), because that copy only moves
   when `--install` / `--upgrade` runs and can sit years behind the one on
-  `PATH`. Only ai-jail's version is re-checked at launch — `--doctor` execs the
+  `PATH` (`ai-memory-native-behind-path` when it does, even inside the tested
+  range). Only ai-jail's version is re-checked at launch — `--doctor` execs the
   binaries, pre-flight just reads what the one cached probe found.
 - Every install from a GitHub release asset is SHA-256 checksum-verified
   (`.sha256`, `.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release

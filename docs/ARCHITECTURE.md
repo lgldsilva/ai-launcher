@@ -538,7 +538,9 @@ on is a distinct state from leaving unset, so neither form is ever suppressed:
 `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`,
 `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `save_config`,
 `browser` (`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `mask_exceptions`,
-`deny_paths`, `deny_path_exceptions`, `hide_dotdirs`, `allow_tcp_ports`, and
+`deny_paths`, `deny_path_exceptions`, `hide_dotdirs`, `allow_tcp_ports`,
+`allow_hosts` (ai-jail >= 2.0, one `--allow-host` per entry, and the launch
+emits `--no-network` instead of `--network`), and
 `status_bar_style` (`dark`/`light`/`pastel`, emitted as `--status-bar=STYLE`;
 when set it suppresses both boolean `--status-bar` forms). When unset,
 `hide_config` is auto-disabled for projects whose `.ai-jail` is a symlink
@@ -550,7 +552,7 @@ handling — it only forwards ai-jail's write toggle.
 The launcher composes a specific upstream surface, bounded at both ends by four
 constants in `internal/config`: `MinAIJailVersion` (`1.20.1`) and
 `MinAIMemoryVersion` (`1.25.0`) are the floor, `UntestedAIJailVersion`
-(`1.21.0`) and `UntestedAIMemoryVersion` (`1.35.0`) the first version the argv
+(`2.3.0`) and `UntestedAIMemoryVersion` (`2.5.0`) the first version the argv
 has *not* been validated against. Below the floor is `…-version-too-old`; at or
 above the ceiling is `…-version-untested`, which warns and never blocks.
 
@@ -564,7 +566,10 @@ its meaning.
 (5-second timeout each), plus the launcher-managed ai-memory native binary
 under `~/.local/share/ai-launcher/bin` as a third row
 (`ai-memory-native-too-old`): it is a separate install that only moves when
-`--install` / `--upgrade` runs, so the copy on `PATH` cannot vouch for it. A
+`--install` / `--upgrade` runs, so the copy on `PATH` cannot vouch for it.
+When that runner is older than the `ai-memory` on `PATH`, doctor also reports
+`ai-memory-native-behind-path` — the launch exports the managed file as
+`AI_MEMORY_NATIVE_BIN` even when both copies are inside the tested range. A
 probe that fails or cannot be parsed stays silent, and an absent managed runner
 adds no row at all. "Version unknown" has to stay distinguishable from "version
 too old", or a host where the probe merely failed would be refused a launch it

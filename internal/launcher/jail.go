@@ -156,6 +156,44 @@ func appendJailFlags(command []string, flags config.JailFlags) []string {
 	return command
 }
 
+// appendAllowHosts emits one --allow-host per validated hostname when the
+// detected ai-jail is new enough to accept the flag. A bad host or an older
+// jail emits nothing here; pre-flight already refuses those launches.
+func appendAllowHosts(command []string, cfg LaunchConfig) []string {
+	if !filteredEgress(cfg) {
+		return command
+	}
+	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
+	if err != nil {
+		return command
+	}
+	for _, host := range hosts {
+		command = append(command, "--allow-host", host)
+	}
+	return command
+}
+
+// filteredEgress is allow_hosts replacing unrestricted network.
+func filteredEgress(cfg LaunchConfig) bool {
+	if explicitNetworkOn(cfg) || !jailSupportsAllowHost(cfg.JailVersion) {
+		return false
+	}
+	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
+	return err == nil && len(hosts) > 0
+}
+
+func explicitNetworkOn(cfg LaunchConfig) bool {
+	return cfg.JailFlags.Network != nil && *cfg.JailFlags.Network
+}
+
+func jailSupportsAllowHost(version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return compareVersions(version, config.MinAllowHostAIJailVersion) >= 0
+}
+
 // appendJailToggle emits the positive or negative form of one capability flag.
 // An unset (nil) toggle emits nothing, which leaves the capability in ai-jail's
 // auto mode; forcing it on is a different state and must emit the positive

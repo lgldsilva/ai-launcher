@@ -40,7 +40,7 @@ func TestUpsertEnvRemovesKeyWhenValueEmpty(t *testing.T) {
 
 // ai-jail 1.18 forwards a minimal allowlist and drops everything else, so a
 // variable the sandbox needs has to be named. These are the ones the launcher
-// is responsible for: the three it owns, the agent credential-store override,
+// is responsible for: the ones it owns, the agent credential-store override,
 // and whatever the catalog says the agent reads.
 func TestJailEnvPassthroughNamesWhatTheSandboxNeeds(t *testing.T) {
 	cfg := LaunchConfig{
@@ -88,6 +88,34 @@ func TestJailEnvPassthroughOmitsMemoryKeysWithoutMemory(t *testing.T) {
 
 // A name repeated by the catalog and by the launcher's own list is emitted
 // once: ai-jail would accept the duplicate, but the argv is read by people.
+func TestEnvironmentDisablesAutowireAtAIMemory23(t *testing.T) {
+	cfg := LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: "2.4.0",
+	}
+	for _, entry := range Environment(cfg) {
+		if entry == "AI_MEMORY_RUN_AUTOWIRE=false" {
+			return
+		}
+	}
+	t.Fatal("Environment() did not set AI_MEMORY_RUN_AUTOWIRE=false")
+}
+
+func TestEnvironmentLeavesAutowireAloneBelowAIMemory23(t *testing.T) {
+	t.Setenv("AI_MEMORY_RUN_AUTOWIRE", "true")
+	cfg := LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: "2.2.0",
+	}
+	for _, entry := range Environment(cfg) {
+		if strings.HasPrefix(entry, "AI_MEMORY_RUN_AUTOWIRE=") {
+			t.Fatalf("env forwarded %q; 2.2.0 has no autowire to disable", entry)
+		}
+	}
+}
+
 func TestJailEnvPassthroughDeduplicates(t *testing.T) {
 	cfg := LaunchConfig{
 		Agent:     config.Agent{Command: "claude", EnvPassthrough: []string{"AI_MEMORY_SERVER_URL", "AI_MEMORY_SERVER_URL"}},

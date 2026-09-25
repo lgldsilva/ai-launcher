@@ -997,6 +997,17 @@ func TestSupportsMemoryRunHarnessAcceptsKiroAndCommandCode(t *testing.T) {
 	}
 }
 
+// Aliases and harnesses ai-memory 2.4.0 accepts on top of the 1.32 set.
+// claude-extra stays rejected: the upstream claude* wildcard is not a closed
+// catalog name.
+func TestSupportsMemoryRunHarnessAcceptsAIMemory24Aliases(t *testing.T) {
+	for _, name := range []string{"claude-code", "open-code", "opencode2", "opencode-v2", "open-code2", "oh-my-pi", "kimi-code", "grok-build"} {
+		if !SupportsMemoryRunHarness(name) {
+			t.Errorf("SupportsMemoryRunHarness(%q) = false; ai-memory 2.4.0 accepts it", name)
+		}
+	}
+}
+
 // The MRU cap is a literal contract: the list must hold exactly 32 entries,
 // newest first, with the oldest evicted beyond that.
 func TestTouchRecentAgentCapsAtExactly32Entries(t *testing.T) {

@@ -57,6 +57,7 @@ type launchSpec struct {
 	Workspace         string            `yaml:"workspace"`
 	ProjectDir        string            `yaml:"project_dir"`
 	JailVersion       string            `yaml:"jail_version"`
+	MemoryVersion     string            `yaml:"memory_version"`
 	JailEnv           []string          `yaml:"jail_env"`
 	Project           string            `yaml:"project"`
 	Permissions       map[string]bool   `yaml:"permissions"`
@@ -293,6 +294,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		Workstream:                     spec.Workstream,
 		ProjectDir:                     spec.ProjectDir,
 		JailVersion:                    spec.JailVersion,
+		MemoryVersion:                  spec.MemoryVersion,
 		JailEnv:                        append([]string(nil), spec.JailEnv...),
 		Workspace:                      spec.Workspace,
 		Project:                        spec.Project,

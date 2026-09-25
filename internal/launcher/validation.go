@@ -116,6 +116,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
 	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
+	issues = append(issues, allowHostIssues(cfg)...)
 	issues = append(issues, containerNetworkInternalIssues(cfg)...)
 	issues = append(issues, containerNetworkAllowedDomainsIssues(cfg)...)
 	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
@@ -350,6 +351,45 @@ func dockerIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Iss
 // allow_tcp_ports with the CLI's, so the ports can come from a file the
 // launcher does not control, and an operator who clears jail_flags and keeps
 // failing needs to know where else to look.
+// allowHostIssues refuses an allow list the installed ai-jail cannot apply,
+// and a list that contradicts an explicit unrestricted network.
+func allowHostIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail || len(cfg.JailFlags.AllowHosts) == 0 {
+		return nil
+	}
+	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
+	if err != nil {
+		return []Issue{{
+			Code:    "allow-host-invalid",
+			Message: err.Error(),
+		}}
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+	if explicitNetworkOn(cfg) {
+		return []Issue{{
+			Code: "allow-host-conflicts-with-network",
+			Message: "jail_flags.allow_hosts is filtered egress and cannot be combined with jail_flags.network: true; " +
+				"ai-jail rejects --allow-host together with --network",
+		}}
+	}
+	version := strings.TrimSpace(cfg.JailVersion)
+	if !jailSupportsAllowHost(version) {
+		seen := version
+		if seen == "" {
+			seen = "unknown"
+		}
+		return []Issue{{
+			Code: "allow-host-requires-ai-jail-2",
+			Message: fmt.Sprintf(
+				"jail_flags.allow_hosts needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove allow_hosts",
+				config.MinAllowHostAIJailVersion, seen),
+		}}
+	}
+	return nil
+}
+
 func allowTCPPortIssues(cfg LaunchConfig) []Issue {
 	if !cfg.UseJail || len(cfg.JailFlags.AllowTCPPorts) == 0 {
 		return nil

@@ -223,6 +223,14 @@ func (m *Model) commitTextInput() {
 			m.launch.Workspace = value
 		case advancedProject:
 			m.launch.Project = value
+		case advancedAllowHosts:
+			hosts, err := config.ParseAllowHostList(value)
+			if err != nil {
+				m.textInputActive = true
+				m.status = "Invalid allow hosts: " + err.Error()
+				return
+			}
+			m.launch.JailFlags.AllowHosts = hosts
 		default:
 			break
 		}

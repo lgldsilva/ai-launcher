@@ -13,6 +13,53 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — the validated upstream range now includes ai-jail 2.2 and ai-memory 2.4
+
+`UntestedAIJailVersion` moves from `1.21.0` to `2.3.0` and
+`UntestedAIMemoryVersion` from `1.35.0` to `2.5.0`. The floors stay `1.20.1`
+and `1.25.0`: the argv this launcher already emitted is accepted by every
+release in between. ai-jail 2.0.0 added opt-in flags and declared the 1.x
+surface unchanged. ai-memory 2.0 migrated the server store; the `run` grammar
+did not move.
+
+**What you need to do:** nothing to keep launching. `ai-launcher --doctor`
+stops calling 2.2 / 2.4 untested. A managed ai-memory older than the one on
+`PATH` is now reported as `ai-memory-native-behind-path`; `ai-launcher
+--upgrade` refreshes that copy.
+
+### Added — filtered egress via `jail_flags.allow_hosts`
+
+ai-jail 2.0.0 added a third network mode: `--allow-host`, which cannot be
+combined with `--network`. A non-empty `allow_hosts` list emits one
+`--allow-host` per hostname and `--no-network` instead of the open network
+the permission would otherwise request. The list is editable in the TUI
+options section while the jail is on.
+
+**What you need to do:** nothing unless you set the list. It is refused below
+ai-jail 2.0 (`allow-host-requires-ai-jail-2`) and when `network: true`
+(`allow-host-conflicts-with-network`).
+
+### Changed — `ai-memory run` no longer autowires harness config
+
+ai-memory 2.3.0 installs a harness's hooks and MCP the first time `run`
+launches it. The launcher already does that from `--install`, with its own
+staged config. On ai-memory >= 2.3 the composed argv passes `--no-autowire`
+after the harness, and the child environment sets
+`AI_MEMORY_RUN_AUTOWIRE=false` so a continue (no harness token) is covered
+too. Older ai-memory builds do not see the flag.
+
+### Added — harness names ai-memory 2.4 accepts
+
+`memoryRunHarnesses` now includes `opencode2` (and `opencode-v2`,
+`open-code2`), plus the aliases `claude-code`, `open-code`, `oh-my-pi`,
+`kimi-code`, and `grok-build`.
+
+### Fixed — ai-jail installs verify the `.sha256` sidecar
+
+ai-jail releases publish `*.tar.gz.sha256`, not `checksums.txt`. The catalog
+no longer pins `ChecksumAsset` to the missing file, so a release whose GitHub
+asset digest is absent still verifies against the sidecar.
+
 ### Changed — ai-jail 1.20.1 is the new floor
 
 `MinAIJailVersion` moves from `1.18.2` to `1.20.1`. This is a security floor,

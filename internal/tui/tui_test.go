@@ -959,6 +959,37 @@ func TestModelEditsAdvancedLaunchInputs(t *testing.T) {
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEscape})
 }
 
+func TestModelEditsAllowHostsWhenTheJailIsOn(t *testing.T) {
+	launch := launcher.LaunchConfig{
+		Agent:   config.Agent{Command: "claude"},
+		UseJail: true,
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	model.section = 3
+	rows := model.advancedOptionRows()
+	index := -1
+	for i, row := range rows {
+		if row.kind == advancedAllowHosts {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("allow-hosts row missing while the jail is on")
+	}
+	model.cursor = len(model.optionRows()) + index
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyKey(t, model, runeKey("api.anthropic.com, github.com"))
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	want := []string{"api.anthropic.com", "github.com"}
+	if !reflect.DeepEqual(model.launch.JailFlags.AllowHosts, want) {
+		t.Fatalf("allow hosts = %#v; want %#v", model.launch.JailFlags.AllowHosts, want)
+	}
+	if !strings.Contains(model.View(), "Allow hosts: api.anthropic.com, github.com") {
+		t.Fatalf("options view missing the allow list:\n%s", model.View())
+	}
+}
+
 func TestModelSavesProfileWithCtrlP(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}, Permissions: map[string]bool{}})
 	var savedName string

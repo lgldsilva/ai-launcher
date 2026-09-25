@@ -46,8 +46,8 @@ workstream/workspace/project scope. The contract asserts what ai-launcher
 renames a flag installs cleanly and CI stays green. That gap is closed by
 version pinning, not by the contract alone — `config.MinAIJailVersion`
 (`1.20.1`) and `config.MinAIMemoryVersion` (`1.25.0`) declare the supported
-floor in exactly one place, with `UntestedAIJailVersion` (`1.21.0`) and
-`UntestedAIMemoryVersion` (`1.35.0`) closing the range at the top, and
+floor in exactly one place, with `UntestedAIJailVersion` (`2.3.0`) and
+`UntestedAIMemoryVersion` (`2.5.0`) closing the range at the top, and
 `ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version` (5s
 timeout), reporting `…-version-too-old` below the floor and
 `…-version-untested` at or above the ceiling. Above the ceiling it reports and
