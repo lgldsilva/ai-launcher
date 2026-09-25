@@ -108,34 +108,42 @@ func TestResolveBubblewrapPrefersDnfOverYum(t *testing.T) {
 func TestPropertyBubblewrapPlanPicksTheEarliestUnblockedManager(t *testing.T) {
 	managers := bubblewrapManagers()
 	rapid.Check(t, func(rt *rapid.T) {
-		present := map[string]bool{}
-		for _, manager := range managers {
-			if rapid.Bool().Draw(rt, manager.Command) {
-				present[manager.Command] = true
-			}
-		}
-		present["sudo"] = rapid.Bool().Draw(rt, "sudo")
+		present := drawBubblewrapPresence(rt, managers)
 		root := rapid.Bool().Draw(rt, "root")
 		plan := ResolveBubblewrap("linux", "", root, lookPathPresent(present))
-		want, ok := firstUnblocked(managers, present)
-		if !ok {
-			if plan.Needed && plan.Argv != nil {
-				rt.Fatalf("argv = %v; no manager was available", plan.Argv)
-			}
-			return
-		}
-		elevate := want.Sudo && !root
-		if elevate && !present["sudo"] {
-			if plan.Argv != nil || !strings.HasPrefix(plan.Text, "as root, run: ") {
-				rt.Fatalf("plan = %#v; a user without sudo gets a root-shell hint, not an argv", plan)
-			}
-			return
-		}
-		sudo := elevate
-		if strings.Join(plan.Argv, " ") != strings.Join(want.execArgv(sudo), " ") {
-			rt.Fatalf("argv = %v; want %v", plan.Argv, want.execArgv(sudo))
-		}
+		assertEarliestUnblockedPlan(rt, managers, present, root, plan)
 	})
+}
+
+func drawBubblewrapPresence(rt *rapid.T, managers []packageManager) map[string]bool {
+	present := map[string]bool{}
+	for _, manager := range managers {
+		if rapid.Bool().Draw(rt, manager.Command) {
+			present[manager.Command] = true
+		}
+	}
+	present["sudo"] = rapid.Bool().Draw(rt, "sudo")
+	return present
+}
+
+func assertEarliestUnblockedPlan(rt *rapid.T, managers []packageManager, present map[string]bool, root bool, plan BubblewrapPlan) {
+	want, ok := firstUnblocked(managers, present)
+	if !ok {
+		if plan.Needed && plan.Argv != nil {
+			rt.Fatalf("argv = %v; no manager was available", plan.Argv)
+		}
+		return
+	}
+	elevate := want.Sudo && !root
+	if elevate && !present["sudo"] {
+		if plan.Argv != nil || !strings.HasPrefix(plan.Text, "as root, run: ") {
+			rt.Fatalf("plan = %#v; a user without sudo gets a root-shell hint, not an argv", plan)
+		}
+		return
+	}
+	if strings.Join(plan.Argv, " ") != strings.Join(want.execArgv(elevate), " ") {
+		rt.Fatalf("argv = %v; want %v", plan.Argv, want.execArgv(elevate))
+	}
 }
 
 func firstUnblocked(managers []packageManager, present map[string]bool) (packageManager, bool) {
