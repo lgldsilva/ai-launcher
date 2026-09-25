@@ -1,4 +1,4 @@
-FROM archlinux:latest
+FROM archlinux:base-20260920.0.596911
 RUN pacman -Sy --noconfirm --needed base-devel git sudo \
  && useradd -m builder \
  && echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers \
