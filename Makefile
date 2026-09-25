@@ -82,9 +82,12 @@ lint-full:
 # Gate for the distribution surface: the install script users curl-pipe and
 # the release config that ships the binaries. shellcheck comes from the host
 # (preinstalled on the CI runners); shfmt and goreleaser run via `go run`.
+# The bubblewrap distro harness is not run in CI, so lint is its only gate.
+DIST_SHELL := install.sh scripts/mutation.sh scripts/mutation_test.sh \
+	test/bubblewrap-distros/run.sh $(wildcard test/bubblewrap-distros/*/check.sh)
 lint-dist:
-	shellcheck install.sh scripts/mutation.sh scripts/mutation_test.sh
-	$(SHFMT) -i 2 -ci -d install.sh scripts/mutation.sh scripts/mutation_test.sh
+	shellcheck $(DIST_SHELL)
+	$(SHFMT) -i 2 -ci -d $(DIST_SHELL)
 	$(GORELEASER) check
 
 # The two halves are separate targets because CI runs them as separate jobs:

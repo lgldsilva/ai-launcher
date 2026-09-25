@@ -4,7 +4,7 @@
 # TIMEOUT bounds each distro. emerge, guix, yay, and paru get a longer cap.
 # PARALLEL is how many compose runs share the machine.
 set -u
-root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+root=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
 out=${OUT:-/tmp/bubblewrap-distros}
 mkdir -p "$out"
 echo $$ >"$out/runner.pid"
