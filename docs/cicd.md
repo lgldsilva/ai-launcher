@@ -8,8 +8,9 @@ repository. There is no Gitea workflow either — GitHub is the only forge.
 
 ## CI pipeline (ci.yml)
 
-Triggers: push to `main` and every pull request. All jobs run on
-`ubuntu-latest` with Go set by `go.mod`.
+Triggers: push to `main` and every pull request. Jobs run on
+`ubuntu-latest`. Go comes from `go.mod`, except the jobs that pin a
+newer patch (`dist`, `gosec`, `vuln`).
 
 | Job | What it does | Fails the build when |
 | --- | --- | --- |
@@ -18,7 +19,7 @@ Triggers: push to `main` and every pull request. All jobs run on
 | `lint` | `gofmt -l`, `go vet`, `golangci-lint` v2.12 | Any formatting/lint issue pending |
 | `dist` | `make lint-dist`: ShellCheck + `shfmt -i 2 -ci -d` on `install.sh`, `goreleaser check` | Any issue in the install script or the release config |
 | `gosec` | `make sec-static`: gosec SAST over our own code | Any gosec finding, including a `#nosec` annotation that no longer holds |
-| `vuln` | `govulncheck` | Known vulnerability reachable in the code |
+| `vuln` | `make sec-vuln` (pinned govulncheck) on Go 1.25.13 | Known vulnerability reachable in the code |
 | `trivy` | Filesystem scan, severity `CRITICAL`, `ignore-unfixed` | CRITICAL vulnerability with a fix available |
 | `sbom` | Generates a CycloneDX SBOM and publishes it as an artifact | SBOM generation fails |
 | `sonar` | SonarCloud analysis via the pinned SonarSource scan action v8.2.1 | Quality gate red (`qualitygate.wait=true`) |

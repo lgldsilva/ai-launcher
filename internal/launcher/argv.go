@@ -127,6 +127,7 @@ func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) [
 	command = appendNetworkDecision(command, cfg)
 	command = appendEnvPassthrough(command, cfg)
 	command = appendJailFlags(command, cfg.JailFlags)
+	command = appendAllowHosts(command, cfg)
 	command = appendPermissionArgs(command, cfg)
 	if cfg.UseMemory {
 		command = appendHostDirMount(command, cfg.MemoryExecutable, cfg.Mounts, resolve)
@@ -176,6 +177,9 @@ func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
 	}
 	if cfg.UseJail && strings.TrimSpace(cfg.JailVersion) == "" {
 		cfg.JailVersion = DetectJailVersion()
+	}
+	if cfg.UseMemory && strings.TrimSpace(cfg.MemoryVersion) == "" {
+		cfg.MemoryVersion = DetectMemoryVersion()
 	}
 	if cfg.UseJail && cfg.JailEnv == nil {
 		cfg.JailEnv = JailEnvPassthrough(cfg, Environment(cfg))
@@ -286,16 +290,25 @@ func appendEnvPassthrough(command []string, cfg LaunchConfig) []string {
 // Precedence matches every other capability: an explicit jail_flags.network is
 // the operator's declarative choice and wins, then the permission toggle.
 func appendNetworkDecision(command []string, cfg LaunchConfig) []string {
+	// One token for every path that withholds an unrestricted route, so the
+	// three call sites cannot drift apart.
+	const noNetworkFlag = "--no-network"
+	// Filtered egress is the third network mode (ai-jail >= 2.0): no
+	// unrestricted route, plus --allow-host. An explicit network: true
+	// contradicts that and is left for pre-flight to refuse.
+	if filteredEgress(cfg) {
+		return append(command, noNetworkFlag)
+	}
 	if declared := cfg.JailFlags.Network; declared != nil {
 		if *declared {
 			return append(command, "--network")
 		}
-		return append(command, "--no-network")
+		return append(command, noNetworkFlag)
 	}
 	if cfg.Permissions[config.PermissionNetwork] {
 		return append(command, "--network")
 	}
-	return append(command, "--no-network")
+	return append(command, noNetworkFlag)
 }
 
 // appendDockerDecision emits exactly one of --docker / --no-docker, always.

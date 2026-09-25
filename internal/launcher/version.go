@@ -54,6 +54,12 @@ type UpstreamStatus struct {
 	Missing      bool
 	TooOld       bool
 	TooNew       bool
+	// Behind reports a managed ai-memory runner older than the copy on PATH.
+	// BehindOf is that PATH version. The launch still exports the managed file,
+	// so the doctor names it even when both copies sit inside the tested range.
+	Behind     bool
+	BehindCode string
+	BehindOf   string
 }
 
 // UpstreamReport probes the upstream CLIs this launcher composes with and
@@ -74,10 +80,11 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 			config.MinAIJailVersion, config.UntestedAIJailVersion,
 			"ai-jail-version-too-old", "ai-jail-version-untested"))
 	}
-	report = append(report, probeUpstream(lookPath, config.AIMemoryCommand,
+	memory := probeUpstream(lookPath, config.AIMemoryCommand,
 		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
-		"ai-memory-version-too-old", "ai-memory-version-untested"))
-	if managed := probeManagedRunner(); managed != nil {
+		"ai-memory-version-too-old", "ai-memory-version-untested")
+	report = append(report, memory)
+	if managed := probeManagedRunner(memory.Version); managed != nil {
 		report = append(report, *managed)
 	}
 	return report
@@ -150,7 +157,7 @@ var managedRunnerProbePath = func() string { return managedNativeRunnerPath("") 
 // wrapper only consults the variable at all under the Docker shell. A missing
 // or unreadable file returns nil rather than a "not found" row that would fail
 // the doctor's exit code over a file nobody asked for.
-func probeManagedRunner() *UpstreamStatus {
+func probeManagedRunner(pathVersion string) *UpstreamStatus {
 	path := managedRunnerProbePath()
 	if path == "" {
 		return nil
@@ -163,7 +170,51 @@ func probeManagedRunner() *UpstreamStatus {
 	if status.Missing || status.Version == "" {
 		return nil
 	}
+	if pathVersion != "" && compareVersions(status.Version, pathVersion) < 0 {
+		status.Behind = true
+		status.BehindCode = "ai-memory-native-behind-path"
+		status.BehindOf = pathVersion
+	}
 	return &status
+}
+
+// memoryVersionCache memoizes the ai-memory probe the same way jailVersionCache
+// memoizes ai-jail: Build and the TUI must not fork a child per keystroke.
+var memoryVersionCache struct {
+	once  sync.Once
+	value string
+}
+
+// DetectMemoryVersion reads the installed ai-memory version, or returns ""
+// when it is absent or its output carries no version token. An unreadable
+// probe stays "" so a failed probe is never treated as "too old" or as
+// "new enough for a flag the older CLI rejects".
+func DetectMemoryVersion() string {
+	memoryVersionCache.once.Do(func() { memoryVersionCache.value = probeMemoryVersion() })
+	return memoryVersionCache.value
+}
+
+func probeMemoryVersion() string {
+	path, err := lookPathCommand(config.AIMemoryCommand)
+	if err != nil {
+		return ""
+	}
+	output, err := runVersionCommand(path)
+	if err != nil {
+		return ""
+	}
+	return semverPattern.FindString(string(output))
+}
+
+// MemoryDisablesAutowire reports whether this launch should pass --no-autowire.
+// The flag arrived in ai-memory 2.3.0; an older CLI rejects it as an unknown
+// option, and an unreadable probe is not evidence that the CLI is new enough.
+func MemoryDisablesAutowire(version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return compareVersions(version, config.MinNoAutowireAIMemoryVersion) >= 0
 }
 
 // probeUpstream resolves one tool and reads its --version output. untested is

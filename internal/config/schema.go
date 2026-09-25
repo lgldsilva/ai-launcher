@@ -187,6 +187,10 @@ type JailFlags struct {
 	Mask          []string `yaml:"mask,omitempty"`
 	DenyPaths     []string `yaml:"deny_paths,omitempty"`
 	AllowTCPPorts []int    `yaml:"allow_tcp_ports,omitempty"`
+	// AllowHosts is ai-jail 2.0 filtered egress: one --allow-host per entry.
+	// It replaces unrestricted --network for that launch. Empty entries are
+	// dropped; a non-hostname is refused in pre-flight.
+	AllowHosts []string `yaml:"allow_hosts,omitempty"`
 	// v1.15 exception lists: each entry punches a hole in a mask / deny-path
 	// rule or hides a dot-directory by name.
 	MaskExceptions     []string `yaml:"mask_exceptions,omitempty"`
@@ -245,7 +249,7 @@ func (f JailFlags) IsZero() bool {
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.SaveConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
-		len(f.AllowTCPPorts) == 0 && len(f.MaskExceptions) == 0 &&
+		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.MaskExceptions) == 0 &&
 		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && f.StatusBarStyle == ""
 }
 

@@ -81,14 +81,16 @@ func DefaultGlobal() Global {
 				Name: aiJailTool, Command: aiJailTool, Description: "Sandbox wrapper used by ai-launcher (Linux and macOS only)",
 				Release: &GitHubRelease{
 					Repository: "akitaonrails/ai-jail",
-					// ai-jail v1.15 publishes only these two assets; there are
-					// no linux-arm64, darwin-amd64, or Windows builds.
+					// Published assets are linux-x86_64 and macos-aarch64 only.
+					// Each archive has a .sha256 sidecar; there is no
+					// checksums.txt. Leaving ChecksumAsset empty lets the
+					// installer use that sidecar when the GitHub asset digest
+					// is absent. Pinning checksums.txt would skip the sidecar.
 					Assets: map[string]string{
 						platformLinuxAMD64:  "ai-jail-linux-x86_64.tar.gz",
 						platformDarwinARM64: "ai-jail-macos-aarch64.tar.gz",
 					},
-					Binary:        aiJailTool,
-					ChecksumAsset: "checksums.txt",
+					Binary: aiJailTool,
 				},
 			},
 			{

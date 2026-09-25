@@ -29,10 +29,14 @@ func toolAssets(t *testing.T, global Global, name string) []string {
 
 func TestDefaultGlobalJailRecipeMatchesPublishedAssets(t *testing.T) {
 	global := DefaultGlobal()
-	// ai-jail v1.15 publishes only linux-x86_64 and macos-aarch64; there are
-	// no linux-arm64, darwin-amd64, or Windows builds.
+	// ai-jail publishes linux-x86_64 and macos-aarch64 only.
 	if got, want := toolAssets(t, global, "ai-jail"), []string{"darwin-arm64", "linux-amd64"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("ai-jail assets = %#v; want %#v", got, want)
+	}
+	for _, tool := range global.Tools {
+		if tool.Command == "ai-jail" && tool.Release != nil && tool.Release.ChecksumAsset != "" {
+			t.Errorf("ai-jail ChecksumAsset = %q; the release publishes a .sha256 sidecar, not a pinned checksum file", tool.Release.ChecksumAsset)
+		}
 	}
 	// ai-memory publishes the four desktop tarballs and the windows zip.
 	want := []string{"darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64", "windows-amd64"}
@@ -145,6 +149,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		"mask":                 func(f *JailFlags) { f.Mask = []string{"/etc/secrets"} },
 		"deny_paths":           func(f *JailFlags) { f.DenyPaths = []string{"/proc/kcore"} },
 		"allow_tcp_ports":      func(f *JailFlags) { f.AllowTCPPorts = []int{8080} },
+		"allow_hosts":          func(f *JailFlags) { f.AllowHosts = []string{"api.anthropic.com"} },
 		"mask_exceptions":      func(f *JailFlags) { f.MaskExceptions = []string{"/srv/shared"} },
 		"deny_path_exceptions": func(f *JailFlags) { f.DenyPathExceptions = []string{"/var/cache"} },
 		"hide_dotdirs":         func(f *JailFlags) { f.HideDotdirs = []string{".aws"} },

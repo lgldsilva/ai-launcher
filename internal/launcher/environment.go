@@ -27,6 +27,7 @@ var ownedMemoryEnvKeys = []string{
 	"AI_MEMORY_SERVER_URL",
 	"AI_MEMORY_AUTH_TOKEN",
 	"AI_MEMORY_NATIVE_BIN",
+	"AI_MEMORY_RUN_AUTOWIRE",
 }
 
 // Environment returns the inherited environment with the configured ai-memory
@@ -80,6 +81,13 @@ func Environment(cfg LaunchConfig) []string {
 			env = upsertEnv(env, "AI_MEMORY_NATIVE_BIN", native)
 		}
 	}
+	// Continue has no harness token to hang --no-autowire on without breaking
+	// ai-jail's parser, and a session resume still runs `ai-memory run`. The
+	// env var is the form that reaches both shapes. An older ai-memory ignores
+	// it; 2.3+ treats it as --no-autowire.
+	if MemoryDisablesAutowire(cfg.MemoryVersion) {
+		env = upsertEnv(env, "AI_MEMORY_RUN_AUTOWIRE", "false")
+	}
 	return env
 }
 
@@ -112,7 +120,7 @@ var statExecutable = func(path string) error {
 // ai-jail 1.18 replaced full environment inheritance with a minimal allowlist
 // (PATH, HOME, TERM, LANG, SHELL, TMPDIR, COLORTERM, the SSL_CERT_* and proxy
 // variables, plus the LC_*, XDG_* and TERM_PROGRAM families). Everything else
-// is dropped unless named. For this launcher that silently took out the three
+// is dropped unless named. For this launcher that silently took out the
 // AI_MEMORY_* variables it owns — invariants 7 and 8 are implemented *through*
 // the environment — along with the agent credential-store override and every
 // vendor API key.

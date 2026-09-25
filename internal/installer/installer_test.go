@@ -218,6 +218,20 @@ func TestChecksumFormatsAndAssetSelection(t *testing.T) {
 // A checksum line that is not anchored to the wanted filename must never
 // satisfy verification: a release body or checksums file mentioning the hash
 // of a DIFFERENT asset would otherwise pass.
+func TestFindChecksumAssetUsesTheSidecarUnlessAFileIsPinned(t *testing.T) {
+	assets := []Asset{
+		{Name: "ai-jail-macos-aarch64.tar.gz"},
+		{Name: "ai-jail-macos-aarch64.tar.gz.sha256"},
+	}
+	got, ok := findChecksumAsset(assets, "ai-jail-macos-aarch64.tar.gz", "")
+	if !ok || got.Name != "ai-jail-macos-aarch64.tar.gz.sha256" {
+		t.Fatalf("findChecksumAsset(sidecar) = %#v, %v", got, ok)
+	}
+	if _, ok := findChecksumAsset(assets, "ai-jail-macos-aarch64.tar.gz", "checksums.txt"); ok {
+		t.Fatal("a pinned checksums.txt matched the sidecar; that skips the file the release actually publishes")
+	}
+}
+
 func TestChecksumForRejectsUnanchoredHashes(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	for _, value := range []string{

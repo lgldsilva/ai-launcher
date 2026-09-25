@@ -36,7 +36,8 @@ Upstream floors are pinned in `internal/config` and reported by
 `~/.local/share/ai-launcher/bin` against the same floor. It is a second install
 with its own lifecycle — only `--install` / `--upgrade` moves it — so a current
 `ai-memory` on `PATH` says nothing about the copy exported as
-`AI_MEMORY_NATIVE_BIN`.
+`AI_MEMORY_NATIVE_BIN`. A managed runner older than the PATH copy is reported
+as `ai-memory-native-behind-path`.
 
 ## Reporting a vulnerability
 

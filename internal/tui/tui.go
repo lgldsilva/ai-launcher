@@ -118,6 +118,7 @@ const (
 	advancedWorkspace     advancedOptionKind = "workspace"
 	advancedProject       advancedOptionKind = "project"
 	advancedExtraArgs     advancedOptionKind = "extra-args"
+	advancedAllowHosts    advancedOptionKind = "allow-hosts"
 )
 
 type advancedOptionRow struct {
@@ -698,13 +699,22 @@ func toggleWorkstreamOption(m *Model) {
 // the TUI the single place where an operator can inspect and edit the complete
 // memory scope and native argument configuration.
 func (m *Model) advancedOptionRows() []advancedOptionRow {
-	return []advancedOptionRow{
+	rows := []advancedOptionRow{
 		{name: "New workstream name", kind: advancedNewWorkstream, value: m.launch.NewWorkstream, hint: "empty disables the toggle"},
 		{name: "Resume workstream", kind: advancedWorkstream, value: m.launch.Workstream, hint: "name passed to ai-memory"},
 		{name: "Memory workspace", kind: advancedWorkspace, value: m.launch.Workspace, hint: "ai-memory workspace scope"},
 		{name: "Memory project", kind: advancedProject, value: m.launch.Project, hint: "ai-memory project scope"},
 		{name: "Extra agent args", kind: advancedExtraArgs, value: formatExtraArgs(m.launch.ExtraArgs), hint: "shell-style; quotes supported"},
 	}
+	if m.launch.UseJail && !isWindows() {
+		rows = append(rows, advancedOptionRow{
+			name:  "Allow hosts",
+			kind:  advancedAllowHosts,
+			value: strings.Join(m.launch.JailFlags.AllowHosts, ", "),
+			hint:  "comma-separated hostnames; ai-jail >= 2.0, replaces open network",
+		})
+	}
+	return rows
 }
 
 func (m *Model) advancedOption(kind advancedOptionKind) (advancedOptionRow, bool) {
