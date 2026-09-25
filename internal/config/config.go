@@ -109,7 +109,7 @@ const DefaultMemoryServerURL = ""
 // per-account wrapper uses run_harness: claude.
 var memoryRunHarnesses = []string{
 	"claude", "claude-code", "codex", "opencode", "open-code", "opencode2", "opencode-v2", "open-code2",
-	"pi", "crush", "omp", "oh-my-pi", "kimi", "kimi-code",
+	"pi", "crush", "omp", "oh-my-pi", "kimi", kimiCodeID,
 	"command-code", "commandcode", "cmdc", "cmd",
 	"kiro", "kiro-cli",
 	"grok", "grok-build",
@@ -138,7 +138,7 @@ func SupportsMemoryRunHarness(name string) bool {
 var memoryHarnessAddedIn23 = map[string]struct{}{
 	"opencode2": {}, "opencode-v2": {}, "open-code2": {},
 	"claude-code": {}, "open-code": {}, "oh-my-pi": {},
-	"kimi-code": {}, "grok-build": {},
+	kimiCodeID: {}, "grok-build": {},
 }
 
 // MemoryHarnessMinVersion is the first ai-memory that accepts name, or ""

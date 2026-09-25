@@ -266,14 +266,14 @@ func memoryHarnessIssues(cfg LaunchConfig) []Issue {
 	}
 	harness := memoryRunHarness(cfg.Agent)
 	if config.SupportsMemoryRunHarness(harness) {
-		if min := config.MemoryHarnessMinVersion(harness); min != "" {
+		if minVer := config.MemoryHarnessMinVersion(harness); minVer != "" {
 			version := strings.TrimSpace(cfg.MemoryVersion)
-			if version != "" && compareVersions(version, min) < 0 {
+			if version != "" && compareVersions(version, minVer) < 0 {
 				return []Issue{{
 					Code: "memory-harness-version",
 					Message: fmt.Sprintf(
 						"ai-memory %s does not accept harness %q (added in %s); upgrade ai-memory, or relaunch with --no-memory",
-						version, harness, min),
+						version, harness, minVer),
 				}}
 			}
 		}

@@ -186,37 +186,40 @@ func TestAllowHostsWithMemoryRequiresHTTPSOnTheList(t *testing.T) {
 		JailFlags:   config.JailFlags{AllowHosts: []string{"api.anthropic.com"}},
 	}
 	cases := []struct {
-		name   string
-		url    string
-		want   string
-		absent bool
+		name       string
+		url        string
+		want       string
+		absent     bool
+		extraHosts []string
 	}{
-		{"default loopback", "", "allow-host-memory-needs-https", false},
-		{"explicit http", "http://127.0.0.1:49374", "allow-host-memory-needs-https", false},
-		{"https host missing", "https://aimemory.example", "allow-host-omits-memory-server", false},
-		{"https host listed via parent", "https://memory.aimemory.example/wiki", "", true},
+		{"default loopback", "", "allow-host-memory-needs-https", false, nil},
+		{"explicit http", "http://127.0.0.1:49374", "allow-host-memory-needs-https", false, nil},
+		{"https host missing", "https://aimemory.example", "allow-host-omits-memory-server", false, nil},
+		{"https host listed via parent", "https://memory.aimemory.example/wiki", "", true, []string{"aimemory.example"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := base
 			cfg.MemoryServerURL = tc.url
-			if tc.name == "https host listed via parent" {
-				cfg.JailFlags.AllowHosts = append(append([]string{}, cfg.JailFlags.AllowHosts...), "aimemory.example")
-			}
-			issues := linuxValidator().Validate(cfg)
-			if tc.absent {
-				if _, ok := issueByCode(issues, "allow-host-memory-needs-https"); ok {
-					t.Fatalf("issues = %#v; a listed https server must be allowed", issues)
-				}
-				if _, ok := issueByCode(issues, "allow-host-omits-memory-server"); ok {
-					t.Fatalf("issues = %#v; parent domain must cover the memory host", issues)
-				}
-				return
-			}
-			if _, ok := issueByCode(issues, tc.want); !ok {
-				t.Fatalf("issues = %#v; want %s", issues, tc.want)
-			}
+			cfg.JailFlags.AllowHosts = append(append([]string{}, base.JailFlags.AllowHosts...), tc.extraHosts...)
+			assertAllowHostMemoryIssue(t, linuxValidator().Validate(cfg), tc.absent, tc.want)
 		})
+	}
+}
+
+func assertAllowHostMemoryIssue(t *testing.T, issues []Issue, absent bool, want string) {
+	t.Helper()
+	if absent {
+		if _, ok := issueByCode(issues, "allow-host-memory-needs-https"); ok {
+			t.Fatalf("issues = %#v; a listed https server must be allowed", issues)
+		}
+		if _, ok := issueByCode(issues, "allow-host-omits-memory-server"); ok {
+			t.Fatalf("issues = %#v; parent domain must cover the memory host", issues)
+		}
+		return
+	}
+	if _, ok := issueByCode(issues, want); !ok {
+		t.Fatalf("issues = %#v; want %s", issues, want)
 	}
 }
 
