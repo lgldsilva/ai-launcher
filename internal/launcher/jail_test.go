@@ -342,6 +342,36 @@ func TestValidatorWarnsForJailOptionsWithoutJail(t *testing.T) {
 	}
 }
 
+// A Linux jail with ai-jail on PATH still cannot start when bwrap is absent.
+// BWRAP_BIN is the operator's explicit choice and counts as present.
+func TestValidatorRefusesLinuxJailWithoutBubblewrap(t *testing.T) {
+	v := Validator{
+		GOOS: "linux",
+		LookPath: func(command string) (string, error) {
+			if command == "claude" || command == "ai-jail" || command == "apt-get" {
+				return "/bin/" + command, nil
+			}
+			return "", errors.New("missing")
+		},
+		Stat: func(string) (os.FileInfo, error) { return nil, nil },
+	}
+	issues := v.Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true})
+	if len(issues) != 1 || issues[0].Code != "bwrap-not-found" {
+		t.Fatalf("issues = %#v; want one bwrap-not-found", issues)
+	}
+	if !strings.Contains(issues[0].Message, "apt-get install -y bubblewrap") {
+		t.Fatalf("message = %q; want the apt-get install command", issues[0].Message)
+	}
+	issues = v.Validate(LaunchConfig{
+		Agent:    config.Agent{Command: "claude"},
+		UseJail:  true,
+		BwrapBin: "/opt/bwrap",
+	})
+	if len(issues) != 0 {
+		t.Fatalf("BwrapBin set produced issues: %#v", issues)
+	}
+}
+
 func TestValidatorWarnsInsteadOfFailingForWindowsJail(t *testing.T) {
 	v := Validator{
 		GOOS:     "windows",

@@ -16,13 +16,15 @@ import (
 )
 
 // stubToolsOnPath puts executable stubs for the harness and the upstream CLIs
-// at the front of PATH. Pre-flight validation resolves all three, and --dry-run
-// now runs it, so a fixture pointing at binaries that do not exist would fail
-// for the wrong reason. It also keeps the suite hermetic: it never depends on
-// ai-jail or ai-memory being installed on the machine running the tests.
+// at the front of PATH. Pre-flight validation resolves the harness, ai-jail,
+// ai-memory, and bwrap, and --dry-run now runs it, so a fixture pointing at
+// binaries that do not exist would fail for the wrong reason. It also keeps
+// the suite hermetic: it never depends on ai-jail, ai-memory, or bubblewrap
+// being installed on the machine running the tests.
 func stubToolsOnPath(t *testing.T, names ...string) string {
 	t.Helper()
 	binDir := t.TempDir()
+	names = append(names, "bwrap")
 	for _, name := range names {
 		path := filepath.Join(binDir, name)
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { // #nosec G306 -- test stub must be executable
