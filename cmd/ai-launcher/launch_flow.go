@@ -84,7 +84,7 @@ func (req *launchRequest) launchSingle(tuiFlow bool, status *string, autoArmedNe
 	// so it must not present a command pre-flight would reject. The argv is
 	// still printed when there are issues — seeing what would run is the point.
 	printOnly := decideLaunchAction(req.opts.dryRun) == actionPrint
-	issues := launcher.NewValidator().WithPermissions(req.global.Permissions).Validate(req.launchConfig)
+	issues := newValidator().WithPermissions(req.global.Permissions).Validate(req.launchConfig)
 	fatal := reportPreflight(req.errOut, issues)
 	if printOnly {
 		printDryRun(req.out, argv, req.launchConfig.Services)
@@ -127,7 +127,7 @@ func (req *launchRequest) launchSingle(tuiFlow bool, status *string, autoArmedNe
 
 func (r *launchRequest) launchCompose() error {
 	printOnly := decideLaunchAction(r.opts.dryRun) == actionPrint
-	issues := launcher.NewValidator().WithPermissions(r.global.Permissions).Validate(r.launchConfig)
+	issues := newValidator().WithPermissions(r.global.Permissions).Validate(r.launchConfig)
 	fatal := reportPreflight(r.errOut, issues)
 	runtime := container.RuntimeOrDefault(r.launchConfig.Docker.Runtime)
 	composePath := filepath.Join(mustGetwd(), containerArtifactDir, "docker-compose.yaml")
@@ -214,6 +214,11 @@ func printDryRun(out io.Writer, argv, services []string) {
 	}
 	_, _ = fmt.Fprintln(out, shellJoin(argv))
 }
+
+// newValidator builds the pre-flight validator; a variable so tests can give
+// it a bwrap probe that trusts their PATH stubs, which the runner's user
+// owns and ai-jail would refuse.
+var newValidator = launcher.NewValidator
 
 // runTUI is the interactive selection loop; a variable so tests can confirm
 // a selection without a terminal. The trailing string seeds the initial

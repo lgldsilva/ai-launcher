@@ -1,0 +1,12 @@
+# The image only installs paru. The command under test is the launcher argv.
+# The launcher picks pacman on this image (pacman blocks this row), so this
+# scenario only checks that the row's argv installs bwrap.
+# Install: paru -S --noconfirm bubblewrap
+# The script is check.sh: Compose word-splits a string command and interpolates $.
+services:
+  check:
+    platform: linux/amd64
+    build: .
+    entrypoint: ["sh", "/check.sh"]
+    volumes:
+      - ./check.sh:/check.sh:ro

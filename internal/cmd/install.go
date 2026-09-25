@@ -246,11 +246,15 @@ func installOne(client *installer.Installer, target installTarget, selected stri
 		// that actual executable instead of creating a second canonical one.
 		installPath = executableAvailable(target.Command, target.Aliases, "")
 	}
+	if target.Command == config.AIJailCommand {
+		// Own deadline: a slow apt-get must not eat the timeout of the
+		// GitHub download that still has to run after it.
+		depCtx, depCancel := withInstallTimeout(context.Background())
+		client.EnsureBubblewrap(depCtx, systemDeps, streams.out, streams.errOut)
+		depCancel()
+	}
 	ctx, cancel := withInstallTimeout(context.Background())
 	defer cancel()
-	if target.Command == config.AIJailCommand {
-		client.EnsureBubblewrap(ctx, systemDeps, streams.out, streams.errOut)
-	}
 	result, err := client.Install(ctx, target.Name, target.Command, installPath, target.Release, force)
 	if err != nil && target.Path == "" && installPath != "" && errors.Is(err, os.ErrPermission) {
 		// A discovered system-wide binary may be readable but not writable by
