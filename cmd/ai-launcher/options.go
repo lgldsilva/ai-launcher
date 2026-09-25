@@ -22,9 +22,7 @@ func (s *stringList) Set(value string) error {
 // operator's raw choice instead of collapsing it to the resolved bool.
 func boolPtr(value bool) *bool { return &value }
 
-// readable and the flag-to-config mapping can be applied as a unit.
 // cliOptions holds every command-line flag value in one place so run() stays
-// readable and the flag-to-config mapping can be applied as a unit.
 // readable and the flag-to-config mapping can be applied as a unit.
 type cliOptions struct {
 	mounts, rwMounts                                  stringList
