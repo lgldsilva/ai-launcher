@@ -1,10 +1,10 @@
 # Root argv, the command the launcher runs when it is uid 0.
-# Image: archlinux:latest
+# Image: archlinux:base-20260920.0.596911@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6
 # Install: pacman -S --noconfirm bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
-    image: archlinux:latest
+    image: archlinux:base-20260920.0.596911@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6
     entrypoint: ["sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro

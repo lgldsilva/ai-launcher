@@ -1,10 +1,12 @@
 # Root argv, the command the launcher runs when it is uid 0.
-# Image: manjarolinux/base:latest
+# The launcher picks pacman on this image (pacman blocks this row), so this
+# scenario only checks that the row's argv installs bwrap.
+# Image: manjarolinux/base:latest@sha256:bbf1f1d746f28e138eea610e140d2f28cbb5b7c5da2fbff034b883527aa604e9
 # Install: pamac install --no-confirm bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
-    image: manjarolinux/base:latest
+    image: manjarolinux/base:latest@sha256:bbf1f1d746f28e138eea610e140d2f28cbb5b7c5da2fbff034b883527aa604e9
     entrypoint: ["sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro

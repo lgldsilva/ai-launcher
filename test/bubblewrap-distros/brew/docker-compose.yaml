@@ -1,10 +1,10 @@
 # Root argv, the command the launcher runs when it is uid 0.
-# Image: homebrew/brew:latest
+# Image: homebrew/brew:latest@sha256:b0072bfdebf5934ae24b93b44a1928a88057399b3283ffa0177bb86084fdedfd
 # Install: brew install bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
-    image: homebrew/brew:latest
+    image: homebrew/brew:latest@sha256:b0072bfdebf5934ae24b93b44a1928a88057399b3283ffa0177bb86084fdedfd
     entrypoint: ["sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro

@@ -1,10 +1,10 @@
 # Root argv, the command the launcher runs when it is uid 0.
-# Image: ghcr.io/void-linux/void-glibc:latest
+# Image: ghcr.io/void-linux/void-glibc:latest@sha256:c0270a1b5b78d397bb4b53d09266eed1f435cc2f56638b44ede57fea29dc476e
 # Install: xbps-install -S -y bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
-    image: ghcr.io/void-linux/void-glibc:latest
+    image: ghcr.io/void-linux/void-glibc:latest@sha256:c0270a1b5b78d397bb4b53d09266eed1f435cc2f56638b44ede57fea29dc476e
     entrypoint: ["sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro

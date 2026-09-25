@@ -10,5 +10,7 @@ if [ "$raw" -ne 0 ]; then
 else
   echo STATUS raw=ok
 fi
+# guix install puts bwrap in the user profile; a login shell would add it.
+PATH="$HOME/.guix-profile/bin:$PATH"
 command -v bwrap
 bwrap --version || true
