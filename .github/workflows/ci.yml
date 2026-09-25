@@ -116,16 +116,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          # golang/govulncheck-action installs govulncheck@latest. v1.8.0
+          # requires go >= 1.26.0, and setup-go sets GOTOOLCHAIN=local, so that
+          # install cannot run on the 1.25 line. The Makefile pin (v1.6.0)
+          # builds here. Keep the patched 1.25.13 toolchain: scanning with the
+          # go.mod minimum (1.25.0) reports stdlib CVEs that 1.25.13 already
+          # fixed, which are not vulnerabilities in this module.
+          go-version: "1.25.13"
           cache: true
       - name: govulncheck
-        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
-        with:
-          # The action defaults to "stable", which can pick a toolchain with
-          # unfixed stdlib CVEs unrelated to this project. Pin to the patched
-          # 1.25.13 toolchain so the scan reports real project vulnerabilities
-          # rather than the minimum Go line in go.mod.
-          go-version-input: "1.25.13"
+        run: make sec-vuln
 
   # trivy-action tags < 0.35.0 were force-pushed to malware in March 2026
   # (CVE-2026-33634); this pins the v0.36.0 commit SHA, never a mutable tag.
