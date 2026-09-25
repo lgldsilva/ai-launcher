@@ -12,6 +12,7 @@ import (
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/container"
+	"github.com/lgldsilva/ai-launcher/internal/installer"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
@@ -32,7 +33,39 @@ func stubToolsOnPath(t *testing.T, names ...string) string {
 		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	trustStubBwrap(t, binDir)
 	return binDir
+}
+
+// trustStubBwrap makes pre-flight accept the bwrap stub. The stub belongs to
+// the user running the tests, and ai-jail only trusts a root-owned bwrap, so
+// the probe reports files under binDir as root-owned and nothing else as
+// existing: the host's own /usr/bin/bwrap never decides a test.
+func trustStubBwrap(t *testing.T, binDir string) {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(binDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := func(path string) (installer.BwrapFile, error) {
+		file, err := installer.StatBwrap(path)
+		if err != nil {
+			return installer.BwrapFile{}, err
+		}
+		if !strings.HasPrefix(file.Path, resolved+string(os.PathSeparator)) {
+			return installer.BwrapFile{}, os.ErrNotExist
+		}
+		file.UID = 0
+		file.Mode &^= 0o022
+		return file, nil
+	}
+	previous := newValidator
+	newValidator = func() launcher.Validator {
+		v := previous()
+		v.BwrapProbe = probe
+		return v
+	}
+	t.Cleanup(func() { newValidator = previous })
 }
 
 // stubPath resolves a stub installed by stubToolsOnPath. A resolvable harness
