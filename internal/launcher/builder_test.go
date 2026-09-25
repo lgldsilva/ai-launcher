@@ -19,6 +19,32 @@ func TestBuildMinimalWithMemory(t *testing.T) {
 	}
 }
 
+func TestBuildDisablesAutowireAtTheAIMemoryFloor(t *testing.T) {
+	got, err := Build(LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: config.MinNoAutowireAIMemoryVersion,
+		Fresh:         true,
+	})
+	want := []string{"ai-memory", "run", "claude", "--fresh", "--no-autowire"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
+	}
+}
+
+func TestBuildOmitsNoAutowireBelowTheAIMemoryFloor(t *testing.T) {
+	got, err := Build(LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: "2.2.9",
+		Fresh:         true,
+	})
+	want := []string{"ai-memory", "run", "claude", "--fresh"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Build() = %#v, %v; want %#v", got, err, want)
+	}
+}
+
 func TestBuildRemapsOcWrapperToOpencodeHarness(t *testing.T) {
 	// Catalog command is "oc" (preset selector); ai-memory only accepts
 	// "opencode". The remap comes from the catalog entry, not from a hardcoded

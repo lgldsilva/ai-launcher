@@ -171,6 +171,27 @@ func TestResolveHostBinariesFollowsMemorySymlink(t *testing.T) {
 	}
 }
 
+func TestResolveHostBinariesFillsAnEmptyMemoryVersionFromTheProbe(t *testing.T) {
+	resetMemoryVersionCache(t)
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
+		return []byte("ai-memory 2.4.0"), nil
+	})
+	defer restore()
+
+	filled := ResolveHostBinaries(LaunchConfig{UseMemory: true})
+	if filled.MemoryVersion != "2.4.0" {
+		t.Fatalf("MemoryVersion = %q; an empty version is filled from the probe", filled.MemoryVersion)
+	}
+	blank := ResolveHostBinaries(LaunchConfig{UseMemory: true, MemoryVersion: "  "})
+	if blank.MemoryVersion != "2.4.0" {
+		t.Fatalf("MemoryVersion = %q; whitespace is an empty version", blank.MemoryVersion)
+	}
+	kept := ResolveHostBinaries(LaunchConfig{UseMemory: true, MemoryVersion: "1.2.3"})
+	if kept.MemoryVersion != "1.2.3" {
+		t.Fatalf("MemoryVersion = %q; a version the caller set must stay", kept.MemoryVersion)
+	}
+}
+
 func TestResolveHostBinariesKeepsPresetMemoryPath(t *testing.T) {
 	got := ResolveHostBinaries(LaunchConfig{
 		UseJail:          true,

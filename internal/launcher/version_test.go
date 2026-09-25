@@ -434,6 +434,77 @@ func TestStatExecutable(t *testing.T) {
 
 // The probe's default has to resolve the same path the installer writes to and
 // Environment() exports, or --doctor would report on a file nothing uses.
+func TestUpstreamReportDoesNotMarkAManagedRunnerBehindAnEqualPATHInstall(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":       "ai-jail 2.2.0",
+		"/bin/ai-memory":     "ai-memory 2.4.0",
+		"/managed/ai-memory": "ai-memory 2.4.0",
+	}, nil)
+	stubManagedRunner(t, "/managed/ai-memory")
+	stubExecutableStat(t, map[string]bool{"/managed/ai-memory": true})
+
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 3 {
+		t.Fatalf("report = %#v; want the managed row", report)
+	}
+	if report[2].Behind || report[2].BehindOf != "" {
+		t.Fatalf("managed = %#v; an equal PATH install is not ahead", report[2])
+	}
+}
+
+func resetMemoryVersionCache(t *testing.T) {
+	t.Helper()
+	memoryVersionCache.once = sync.Once{}
+	memoryVersionCache.value = ""
+	t.Cleanup(func() {
+		memoryVersionCache.once = sync.Once{}
+		memoryVersionCache.value = ""
+	})
+}
+
+func TestDetectMemoryVersionProbesAtMostOncePerProcess(t *testing.T) {
+	resetMemoryVersionCache(t)
+	calls := 0
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
+		calls++
+		return []byte("ai-memory 2.4.0"), nil
+	})
+	defer restore()
+
+	for i := 0; i < 3; i++ {
+		if got := DetectMemoryVersion(); got != "2.4.0" {
+			t.Fatalf("DetectMemoryVersion() = %q; want 2.4.0", got)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("probed %d times; the result is memoized for the process", calls)
+	}
+}
+
+func TestDetectMemoryVersionIgnoresAMissingBinary(t *testing.T) {
+	resetMemoryVersionCache(t)
+	originalLook, originalRun := lookPathCommand, runVersionCommand
+	lookPathCommand = func(string) (string, error) { return "", errors.New("missing") }
+	runVersionCommand = func(string) ([]byte, error) { return []byte("ai-memory 9.9.9"), nil }
+	t.Cleanup(func() { lookPathCommand, runVersionCommand = originalLook, originalRun })
+
+	if got := DetectMemoryVersion(); got != "" {
+		t.Fatalf("DetectMemoryVersion() = %q; a missing binary is not a version", got)
+	}
+}
+
+func TestDetectMemoryVersionIgnoresAFailedProbe(t *testing.T) {
+	resetMemoryVersionCache(t)
+	restore := stubJailProbe(t, func(string) ([]byte, error) {
+		return []byte("ai-memory 2.4.0"), errors.New("exit status 1")
+	})
+	defer restore()
+
+	if got := DetectMemoryVersion(); got != "" {
+		t.Fatalf("DetectMemoryVersion() = %q; a failed probe reports no version", got)
+	}
+}
+
 func TestManagedRunnerProbePathMatchesTheInstalledLocation(t *testing.T) {
 	got := managedRunnerProbePath()
 	if got != managedNativeRunnerPath("") {
