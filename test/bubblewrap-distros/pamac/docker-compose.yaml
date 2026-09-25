@@ -1,14 +1,13 @@
-# Root argv, the command the launcher runs when it is uid 0.
+# Normal-user argv: the launcher runs pamac through sudo -n.
 # The launcher picks pacman on this image (pacman blocks this row), so this
 # scenario only checks that the row's argv installs bwrap.
-# Image: built from manjarolinux/base (see Dockerfile). The image USER is
-# builder; sudo runs check.sh as root so the argv below still executes as uid 0.
-# Install: pamac install --no-confirm bubblewrap
+# Image: built from manjarolinux/base (see Dockerfile).
+# Install: sudo -n pamac install --no-confirm bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
     platform: linux/amd64
     build: .
-    entrypoint: ["sudo", "-n", "sh", "/check.sh"]
+    entrypoint: ["sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro
