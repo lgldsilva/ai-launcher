@@ -9,8 +9,12 @@ import (
 )
 
 // bubblewrapPackage is the distro package that provides bwrap. The name is
-// the same on the families this table covers.
-const bubblewrapPackage = "bubblewrap"
+// the same on the families this table covers. noConfirmFlag is the pacman
+// family switch that skips the install prompt.
+const (
+	bubblewrapPackage = "bubblewrap"
+	noConfirmFlag     = "--noconfirm"
+)
 
 // packageManager is one way to install bubblewrap. Earlier rows win. A row
 // is skipped when any command in BlockedBy is already on PATH, so an AUR
@@ -35,7 +39,7 @@ func bubblewrapManagers() []packageManager {
 		{Command: "dnf", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true},
 		{Command: "yum", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"dnf"}},
 		{Command: "microdnf", Args: []string{"install", "-y", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"dnf", "yum"}},
-		{Command: "pacman", Args: []string{"-S", "--noconfirm", bubblewrapPackage}, Sudo: true},
+		{Command: "pacman", Args: []string{"-S", noConfirmFlag, bubblewrapPackage}, Sudo: true},
 		{Command: "zypper", Args: []string{"--non-interactive", "install", bubblewrapPackage}, Sudo: true},
 		{Command: "apk", Args: []string{"add", "--no-interactive", bubblewrapPackage}, Sudo: true},
 		{Command: "xbps-install", Args: []string{"-y", bubblewrapPackage}, Sudo: true},
@@ -47,8 +51,8 @@ func bubblewrapManagers() []packageManager {
 		{Command: "nix", Args: []string{"profile", "install", "nixpkgs#bubblewrap"}},
 		{Command: "guix", Args: []string{"install", bubblewrapPackage}},
 		{Command: "pamac", Args: []string{"install", "--no-confirm", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"pacman"}},
-		{Command: "yay", Args: []string{"-S", "--noconfirm", bubblewrapPackage}, BlockedBy: []string{"pacman", "pamac"}},
-		{Command: "paru", Args: []string{"-S", "--noconfirm", bubblewrapPackage}, BlockedBy: []string{"pacman", "pamac", "yay"}},
+		{Command: "yay", Args: []string{"-S", noConfirmFlag, bubblewrapPackage}, BlockedBy: []string{"pacman", "pamac"}},
+		{Command: "paru", Args: []string{"-S", noConfirmFlag, bubblewrapPackage}, BlockedBy: []string{"pacman", "pamac", "yay"}},
 		{Command: "brew", Args: []string{"install", bubblewrapPackage}, BlockedBy: natives},
 	}
 }
