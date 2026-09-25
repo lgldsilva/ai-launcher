@@ -354,6 +354,7 @@ func TestValidatorRefusesLinuxJailWithoutBubblewrap(t *testing.T) {
 			return "", errors.New("missing")
 		},
 		Stat: func(string) (os.FileInfo, error) { return nil, nil },
+		Root: func() bool { return false },
 	}
 	issues := v.Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true})
 	if len(issues) != 1 || issues[0].Code != "bwrap-not-found" {
@@ -365,8 +366,15 @@ func TestValidatorRefusesLinuxJailWithoutBubblewrap(t *testing.T) {
 	if strings.Contains(issues[0].Message, "sudo") {
 		t.Fatalf("message = %q; a host without sudo must not be told to use it", issues[0].Message)
 	}
-	if !strings.Contains(issues[0].Message, "--install-system-deps") {
-		t.Fatalf("message = %q; want --install-system-deps", issues[0].Message)
+	// A normal user without sudo cannot let the launcher install the
+	// package, so the flag is not offered; a root shell is.
+	if !strings.Contains(issues[0].Message, "as root, run: ") || strings.Contains(issues[0].Message, "--install-system-deps") {
+		t.Fatalf("message = %q; want a root-shell hint and no --install-system-deps", issues[0].Message)
+	}
+	v.Root = func() bool { return true }
+	issues = v.Validate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseJail: true})
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "--install-system-deps") || strings.Contains(issues[0].Message, "as root") {
+		t.Fatalf("root issues = %#v; uid 0 can run the install, so the flag is offered", issues)
 	}
 	issues = v.Validate(LaunchConfig{
 		Agent:    config.Agent{Command: "claude"},

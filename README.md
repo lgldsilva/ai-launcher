@@ -469,10 +469,12 @@ On Linux, ai-jail needs the distro package `bubblewrap` (`bwrap`). The
 launcher does not install ai-jail itself from apt, dnf, or pacman. When
 `bwrap` is missing, `--install` prints the command for the first package
 manager it finds. `--install-system-deps` runs that command with `sudo -n`
-(no sudo for `nix` and `guix`). The order is `apt-get`, `dnf`, `yum`,
-`microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`,
-`emerge`, `slackpkg`, `opkg`, `nix`, `guix`, then `pamac`, `yay`, `paru`,
-and Linuxbrew only when no native manager is present. `apt-get` updates
+(no sudo for `nix` and `guix`, or when already root). A normal user on a
+host without `sudo` (for example `doas` on Alpine or Void) is told to run
+the command from a root shell instead; the launcher does not run it. The
+order is `apt-get`, `dnf`, `yum`, `microdnf`, `pacman`, `zypper`, `apk`,
+`xbps-install`, `eopkg`, `urpmi`, `emerge`, `slackpkg`, `opkg`, `nix`,
+`guix`, then `pamac`, `yay`, `paru`, and Linuxbrew only when no native manager is present. `apt-get` updates
 its index before installing, `xbps-install` syncs with `-S`, and `nix`
 enables `nix-command` and `flakes` for that command. macOS uses
 `sandbox-exec` and skips this step. A launch with the jail on and no

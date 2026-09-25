@@ -74,8 +74,9 @@ type BubblewrapPlan struct {
 // package. goos other than linux, a bwrap on PATH, or a set BWRAP_BIN all
 // produce an empty plan. bwrapBin is the value of BWRAP_BIN, not a lookup.
 // root is true when the process is uid 0: sudo is not used, because a
-// container image often has no sudo binary. sudo is also skipped when it is
-// not on PATH.
+// container image often has no sudo binary. A normal user on a host without
+// sudo (doas on Alpine or Void) gets no Argv: the manager would only fail on
+// permissions, so the plan names the command for a root shell instead.
 func ResolveBubblewrap(goos, bwrapBin string, root bool, lookPath func(string) (string, error)) BubblewrapPlan {
 	if goos != "linux" || strings.TrimSpace(bwrapBin) != "" || commandFound(lookPath, "bwrap") {
 		return BubblewrapPlan{}
@@ -84,7 +85,11 @@ func ResolveBubblewrap(goos, bwrapBin string, root bool, lookPath func(string) (
 	if !ok {
 		return BubblewrapPlan{Needed: true, Text: "install the bubblewrap package and ensure bwrap is on PATH"}
 	}
-	sudo := manager.Sudo && !root && commandFound(lookPath, "sudo")
+	elevate := manager.Sudo && !root
+	sudo := elevate && commandFound(lookPath, "sudo")
+	if elevate && !sudo {
+		return BubblewrapPlan{Needed: true, Text: "as root, run: " + manager.display(false)}
+	}
 	return BubblewrapPlan{
 		Needed: true,
 		Argv:   manager.execArgv(sudo),

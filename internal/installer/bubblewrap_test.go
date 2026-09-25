@@ -51,12 +51,25 @@ func TestResolveBubblewrapSkipsSudoForRootAndForAHostWithoutSudo(t *testing.T) {
 	if strings.Contains(strings.Join(asRoot.Argv, " "), "sudo") {
 		t.Fatalf("root argv = %v; sudo is not installed in a typical root container", asRoot.Argv)
 	}
-	noSudo := ResolveBubblewrap("linux", "", false, lookPathPresent(map[string]bool{"apt-get": true}))
-	if strings.Contains(strings.Join(noSudo.Argv, " "), "sudo") {
-		t.Fatalf("argv = %v; sudo is not on PATH", noSudo.Argv)
+	rootNoSudo := ResolveBubblewrap("linux", "", true, lookPathPresent(map[string]bool{"apt-get": true}))
+	if got := strings.Join(rootNoSudo.Argv, " "); got != "env DEBIAN_FRONTEND=noninteractive sh -c apt-get update && apt-get install -y bubblewrap" {
+		t.Fatalf("root argv = %q", got)
 	}
-	if got := strings.Join(noSudo.Argv, " "); got != "env DEBIAN_FRONTEND=noninteractive sh -c apt-get update && apt-get install -y bubblewrap" {
-		t.Fatalf("argv = %q", got)
+}
+
+// A normal user on a host with doas and no sudo cannot install a package by
+// running the manager directly. The plan runs nothing and says to use root.
+func TestResolveBubblewrapNamesARootShellForAUserWithoutSudo(t *testing.T) {
+	plan := ResolveBubblewrap("linux", "", false, lookPathPresent(map[string]bool{"apk": true}))
+	if !plan.Needed || plan.Argv != nil {
+		t.Fatalf("plan = %#v; want no argv for a user without sudo", plan)
+	}
+	if plan.Text != "as root, run: apk add --no-interactive bubblewrap" {
+		t.Fatalf("text = %q", plan.Text)
+	}
+	nix := ResolveBubblewrap("linux", "", false, lookPathPresent(map[string]bool{"nix": true}))
+	if nix.Argv == nil || nix.Argv[0] != "nix" {
+		t.Fatalf("nix plan = %#v; a per-user manager still runs without sudo", nix)
 	}
 }
 
@@ -101,7 +114,9 @@ func TestPropertyBubblewrapPlanPicksTheEarliestUnblockedManager(t *testing.T) {
 				present[manager.Command] = true
 			}
 		}
-		plan := ResolveBubblewrap("linux", "", false, lookPathPresent(present))
+		present["sudo"] = rapid.Bool().Draw(rt, "sudo")
+		root := rapid.Bool().Draw(rt, "root")
+		plan := ResolveBubblewrap("linux", "", root, lookPathPresent(present))
 		want, ok := firstUnblocked(managers, present)
 		if !ok {
 			if plan.Needed && plan.Argv != nil {
@@ -109,7 +124,14 @@ func TestPropertyBubblewrapPlanPicksTheEarliestUnblockedManager(t *testing.T) {
 			}
 			return
 		}
-		sudo := want.Sudo && present["sudo"]
+		elevate := want.Sudo && !root
+		if elevate && !present["sudo"] {
+			if plan.Argv != nil || !strings.HasPrefix(plan.Text, "as root, run: ") {
+				rt.Fatalf("plan = %#v; a user without sudo gets a root-shell hint, not an argv", plan)
+			}
+			return
+		}
+		sudo := elevate
 		if strings.Join(plan.Argv, " ") != strings.Join(want.execArgv(sudo), " ") {
 			rt.Fatalf("argv = %v; want %v", plan.Argv, want.execArgv(sudo))
 		}
