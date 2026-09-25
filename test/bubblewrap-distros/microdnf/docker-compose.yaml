@@ -4,6 +4,7 @@
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
+    platform: linux/amd64
     image: quay.io/fedora/fedora-minimal:41@sha256:c8f378f1927145aa7cf5c4c5044ba13fbfc0725aa61b626eb05caa73eea9b86a
     entrypoint: ["sh", "/check.sh"]
     volumes:

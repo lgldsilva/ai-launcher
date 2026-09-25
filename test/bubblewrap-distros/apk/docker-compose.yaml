@@ -4,6 +4,7 @@
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
+    platform: linux/amd64
     image: alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
     entrypoint: ["sh", "/check.sh"]
     volumes:

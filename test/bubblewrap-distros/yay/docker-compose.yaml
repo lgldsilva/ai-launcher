@@ -5,6 +5,7 @@
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
+    platform: linux/amd64
     build: .
     entrypoint: ["sh", "/check.sh"]
     volumes:

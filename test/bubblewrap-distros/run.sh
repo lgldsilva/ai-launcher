@@ -1,6 +1,7 @@
 #!/bin/bash
 # Run every distro compose file and record whether the launcher's root argv
-# installs bwrap. A non-zero status from one distro does not stop the others.
+# installs a bwrap that ai-jail would trust (root-owned or in /nix/store).
+# A non-zero status from one distro does not stop the others.
 # TIMEOUT bounds each distro. emerge, guix, yay, and paru get a longer cap.
 # PARALLEL is how many compose runs share the machine.
 set -u
@@ -67,7 +68,9 @@ run_one() {
     result="$name FAIL timeout"
   elif [ "$code" -ne 0 ]; then
     docker compose -f "$dir/docker-compose.yaml" -p "bwrap-$name" down --remove-orphans >>"$log" 2>&1 || true
-    if grep -q '^STATUS raw=ok' "$log"; then
+    if grep -q '^TRUST .*trusted=no' "$log"; then
+      result="$name FAIL untrusted $(grep '^TRUST ' "$log" | tail -n 1)"
+    elif grep -q '^STATUS raw=ok' "$log"; then
       result="$name FAIL after-raw"
     elif grep -q '^STATUS raw=fail' "$log"; then
       result="$name FAIL raw-and-refresh"
@@ -76,8 +79,9 @@ run_one() {
     fi
   else
     status=$(grep '^STATUS ' "$log" | tail -n 1)
+    trust=$(grep '^TRUST ' "$log" | tail -n 1)
     ver=$(grep -E 'bubblewrap [0-9]|bwrap [0-9]' "$log" | tail -n 1)
-    result="$name OK ${status:-no-status} ${ver:-no-version-line}"
+    result="$name OK ${status:-no-status} ${trust:-no-trust-line} ${ver:-no-version-line}"
   fi
   printf '%s\n' "$result" | tee "$out/$name.result"
 }

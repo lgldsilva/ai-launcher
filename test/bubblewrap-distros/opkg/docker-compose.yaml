@@ -4,6 +4,7 @@
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
+    platform: linux/amd64
     image: openwrt/rootfs:x86_64@sha256:3e444986d49c15ad0981afff4426daf2ee33f5467c08d0940c909157f6d4a29a
     entrypoint: ["sh", "/check.sh"]
     volumes:
