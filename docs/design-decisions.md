@@ -562,8 +562,15 @@ the executable behind /root.
   code.
 - **Own harness registry.** The catalog is local and per-machine; we neither
   publish nor consume a central registry.
-- **Package managers.** The installer talks only to GitHub Releases;
-  `npm`/`apt`/`brew` are out by decision.
+- **Package managers for the tools themselves.** ai-jail and ai-memory
+  still come from GitHub Releases with a SHA-256 check. The one exception
+  is Linux `bubblewrap`: ai-jail cannot sandbox without `bwrap`, and
+  `--install-system-deps` runs the distro package install (`apt-get`,
+  `dnf`, `yum`, `microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`,
+  `eopkg`, `urpmi`, `emerge`, `slackpkg`, `opkg`, `nix`, `guix`, and, only
+  when the native manager is absent, `pamac`, `yay`, `paru`, or Linuxbrew).
+  It does not install `ai-jail-bin` or `ai-memory-bin`. macOS does not need
+  it; the sandbox is `sandbox-exec`.
 - **`ai-memory install-instructions` in the install flow.** `--install`
   provisions binaries globally; `install-instructions` writes a routing block
   into `CLAUDE.md` / `AGENTS.md` **in the current checkout**. Folding a

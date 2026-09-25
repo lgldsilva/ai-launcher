@@ -13,6 +13,19 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Linux installs can fetch the bubblewrap package
+
+ai-jail's GitHub binary still needs `bwrap`. `--install` names the command
+for the first package manager on PATH. `--install-system-deps` runs it.
+The order is `apt-get`, `dnf`, `yum`, `microdnf`, `pacman`, `zypper`,
+`apk`, `xbps-install`, `eopkg`, `urpmi`, `emerge`, `slackpkg`, `opkg`,
+`nix`, `guix`, then `pamac`, `yay`, `paru`, or Linuxbrew. ai-jail and
+ai-memory themselves stay on the checksum-verified release. Without
+`bwrap`, a Linux jail launch fails preflight with `bwrap-not-found`.
+
+**What you need to do:** nothing on macOS. On Linux, install `bubblewrap`
+or pass `--install-system-deps` the next time you install ai-jail.
+
 ### Changed — the validated upstream range now includes ai-jail 2.2 and ai-memory 2.4
 
 `UntestedAIJailVersion` moves from `1.21.0` to `2.3.0` and

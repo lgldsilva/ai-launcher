@@ -43,6 +43,10 @@ type LaunchConfig struct {
 	// memory is off or the probe failed. Same rule as JailVersion: filled
 	// outside Build, read by it.
 	MemoryVersion string
+	// BwrapBin is the operator's BWRAP_BIN, when set. Empty means ai-jail
+	// looks up bwrap on PATH. A non-empty value means the package is already
+	// chosen and preflight does not ask for bubblewrap.
+	BwrapBin string
 	// MemoryAutowire keeps ai-memory's own hook install when the operator
 	// exported AI_MEMORY_RUN_AUTOWIRE=true. Otherwise a 2.3+ run is passed
 	// --no-autowire, because the launcher's --install already owns that step.

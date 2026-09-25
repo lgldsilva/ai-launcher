@@ -50,7 +50,7 @@ func TestValidatorAcceptsCompleteConfiguration(t *testing.T) {
 func TestValidatorDoesNotTieGpuToDocker(t *testing.T) {
 	v := Validator{
 		LookPath: func(command string) (string, error) {
-			if command == "claude" || command == "ai-jail" {
+			if command == "claude" || command == "ai-jail" || command == "bwrap" {
 				return "/bin/" + command, nil
 			}
 			return "", errors.New("missing")

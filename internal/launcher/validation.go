@@ -11,6 +11,7 @@ import (
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/container"
+	"github.com/lgldsilva/ai-launcher/internal/installer"
 )
 
 // Issue is a single validation problem with a stable machine-readable Code.
@@ -108,12 +109,11 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	onWindows := goos == config.PlatformWindows
 	issues = append(issues, agentIssues(cfg, lookPath)...)
 	if cfg.UseDocker {
 		issues = append(issues, dockerIssues(cfg, lookPath)...)
 	} else {
-		issues = append(issues, jailIssues(cfg, lookPath, onWindows)...)
+		issues = append(issues, jailIssues(cfg, lookPath, goos)...)
 	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
 	issues = append(issues, allowHostIssues(cfg)...)
@@ -287,15 +287,33 @@ func memoryHarnessIssues(cfg LaunchConfig) []Issue {
 	}}
 }
 
+// bubblewrapIssue reports a Linux jail that cannot find bwrap. The suggested
+// command is the first package manager on PATH. BWRAP_BIN counts as present.
+func bubblewrapIssue(goos, bwrapBin string, lookPath func(string) (string, error)) (Issue, bool) {
+	plan := installer.ResolveBubblewrap(goos, bwrapBin, lookPath)
+	if !plan.Needed {
+		return Issue{}, false
+	}
+	message := "ai-jail on Linux needs bwrap from the bubblewrap package"
+	if plan.Text != "" {
+		message += ": " + plan.Text
+	}
+	message += ". Ubuntu 24.04+ and Debian 13+ may also need the AppArmor exception in the ai-jail README"
+	return Issue{Code: "bwrap-not-found", Message: message}, true
+}
+
 // jailIssues checks the ai-jail dependency, degrading to warnings where the
 // jail cannot apply (Windows) or does not apply (jail disabled).
-func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), onWindows bool) []Issue {
+func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), goos string) []Issue {
 	if cfg.UseJail {
-		if onWindows {
+		if goos == config.PlatformWindows {
 			return []Issue{{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true}}
 		}
 		if _, err := lookPath(config.AIJailCommand); err != nil {
 			return []Issue{{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"}}
+		}
+		if issue, ok := bubblewrapIssue(goos, cfg.BwrapBin, lookPath); ok {
+			return []Issue{issue}
 		}
 		return nil
 	}

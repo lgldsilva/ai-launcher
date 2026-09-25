@@ -22,52 +22,50 @@ func (s *stringList) Set(value string) error {
 // operator's raw choice instead of collapsing it to the resolved bool.
 func boolPtr(value bool) *bool { return &value }
 
-// readable and the flag-to-config mapping can be applied as a unit.
 // cliOptions holds every command-line flag value in one place so run() stays
 // readable and the flag-to-config mapping can be applied as a unit.
-// readable and the flag-to-config mapping can be applied as a unit.
 type cliOptions struct {
-	mounts, rwMounts               stringList
-	params, stacks, services       stringList
-	agent, extraArgs               string
-	globalPath, localPath          string
-	addName, addPath               string
-	addCommand, addDescription     string
-	newWorkstream, workstream      string
-	workspace, project             string
-	projectDir                     string
-	profile, saveProfile           string
-	deleteProfile                  string
-	workstreamSearch               string
-	workstreamID                   string
-	searchLimit                    int
-	searchJSON                     bool
-	ssh, gh, docker, gpu           bool
-	display, pictures              bool
-	tailscale, systemdUser         bool
-	mise, worktree                 bool
-	noJail, sandbox                bool
-	dockerBackend                  bool
-	containerRuntime               string
-	containerContext               string
-	containerHostGateway           bool
-	noContainerHostGateway         bool
-	memory, noMemory               bool
-	containerMemory, containerCPUs string
-	containerPIDs                  int64
-	containerPorts                 stringList
-	containerServicePorts          stringList
-	containerNetwork               string
-	composeUpdate                  string
-	yolo, noYolo                   bool
-	fresh                          bool
-	dryRun, save, install, upgrade bool
-	listProfiles                   bool
-	continueSession                bool
-	showVersion, doctor            bool
-	noNetwork                      bool
-	noLocalConfig                  bool
-	noColor, highContrast          bool
+	mounts, rwMounts                                  stringList
+	params, stacks, services                          stringList
+	agent, extraArgs                                  string
+	globalPath, localPath                             string
+	addName, addPath                                  string
+	addCommand, addDescription                        string
+	newWorkstream, workstream                         string
+	workspace, project                                string
+	projectDir                                        string
+	profile, saveProfile                              string
+	deleteProfile                                     string
+	workstreamSearch                                  string
+	workstreamID                                      string
+	searchLimit                                       int
+	searchJSON                                        bool
+	ssh, gh, docker, gpu                              bool
+	display, pictures                                 bool
+	tailscale, systemdUser                            bool
+	mise, worktree                                    bool
+	noJail, sandbox                                   bool
+	dockerBackend                                     bool
+	containerRuntime                                  string
+	containerContext                                  string
+	containerHostGateway                              bool
+	noContainerHostGateway                            bool
+	memory, noMemory                                  bool
+	containerMemory, containerCPUs                    string
+	containerPIDs                                     int64
+	containerPorts                                    stringList
+	containerServicePorts                             stringList
+	containerNetwork                                  string
+	composeUpdate                                     string
+	yolo, noYolo                                      bool
+	fresh                                             bool
+	dryRun, save, install, upgrade, installSystemDeps bool
+	listProfiles                                      bool
+	continueSession                                   bool
+	showVersion, doctor                               bool
+	noNetwork                                         bool
+	noLocalConfig                                     bool
+	noColor, highContrast                             bool
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
@@ -112,6 +110,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.save, "save-only", false, "alias for --save")
 	flags.BoolVar(&o.install, "install", false, "install missing configured tools from GitHub releases and update stale ones")
 	flags.BoolVar(&o.upgrade, "upgrade", false, "force reinstall of configured tools from the latest GitHub release")
+	flags.BoolVar(&o.installSystemDeps, "install-system-deps", false, "on Linux, install the bubblewrap package with sudo when ai-jail needs bwrap")
 	flags.StringVar(&o.newWorkstream, "new", "", "start a new ai-memory workstream with this name")
 	flags.StringVar(&o.workstream, "workstream", "", "resume an existing ai-memory workstream by name")
 	flags.StringVar(&o.workspace, "workspace", "", "ai-memory workspace name (forwarded to ai-memory run)")

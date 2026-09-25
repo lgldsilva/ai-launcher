@@ -149,7 +149,7 @@ func (l *installLog) Close() error {
 // installed agents that declare an integration. The ai-memory auth token
 // from the global config is passed to ai-memory through the environment and
 // is never written to the install log.
-func InstallConfigured(global config.Global, selected string, home string, force bool, out, errOut io.Writer) error {
+func InstallConfigured(global config.Global, selected string, home string, force, systemDeps bool, out, errOut io.Writer) error {
 	trace, logErr := newInstallLog(home)
 	if logErr != nil {
 		warnf(errOut, "%v", logErr)
@@ -168,7 +168,7 @@ func InstallConfigured(global config.Global, selected string, home string, force
 	client := installer.New(home)
 	trace.Printf("ai-memory server URL=%q", global.MemoryServerURL)
 	streams := installStreams{out: out, errOut: errOut, trace: trace}
-	installedPaths, failures := installAllTargets(client, targets, selected, force, home, streams)
+	installedPaths, failures := installAllTargets(client, targets, selected, force, systemDeps, home, streams)
 
 	memoryPath := installedPaths[aiMemoryCommand]
 	if memoryPath == "" {
@@ -187,11 +187,11 @@ func InstallConfigured(global config.Global, selected string, home string, force
 
 // installAllTargets installs every target, collecting per-target failures and
 // the paths of the executables that were installed or found.
-func installAllTargets(client *installer.Installer, targets []installTarget, selected string, force bool, home string, streams installStreams) (map[string]string, []error) {
+func installAllTargets(client *installer.Installer, targets []installTarget, selected string, force, systemDeps bool, home string, streams installStreams) (map[string]string, []error) {
 	var failures []error
 	installedPaths := make(map[string]string, len(targets))
 	for _, target := range targets {
-		path, err := installOne(client, target, selected, force, home, streams)
+		path, err := installOne(client, target, selected, force, systemDeps, home, streams)
 		if err != nil {
 			failures = append(failures, err)
 			continue
@@ -234,7 +234,7 @@ func preferReleaseInstall(target installTarget) bool {
 // installOne installs a single target and returns the resulting executable
 // path. A target without a usable recipe is only a failure when it was
 // explicitly selected; otherwise it is reported as a warning.
-func installOne(client *installer.Installer, target installTarget, selected string, force bool, home string, streams installStreams) (string, error) {
+func installOne(client *installer.Installer, target installTarget, selected string, force, systemDeps bool, home string, streams installStreams) (string, error) {
 	trace := streams.trace
 	trace.Printf("target name=%q command=%q aliases=%v source=%t release=%t", target.Name, target.Command, target.Aliases, target.SourceURL != "", target.Release != nil)
 	if !preferReleaseInstall(target) {
@@ -248,6 +248,9 @@ func installOne(client *installer.Installer, target installTarget, selected stri
 	}
 	ctx, cancel := withInstallTimeout(context.Background())
 	defer cancel()
+	if target.Command == config.AIJailCommand {
+		client.EnsureBubblewrap(ctx, systemDeps, streams.out, streams.errOut)
+	}
 	result, err := client.Install(ctx, target.Name, target.Command, installPath, target.Release, force)
 	if err != nil && target.Path == "" && installPath != "" && errors.Is(err, os.ErrPermission) {
 		// A discovered system-wide binary may be readable but not writable by

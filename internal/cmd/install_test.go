@@ -98,7 +98,7 @@ func TestInstallLogNeverContainsTheAuthToken(t *testing.T) {
 	global.MemoryAuthToken = "s3cret-token"
 	// An empty selection fails fast but still exercises the install log path.
 	var out, errOut bytes.Buffer
-	err := InstallConfigured(config.Global{MemoryAuthToken: global.MemoryAuthToken}, "", home, false, &out, &errOut)
+	err := InstallConfigured(config.Global{MemoryAuthToken: global.MemoryAuthToken}, "", home, false, false, &out, &errOut)
 	if err == nil {
 		t.Fatal("InstallConfigured with no recipes should fail")
 	}
@@ -265,7 +265,7 @@ func TestInstallConfiguredInstallsNativeRunnerOnlyForAIMemory(t *testing.T) {
 		{Name: "Other", Command: "other-tool"},
 	}}
 	var out, errOut bytes.Buffer
-	if err := InstallConfigured(global, "", filepath.Join(dir, "home"), false, &out, &errOut); err != nil {
+	if err := InstallConfigured(global, "", filepath.Join(dir, "home"), false, false, &out, &errOut); err != nil {
 		t.Fatalf("InstallConfigured() error = %v", err)
 	}
 	if !reflect.DeepEqual(nativeCalls, []string{"ai-memory"}) {

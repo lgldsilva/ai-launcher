@@ -465,6 +465,17 @@ from the native `ai-memory-windows-x86_64.zip` asset. Install state lives in
 `~/.config/ai-launch/install-state.json` and the log in `install.log` (same
 directory, no tokens).
 
+On Linux, ai-jail needs the distro package `bubblewrap` (`bwrap`). The
+launcher does not install ai-jail itself from apt, dnf, or pacman. When
+`bwrap` is missing, `--install` prints the command for the first package
+manager it finds. `--install-system-deps` runs that command with `sudo -n`
+(no sudo for `nix` and `guix`). The order is `apt-get`, `dnf`, `yum`,
+`microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`,
+`emerge`, `slackpkg`, `opkg`, `nix`, `guix`, then `pamac`, `yay`, `paru`,
+and Linuxbrew only when no native manager is present. macOS uses
+`sandbox-exec` and skips this step. A launch with the jail on and no
+`bwrap` fails preflight with `bwrap-not-found`.
+
 ## Usage
 
 With no arguments, `ai-launcher` opens the interactive TUI. With any flag it
