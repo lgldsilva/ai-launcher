@@ -40,7 +40,7 @@ func resolveConfigPaths(opts *cliOptions, home string) {
 // config. handled is true when one of them ran.
 func runGlobalCommands(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) (bool, error) {
 	if opts.install || opts.upgrade {
-		return true, launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, out, errOut)
+		return true, launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, opts.installSystemDeps, out, errOut)
 	}
 	if opts.listProfiles {
 		listProfiles(global, out)

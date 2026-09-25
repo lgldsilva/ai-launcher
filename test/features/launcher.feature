@@ -685,6 +685,21 @@ Feature: Launcher command contract
       jail-unsupported-windows
       """
 
+  Scenario: Refuses a Linux jail when bubblewrap is missing
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      missing_commands: [bwrap]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      bwrap-not-found
+      """
+
   Scenario: Warns when jail options are set with the jail disabled
     Given a validation configuration
       """
