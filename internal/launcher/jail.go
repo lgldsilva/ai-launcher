@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
+
+// defaultAIMemoryServerURL is what `ai-memory run` calls when no server URL
+// is configured. ai-jail's filtered proxy answers that plain-HTTP POST with
+// 405, because it only accepts CONNECT.
+const defaultAIMemoryServerURL = "http://127.0.0.1:49374"
 
 // jailPermission maps a catalog permission id to the ai-jail capability it
 // enables. override names the config.JailFlags field that declares the same
@@ -192,6 +198,36 @@ func jailSupportsAllowHost(version string) bool {
 		return false
 	}
 	return compareVersions(version, config.MinAllowHostAIJailVersion) >= 0
+}
+
+// memoryServerEndpoint is the scheme and host ai-memory will call. An empty
+// configured URL is the upstream loopback default, not "no server".
+func memoryServerEndpoint(raw string) (scheme, host string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = defaultAIMemoryServerURL
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", ""
+	}
+	return strings.ToLower(parsed.Scheme), strings.ToLower(parsed.Hostname())
+}
+
+// allowHostCovers reports whether target is the allow-list entry or one of
+// its subdomains, matching ai-jail's --allow-host rule.
+func allowHostCovers(hosts []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		return false
+	}
+	for _, host := range hosts {
+		host = strings.ToLower(host)
+		if target == host || strings.HasSuffix(target, "."+host) {
+			return true
+		}
+	}
+	return false
 }
 
 // appendJailToggle emits the positive or negative form of one capability flag.

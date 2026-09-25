@@ -790,7 +790,7 @@ synonym for unset, so both forms are always emitted:
 | `deny_path_exceptions` | list | `--deny-path-except <PATH>` per entry |
 | `hide_dotdirs` | list | `--hide-dotdir <NAME>` per entry |
 | `allow_tcp_ports` | list of int | refused: ai-jail rejects `--allow-tcp-port` |
-| `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0 and when `network: true` |
+| `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0, with `network: true`, and with memory unless `memory_server_url` is https and that host is listed |
 
 ## Security
 

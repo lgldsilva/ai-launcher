@@ -109,7 +109,7 @@ const DefaultMemoryServerURL = ""
 // per-account wrapper uses run_harness: claude.
 var memoryRunHarnesses = []string{
 	"claude", "claude-code", "codex", "opencode", "open-code", "opencode2", "opencode-v2", "open-code2",
-	"pi", "crush", "omp", "oh-my-pi", "kimi", "kimi-code",
+	"pi", "crush", "omp", "oh-my-pi", "kimi", kimiCodeID,
 	"command-code", "commandcode", "cmdc", "cmd",
 	"kiro", "kiro-cli",
 	"grok", "grok-build",
@@ -130,6 +130,24 @@ func SupportsMemoryRunHarness(name string) bool {
 		}
 	}
 	return false
+}
+
+// memoryHarnessAddedIn23 are names `ai-memory run` did not accept at the
+// 1.25 floor. They were verified on 2.4.0 and are refused below 2.3 when the
+// installed version is known, so clap does not reject them inside the jail.
+var memoryHarnessAddedIn23 = map[string]struct{}{
+	"opencode2": {}, "opencode-v2": {}, "open-code2": {},
+	"claude-code": {}, "open-code": {}, "oh-my-pi": {},
+	kimiCodeID: {}, "grok-build": {},
+}
+
+// MemoryHarnessMinVersion is the first ai-memory that accepts name, or ""
+// when the 1.25 floor already did. Unknown names return "".
+func MemoryHarnessMinVersion(name string) string {
+	if _, ok := memoryHarnessAddedIn23[strings.TrimSpace(name)]; ok {
+		return MinNoAutowireAIMemoryVersion
+	}
+	return ""
 }
 
 // MinAIJailVersion and MinAIMemoryVersion pin the minimum upstream CLI

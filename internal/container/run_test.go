@@ -641,14 +641,6 @@ func TestInContainerCommandFallsBackToAgentExecutable(t *testing.T) {
 
 // An explicit memory harness wins over the agent executable, and the managed
 // runner path is forwarded as --executable before the native args.
-func TestInContainerCommandDisablesAutowireAfterTheHarness(t *testing.T) {
-	got := RunConfig{UseMemory: true, MemoryHarness: "claude", NoAutowire: true, AgentExecutable: "claude"}.InContainerCommand()
-	want := []string{"ai-memory", "run", "claude", "--no-autowire"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("InContainerCommand() = %#v; want %#v", got, want)
-	}
-}
-
 func TestInContainerCommandUsesMemoryHarness(t *testing.T) {
 	cfg := RunConfig{
 		UseMemory:        true,

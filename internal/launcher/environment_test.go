@@ -102,6 +102,21 @@ func TestEnvironmentDisablesAutowireAtAIMemory23(t *testing.T) {
 	t.Fatal("Environment() did not set AI_MEMORY_RUN_AUTOWIRE=false")
 }
 
+func TestEnvironmentKeepsAutowireWhenTheOperatorOptsIn(t *testing.T) {
+	cfg := LaunchConfig{
+		Agent:          config.Agent{Command: "claude"},
+		UseMemory:      true,
+		MemoryVersion:  "2.4.0",
+		MemoryAutowire: true,
+	}
+	for _, entry := range Environment(cfg) {
+		if entry == "AI_MEMORY_RUN_AUTOWIRE=true" {
+			return
+		}
+	}
+	t.Fatal("Environment() did not keep AI_MEMORY_RUN_AUTOWIRE=true")
+}
+
 func TestEnvironmentLeavesAutowireAloneBelowAIMemory23(t *testing.T) {
 	t.Setenv("AI_MEMORY_RUN_AUTOWIRE", "true")
 	cfg := LaunchConfig{

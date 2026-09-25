@@ -62,10 +62,8 @@ func Environment(cfg LaunchConfig) []string {
 	// configuration for the server URL only — restore the stripped inherited
 	// value by reading it from the original process environment after a
 	// non-empty config override is absent.
-	if serverURL := strings.TrimSpace(cfg.MemoryServerURL); serverURL != "" {
+	if serverURL := EffectiveMemoryServerURL(cfg.MemoryServerURL); serverURL != "" {
 		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", serverURL)
-	} else if inherited := strings.TrimSpace(os.Getenv("AI_MEMORY_SERVER_URL")); inherited != "" {
-		env = upsertEnv(env, "AI_MEMORY_SERVER_URL", inherited)
 	}
 	env = upsertEnv(env, "AI_MEMORY_AUTH_TOKEN", strings.TrimSpace(cfg.MemoryAuthToken))
 	// The ai-memory wrapper skips its own download/refresh logic (fragile
@@ -85,8 +83,11 @@ func Environment(cfg LaunchConfig) []string {
 	// ai-jail's parser, and a session resume still runs `ai-memory run`. The
 	// env var is the form that reaches both shapes. An older ai-memory ignores
 	// it; 2.3+ treats it as --no-autowire.
-	if MemoryDisablesAutowire(cfg.MemoryVersion) {
+	switch {
+	case disableMemoryAutowire(cfg):
 		env = upsertEnv(env, "AI_MEMORY_RUN_AUTOWIRE", "false")
+	case cfg.MemoryAutowire && MemoryDisablesAutowire(cfg.MemoryVersion):
+		env = upsertEnv(env, "AI_MEMORY_RUN_AUTOWIRE", "true")
 	}
 	return env
 }
@@ -190,6 +191,15 @@ func managedNativeRunnerPath(home string) string {
 		path += ".exe"
 	}
 	return path
+}
+
+// EffectiveMemoryServerURL is the origin ai-memory will call: the configured
+// value, or AI_MEMORY_SERVER_URL when the config leaves it empty.
+func EffectiveMemoryServerURL(configured string) string {
+	if value := strings.TrimSpace(configured); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv("AI_MEMORY_SERVER_URL"))
 }
 
 // upsertEnv replaces or appends a KEY=value entry, and removes the key when

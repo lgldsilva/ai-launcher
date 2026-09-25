@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
@@ -114,7 +115,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		Agent:                          inputs.status.Agent,
 		Executable:                     inputs.status.Path,
 		HomeDir:                        home,
-		MemoryServerURL:                inputs.global.MemoryServerURL,
+		MemoryServerURL:                launcher.EffectiveMemoryServerURL(inputs.global.MemoryServerURL),
+		MemoryAutowire:                 launcher.AutowireOptIn(os.Getenv("AI_MEMORY_RUN_AUTOWIRE")),
 		MemoryAuthToken:                inputs.global.MemoryAuthToken,
 		UseJail:                        inputs.local.Options.Jail && !inputs.local.Options.Docker,
 		UseDocker:                      inputs.local.Options.Docker,

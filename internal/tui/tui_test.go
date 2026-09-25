@@ -977,6 +977,12 @@ func TestModelEditsAllowHostsWhenTheJailIsOn(t *testing.T) {
 	if index < 0 {
 		t.Fatal("allow-hosts row missing while the jail is on")
 	}
+	off := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}})
+	for _, row := range off.advancedOptionRows() {
+		if row.kind == advancedAllowHosts {
+			t.Fatal("allow-hosts row is present while the jail is off")
+		}
+	}
 	model.cursor = len(model.optionRows()) + index
 	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = applyKey(t, model, runeKey("api.anthropic.com, github.com"))

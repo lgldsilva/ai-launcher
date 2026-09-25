@@ -266,6 +266,17 @@ func memoryHarnessIssues(cfg LaunchConfig) []Issue {
 	}
 	harness := memoryRunHarness(cfg.Agent)
 	if config.SupportsMemoryRunHarness(harness) {
+		if minVer := config.MemoryHarnessMinVersion(harness); minVer != "" {
+			version := strings.TrimSpace(cfg.MemoryVersion)
+			if version != "" && compareVersions(version, minVer) < 0 {
+				return []Issue{{
+					Code: "memory-harness-version",
+					Message: fmt.Sprintf(
+						"ai-memory %s does not accept harness %q (added in %s); upgrade ai-memory, or relaunch with --no-memory",
+						version, harness, minVer),
+				}}
+			}
+		}
 		return nil
 	}
 	return []Issue{{
@@ -354,7 +365,7 @@ func dockerIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Iss
 // allowHostIssues refuses an allow list the installed ai-jail cannot apply,
 // and a list that contradicts an explicit unrestricted network.
 func allowHostIssues(cfg LaunchConfig) []Issue {
-	if !cfg.UseJail || len(cfg.JailFlags.AllowHosts) == 0 {
+	if len(cfg.JailFlags.AllowHosts) == 0 {
 		return nil
 	}
 	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
@@ -365,6 +376,19 @@ func allowHostIssues(cfg LaunchConfig) []Issue {
 		}}
 	}
 	if len(hosts) == 0 {
+		return nil
+	}
+	if !cfg.UseJail {
+		// --no-jail already reports jail-options-without-jail for any set
+		// flag. Docker replaces the jail and never emits --allow-host, so
+		// the list would look like a network lock that is not applied.
+		if cfg.UseDocker {
+			return []Issue{{
+				Code:    "allow-host-without-jail",
+				Message: "jail_flags.allow_hosts has no effect on the container backend; the container keeps its own network",
+				Warning: true,
+			}}
+		}
 		return nil
 	}
 	if explicitNetworkOn(cfg) {
@@ -385,6 +409,38 @@ func allowHostIssues(cfg LaunchConfig) []Issue {
 			Message: fmt.Sprintf(
 				"jail_flags.allow_hosts needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove allow_hosts",
 				config.MinAllowHostAIJailVersion, seen),
+		}}
+	}
+	return allowHostMemoryIssues(cfg, hosts)
+}
+
+// allowHostMemoryIssues refuses filtered egress that cannot reach ai-memory.
+// The proxy ai-jail 2.2 installs is CONNECT-only and clears NO_PROXY, so a
+// plain-HTTP memory server — including the default 127.0.0.1:49374 — gets
+// 405 on POST /workstream/runs. An https server works only when its host is
+// on the allow list.
+func allowHostMemoryIssues(cfg LaunchConfig, hosts []string) []Issue {
+	if !cfg.UseMemory {
+		return nil
+	}
+	scheme, host := memoryServerEndpoint(cfg.MemoryServerURL)
+	if scheme != "https" || host == "" {
+		called := strings.TrimSpace(cfg.MemoryServerURL)
+		if called == "" {
+			called = defaultAIMemoryServerURL + " (ai-memory's default)"
+		}
+		return []Issue{{
+			Code: "allow-host-memory-needs-https",
+			Message: "jail_flags.allow_hosts installs a CONNECT-only proxy that answers plain HTTP with 405, " +
+				"so ai-memory cannot reach " + called + "; set memory_server_url to an https origin and add that host to allow_hosts, or drop allow_hosts",
+		}}
+	}
+	if !allowHostCovers(hosts, host) {
+		return []Issue{{
+			Code: "allow-host-omits-memory-server",
+			Message: fmt.Sprintf(
+				"memory server host %s is not covered by jail_flags.allow_hosts, so filtered egress would block ai-memory; add the host or drop allow_hosts",
+				host),
 		}}
 	}
 	return nil

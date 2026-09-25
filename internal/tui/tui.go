@@ -711,7 +711,7 @@ func (m *Model) advancedOptionRows() []advancedOptionRow {
 			name:  "Allow hosts",
 			kind:  advancedAllowHosts,
 			value: strings.Join(m.launch.JailFlags.AllowHosts, ", "),
-			hint:  "comma-separated hostnames; ai-jail >= 2.0, replaces open network",
+			hint:  "ai-jail >= 2.0; https memory host must be listed, plain HTTP gets 405",
 		})
 	}
 	return rows
