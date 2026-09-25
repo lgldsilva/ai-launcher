@@ -362,6 +362,12 @@ func TestValidatorRefusesLinuxJailWithoutBubblewrap(t *testing.T) {
 	if !strings.Contains(issues[0].Message, "apt-get install -y bubblewrap") {
 		t.Fatalf("message = %q; want the apt-get install command", issues[0].Message)
 	}
+	if strings.Contains(issues[0].Message, "sudo") {
+		t.Fatalf("message = %q; a host without sudo must not be told to use it", issues[0].Message)
+	}
+	if !strings.Contains(issues[0].Message, "--install-system-deps") {
+		t.Fatalf("message = %q; want --install-system-deps", issues[0].Message)
+	}
 	issues = v.Validate(LaunchConfig{
 		Agent:    config.Agent{Command: "claude"},
 		UseJail:  true,

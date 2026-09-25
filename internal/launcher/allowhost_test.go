@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -269,8 +270,50 @@ func TestLinuxJailTreatsBwrapBinAsPresent(t *testing.T) {
 }
 
 func TestLinuxJailNamesThePackageCommandWithoutSudoNonInteractive(t *testing.T) {
+	// Root is injected. The printed command differs for uid 0 and for a
+	// normal user, and neither form passes sudo -n.
+	user := bwrapNotFoundMessage(t, func() bool { return false })
+	if !strings.Contains(user, "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
+		t.Fatalf("message = %q; a normal user is told to run sudo", user)
+	}
+	if strings.Contains(user, "sudo -n") {
+		t.Fatalf("message = %q; the suggested command must be pasteable", user)
+	}
+	root := bwrapNotFoundMessage(t, func() bool { return true })
+	if strings.Contains(root, "sudo") {
+		t.Fatalf("message = %q; uid 0 runs the package manager directly", root)
+	}
+	if !strings.Contains(root, "env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap") {
+		t.Fatalf("message = %q; want the package command", root)
+	}
+	for _, message := range []string{user, root} {
+		if !strings.Contains(message, "--install-system-deps") {
+			t.Fatalf("message = %q; want the install flag", message)
+		}
+	}
+}
+
+// Root left unset still follows the process uid, so negating that comparison
+// changes the suggestion whenever sudo is on PATH.
+func TestLinuxJailBwrapMessageFollowsProcessUIDWhenRootUnset(t *testing.T) {
+	message := bwrapNotFoundMessage(t, nil)
+	suggestsSudo := strings.Contains(message, "sudo ")
+	if suggestsSudo == (os.Geteuid() == 0) {
+		t.Fatalf("uid %d message = %q; sudo in the suggestion must follow the process uid", os.Geteuid(), message)
+	}
+	if strings.Contains(message, "sudo -n") {
+		t.Fatalf("message = %q; the suggested command must be pasteable", message)
+	}
+	if !strings.Contains(message, "--install-system-deps") {
+		t.Fatalf("message = %q; want the install flag", message)
+	}
+}
+
+func bwrapNotFoundMessage(t *testing.T, root func() bool) string {
+	t.Helper()
 	issues := (&Validator{
 		GOOS: "linux",
+		Root: root,
 		LookPath: func(name string) (string, error) {
 			if name == "bwrap" {
 				return "", errors.New("missing")
@@ -282,12 +325,7 @@ func TestLinuxJailNamesThePackageCommandWithoutSudoNonInteractive(t *testing.T) 
 	if !ok {
 		t.Fatalf("issues = %#v; want bwrap-not-found", issues)
 	}
-	if !strings.Contains(issue.Message, "--install-system-deps") {
-		t.Fatalf("message = %q; want the install flag", issue.Message)
-	}
-	if strings.Contains(issue.Message, "sudo -n") {
-		t.Fatalf("message = %q; the suggested command must be pasteable", issue.Message)
-	}
+	return issue.Message
 }
 
 func linuxValidator() *Validator {

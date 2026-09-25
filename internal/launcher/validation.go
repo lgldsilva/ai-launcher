@@ -71,6 +71,11 @@ type Validator struct {
 	// Getwd overrides the process working directory used by jail/cwd checks;
 	// empty means os.Getwd.
 	Getwd func() (string, error)
+	// Root reports whether the process is uid 0. Nil uses os.Geteuid.
+	// A root host skips sudo in the bwrap-not-found suggestion, as does a
+	// host with no sudo binary. Tests set Root so that text does not depend
+	// on the uid running the suite.
+	Root func() bool
 	// GOOS overrides the platform used by platform-specific checks; empty
 	// means the runtime platform.
 	GOOS string
@@ -84,6 +89,15 @@ type Validator struct {
 // NewValidator returns a Validator backed by the real PATH and filesystem.
 func NewValidator() Validator {
 	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd}
+}
+
+// processIsRoot reports uid 0. A set Root wins, so tests can force either
+// answer; otherwise the real process uid is used.
+func (v Validator) processIsRoot() bool {
+	if v.Root != nil {
+		return v.Root()
+	}
+	return os.Geteuid() == 0
 }
 
 // WithPermissions returns a copy of v that reads platform metadata from the
@@ -113,7 +127,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	if cfg.UseDocker {
 		issues = append(issues, dockerIssues(cfg, lookPath)...)
 	} else {
-		issues = append(issues, jailIssues(cfg, lookPath, goos)...)
+		issues = append(issues, jailIssues(cfg, lookPath, goos, v.processIsRoot())...)
 	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
 	issues = append(issues, allowHostIssues(cfg)...)
@@ -288,9 +302,10 @@ func memoryHarnessIssues(cfg LaunchConfig) []Issue {
 }
 
 // bubblewrapIssue reports a Linux jail that cannot find bwrap. The suggested
-// command is the first package manager on PATH. BWRAP_BIN counts as present.
-func bubblewrapIssue(goos, bwrapBin string, lookPath func(string) (string, error)) (Issue, bool) {
-	plan := installer.ResolveBubblewrap(goos, bwrapBin, os.Geteuid() == 0, lookPath)
+// command is the first package manager on PATH. root skips sudo. BWRAP_BIN
+// counts as present.
+func bubblewrapIssue(goos, bwrapBin string, root bool, lookPath func(string) (string, error)) (Issue, bool) {
+	plan := installer.ResolveBubblewrap(goos, bwrapBin, root, lookPath)
 	if !plan.Needed {
 		return Issue{}, false
 	}
@@ -304,7 +319,7 @@ func bubblewrapIssue(goos, bwrapBin string, lookPath func(string) (string, error
 
 // jailIssues checks the ai-jail dependency, degrading to warnings where the
 // jail cannot apply (Windows) or does not apply (jail disabled).
-func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), goos string) []Issue {
+func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), goos string, root bool) []Issue {
 	if cfg.UseJail {
 		if goos == config.PlatformWindows {
 			return []Issue{{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true}}
@@ -312,7 +327,7 @@ func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), goos st
 		if _, err := lookPath(config.AIJailCommand); err != nil {
 			return []Issue{{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"}}
 		}
-		if issue, ok := bubblewrapIssue(goos, cfg.BwrapBin, lookPath); ok {
+		if issue, ok := bubblewrapIssue(goos, cfg.BwrapBin, root, lookPath); ok {
 			return []Issue{issue}
 		}
 		return nil
