@@ -589,11 +589,11 @@ the executable behind /root.
   policy decisions rather than pretending they are closed:
   [#17](https://github.com/lgldsilva/ai-launcher/issues/17) — a
   checkout-controlled `.ai-jail` symlink can change what ai-jail reads and
-  writes when config masking is disabled. The launcher already emits
-  `--no-hide-config` automatically for bwrap compatibility; for an unsaved
-  workspace file that is a security decision made by the repository, so the
-  trust gate now refuses the launch unless the operator passes
-  `--no-local-config` or saves the selection.
+  writes when config masking is disabled. Closed by upstream: ai-jail (since
+  1.18, the whole supported range) never reads a project `.ai-jail` through a
+  symlink, so the launcher no longer emits `--no-hide-config` for one nor asks
+  for consent — pre-flight reports `jail-project-config-symlink` and the launch
+  stops (see ARCHITECTURE, "Permission → jail argv").
   [#18](https://github.com/lgldsilva/ai-launcher/issues/18) — an authenticated
   ai-memory token could in principle resume or mutate a workstream under another
   workspace/project if the launcher forwards repository-selected scope fields.
