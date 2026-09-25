@@ -2,10 +2,11 @@
 # Solus publishes no container image. silkeh/solus is a community CI image;
 # its slim tag is used because the default tag already ships bwrap.
 # Image: silkeh/solus:slim@sha256:edd29df6815afd79f2083634a03eed72eb8ca058ae02d3695bffd9752f85ff1a
-# Install: eopkg install -y bubblewrap
+# Install: sh -c 'eopkg update-repo && eopkg install -y bubblewrap'
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
+    platform: linux/amd64
     image: silkeh/solus:slim@sha256:edd29df6815afd79f2083634a03eed72eb8ca058ae02d3695bffd9752f85ff1a
     entrypoint: ["sh", "/check.sh"]
     volumes:

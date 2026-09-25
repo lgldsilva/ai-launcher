@@ -18,8 +18,8 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 ai-jail's GitHub binary still needs `bwrap`. `--install` names the command
 for the first package manager on PATH. `--install-system-deps` runs it.
 The order is `apt-get`, `dnf`, `yum`, `microdnf`, `pacman`, `zypper`,
-`apk`, `xbps-install`, `eopkg`, `urpmi`, `emerge`, `slackpkg`, `opkg`,
-`nix`, `guix`, then `pamac`, `yay`, `paru`, or Linuxbrew. ai-jail and
+`apk`, `xbps-install`, `eopkg`, `urpmi`, `emerge`, `opkg`, `nix`, `guix`,
+then `pamac`, `yay`, or `paru`. ai-jail and
 ai-memory themselves stay on the checksum-verified release. Without
 `bwrap`, a Linux jail launch fails preflight with `bwrap-not-found`.
 
@@ -29,6 +29,21 @@ or pass `--install-system-deps` the next time you install ai-jail.
 `nix profile install` turns on `nix-command` and `flakes` for that one
 command. A default Nix install leaves both features off, so the profile
 command is rejected without them.
+
+### Changed — bubblewrap must be a bwrap ai-jail trusts
+
+ai-jail runs `bwrap` only when root owns it and neither group nor world can
+write it, or when it sits read-only in a root-owned `/nix/store`. The
+`bwrap-not-found` preflight now applies that rule instead of accepting any
+`bwrap` on PATH or any `BWRAP_BIN`, so it fails where ai-jail would have
+failed at launch. Linuxbrew and `slackpkg` left the install table:
+Linuxbrew's `bwrap` belongs to the brew user, and stock Slackware ships no
+`bubblewrap`. The `nix` row is skipped on a single-user store. `eopkg`
+refreshes its index first.
+
+**What you need to do:** if the preflight now names an untrusted `bwrap`,
+install the distro `bubblewrap` package (or, on Slackware, build it as root
+so root owns `/usr/bin/bwrap`), or point `BWRAP_BIN` at a root-owned copy.
 
 ### Changed — the validated upstream range now includes ai-jail 2.2 and ai-memory 2.4
 

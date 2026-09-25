@@ -76,6 +76,10 @@ type Validator struct {
 	// host with no sudo binary. Tests set Root so that text does not depend
 	// on the uid running the suite.
 	Root func() bool
+	// BwrapProbe stats bwrap candidates for ai-jail's ownership rule. Nil
+	// counts any bwrap on PATH and any BWRAP_BIN as usable, so a Validator
+	// literal in a test never reads the host's /usr/bin/bwrap.
+	BwrapProbe installer.BwrapProbe
 	// GOOS overrides the platform used by platform-specific checks; empty
 	// means the runtime platform.
 	GOOS string
@@ -88,7 +92,7 @@ type Validator struct {
 
 // NewValidator returns a Validator backed by the real PATH and filesystem.
 func NewValidator() Validator {
-	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd}
+	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd, BwrapProbe: installer.StatBwrap}
 }
 
 // processIsRoot reports uid 0. A set Root wins, so tests can force either
@@ -127,7 +131,13 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	if cfg.UseDocker {
 		issues = append(issues, dockerIssues(cfg, lookPath)...)
 	} else {
-		issues = append(issues, jailIssues(cfg, lookPath, goos, v.processIsRoot())...)
+		issues = append(issues, jailIssues(cfg, lookPath, installer.BwrapHost{
+			GOOS:     goos,
+			BwrapBin: cfg.BwrapBin,
+			Root:     v.processIsRoot(),
+			LookPath: lookPath,
+			Probe:    v.BwrapProbe,
+		})...)
 	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
 	issues = append(issues, allowHostIssues(cfg)...)
@@ -301,17 +311,20 @@ func memoryHarnessIssues(cfg LaunchConfig) []Issue {
 	}}
 }
 
-// bubblewrapIssue reports a Linux jail that cannot find bwrap. The suggested
-// command is the first package manager on PATH. root skips sudo. BWRAP_BIN
-// counts as present. --install-system-deps is only suggested when the plan
-// has a command the launcher can run; otherwise the flag would print the
-// same hint again.
-func bubblewrapIssue(goos, bwrapBin string, root bool, lookPath func(string) (string, error)) (Issue, bool) {
-	plan := installer.ResolveBubblewrap(goos, bwrapBin, root, lookPath)
+// bubblewrapIssue reports a Linux jail with no bwrap that ai-jail would run.
+// A bwrap on PATH or in BWRAP_BIN counts only when ai-jail's ownership rule
+// accepts it. The suggested command is the first package manager on PATH.
+// --install-system-deps is only suggested when the plan has a command the
+// launcher can run; otherwise the flag would print the same hint again.
+func bubblewrapIssue(host installer.BwrapHost) (Issue, bool) {
+	plan := installer.ResolveBubblewrap(host)
 	if !plan.Needed {
 		return Issue{}, false
 	}
 	message := "ai-jail on Linux needs bwrap from the bubblewrap package"
+	if plan.Untrusted != "" {
+		message = installer.UntrustedBwrapReason(plan.Untrusted) + ". Install the distro bubblewrap package"
+	}
 	if plan.Argv != nil {
 		message += ". Run `ai-launcher --install --agent ai-jail --install-system-deps`, or: " + plan.Text
 	} else {
@@ -323,15 +336,15 @@ func bubblewrapIssue(goos, bwrapBin string, root bool, lookPath func(string) (st
 
 // jailIssues checks the ai-jail dependency, degrading to warnings where the
 // jail cannot apply (Windows) or does not apply (jail disabled).
-func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), goos string, root bool) []Issue {
+func jailIssues(cfg LaunchConfig, lookPath func(string) (string, error), host installer.BwrapHost) []Issue {
 	if cfg.UseJail {
-		if goos == config.PlatformWindows {
+		if host.GOOS == config.PlatformWindows {
 			return []Issue{{Code: "jail-unsupported-windows", Message: "ai-jail is not supported on Windows; the sandbox and jail-only options are ignored", Warning: true}}
 		}
 		if _, err := lookPath(config.AIJailCommand); err != nil {
 			return []Issue{{Code: "jail-not-found", Message: "ai-jail is required when sandboxing is enabled"}}
 		}
-		if issue, ok := bubblewrapIssue(goos, cfg.BwrapBin, root, lookPath); ok {
+		if issue, ok := bubblewrapIssue(host); ok {
 			return []Issue{issue}
 		}
 		return nil

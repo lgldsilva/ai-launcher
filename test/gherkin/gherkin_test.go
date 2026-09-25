@@ -15,6 +15,7 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/lgldsilva/ai-launcher/internal/config"
 	"github.com/lgldsilva/ai-launcher/internal/container"
+	"github.com/lgldsilva/ai-launcher/internal/installer"
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
@@ -72,6 +73,7 @@ type launchSpec struct {
 	ParamValues       map[string]string `yaml:"param_values"`
 	Args              []string          `yaml:"args"`
 	Missing           []string          `yaml:"missing_commands"`
+	Untrusted         []string          `yaml:"untrusted_commands"`
 }
 
 func TestGherkinLauncherContract(t *testing.T) {
@@ -131,6 +133,7 @@ func runValidationScenario(t *testing.T, scenario featureScenario) bool {
 		}
 		return "/test/bin/" + command, nil
 	}
+	validator.BwrapProbe = fakeBwrapProbe(spec.Untrusted)
 	issues := validator.Validate(toLaunchConfig(spec))
 	expected, ok := scenario.step("Then issue codes equal")
 	if !ok {
@@ -650,4 +653,26 @@ func nonEmptyLines(doc string) []string {
 func Example_featureSyntax() {
 	fmt.Println("Feature scenarios use Given/When/Then with triple-quoted YAML and argv blocks.")
 	// Output: Feature scenarios use Given/When/Then with triple-quoted YAML and argv blocks.
+}
+
+// fakeBwrapProbe stands in for the filesystem ai-jail checks. Every command
+// the scenario's PATH provides is a root-owned 0755 file; one listed in
+// untrusted belongs to uid 1000, which ai-jail refuses. Nothing else exists,
+// so the host's own /usr/bin/bwrap never decides a scenario.
+func fakeBwrapProbe(untrusted []string) installer.BwrapProbe {
+	refused := make(map[string]bool, len(untrusted))
+	for _, command := range untrusted {
+		refused[command] = true
+	}
+	return func(path string) (installer.BwrapFile, error) {
+		name, ok := strings.CutPrefix(path, "/test/bin/")
+		if !ok {
+			return installer.BwrapFile{}, os.ErrNotExist
+		}
+		file := installer.BwrapFile{Path: path, Mode: 0o755}
+		if refused[name] {
+			file.UID = 1000
+		}
+		return file, nil
+	}
 }
