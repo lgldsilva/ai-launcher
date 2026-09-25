@@ -61,6 +61,10 @@ type Installer struct {
 	// reason: after a vendor installer runs, the executable may land somewhere
 	// other than the configured target.
 	LookPath func(name string) (string, error)
+	// BwrapProbe stats a bwrap candidate for ai-jail's ownership rule. Nil
+	// counts any bwrap on PATH as usable, which is what tests that do not
+	// model the filesystem get.
+	BwrapProbe BwrapProbe
 }
 
 // Result reports the outcome of an install attempt: Status is one of
@@ -122,6 +126,7 @@ func New(homeDir string) *Installer {
 		CurrentDir: mustCurrentDir(),
 		Run:        runCombinedOutput,
 		LookPath:   exec.LookPath,
+		BwrapProbe: StatBwrap,
 	}
 }
 

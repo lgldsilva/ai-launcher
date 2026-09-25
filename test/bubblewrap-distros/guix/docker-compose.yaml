@@ -1,10 +1,17 @@
 # Root argv, the command the launcher runs when it is uid 0.
-# Image: guix/guix:latest
+# Guix publishes no container image. metacall/guix is a CI image whose
+# /entry-point.sh starts guix-daemon and then runs the command; a Guix host
+# already has that daemon, so starting it is setup, not part of the argv.
+# privileged: Docker's default seccomp blocks the daemon's personality()
+# call (ADDR_NO_RANDOMIZE), which a Guix host allows.
+# Image: metacall/guix:v20260910@sha256:285d4a7ffca20a781de60064381c9c065a9543b866f2ab64ae00565dac33c0f9
 # Install: guix install bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
-    image: guix/guix:latest
-    entrypoint: ["sh", "/check.sh"]
+    image: metacall/guix:v20260910@sha256:285d4a7ffca20a781de60064381c9c065a9543b866f2ab64ae00565dac33c0f9
+    platform: linux/amd64
+    privileged: true
+    entrypoint: ["/entry-point.sh", "sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro

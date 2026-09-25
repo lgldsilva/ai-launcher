@@ -567,10 +567,14 @@ the executable behind /root.
   is Linux `bubblewrap`: ai-jail cannot sandbox without `bwrap`, and
   `--install-system-deps` runs the distro package install (`apt-get`,
   `dnf`, `yum`, `microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`,
-  `eopkg`, `urpmi`, `emerge`, `slackpkg`, `opkg`, `nix`, `guix`, and, only
-  when the native manager is absent, `pamac`, `yay`, `paru`, or Linuxbrew).
-  `apt-get` refreshes its index first, `xbps-install` passes `-S`, and
-  `nix` enables `nix-command` and `flakes` for that command. It does not
+  `eopkg`, `urpmi`, `emerge`, `nix`, `guix`, and, only when
+  `pacman` is absent, `pamac`, `yay`, or `paru`). `apt-get` and `eopkg`
+  refresh their index first, `xbps-install` passes `-S`, and `nix` enables
+  `nix-command` and `flakes` for that command. A row is only worth having
+  if ai-jail will run the `bwrap` it installs: ai-jail accepts a root-owned
+  file or a read-only one in a protected `/nix/store`, so Linuxbrew (owned
+  by the brew user) is not a row, `nix` is skipped on a single-user store,
+  and the preflight checks ownership rather than just PATH. It does not
   install `ai-jail-bin` or `ai-memory-bin`. macOS does not need it; the
   sandbox is `sandbox-exec`.
 - **`ai-memory install-instructions` in the install flow.** `--install`

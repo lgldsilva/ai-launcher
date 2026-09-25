@@ -467,16 +467,25 @@ directory, no tokens).
 
 On Linux, ai-jail needs the distro package `bubblewrap` (`bwrap`). The
 launcher does not install ai-jail itself from apt, dnf, or pacman. When
-`bwrap` is missing, `--install` prints the command for the first package
-manager it finds. `--install-system-deps` runs that command with `sudo -n`
-(no sudo for `nix` and `guix`). The order is `apt-get`, `dnf`, `yum`,
-`microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`,
-`emerge`, `slackpkg`, `opkg`, `nix`, `guix`, then `pamac`, `yay`, `paru`,
-and Linuxbrew only when no native manager is present. `apt-get` updates
-its index before installing, `xbps-install` syncs with `-S`, and `nix`
-enables `nix-command` and `flakes` for that command. macOS uses
-`sandbox-exec` and skips this step. A launch with the jail on and no
-`bwrap` fails preflight with `bwrap-not-found`.
+ai-jail has no `bwrap` it trusts, `--install` prints the command for the
+first package manager it finds. `--install-system-deps` runs that command
+with `sudo -n` (no sudo for `nix` and `guix`, or when already root). A
+normal user on a host without `sudo` (for example `doas` on Alpine or Void)
+is told to run the command from a root shell instead; the launcher does
+not run it. The order is `apt-get`, `dnf`, `yum`, `microdnf`, `pacman`,
+`zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`, `emerge`, `nix`, `guix`,
+then `pamac`, `yay`, and `paru` only when `pacman` is absent.
+`apt-get` and `eopkg` refresh their index before installing,
+`xbps-install` syncs with `-S`, and `nix` enables `nix-command` and
+`flakes` for that command; `nix` is skipped on a single-user store.
+
+ai-jail runs a `bwrap` only when it is owned by root and not group- or
+world-writable, or sits read-only in a root-owned `/nix/store`. It looks at
+`BWRAP_BIN`, then `/usr/bin/bwrap` and the other fixed paths, then PATH.
+The preflight applies the same rule, so a `bwrap` from Linuxbrew or a
+single-user Nix store does not count, and a `BWRAP_BIN` that fails the rule
+is ignored. macOS uses `sandbox-exec` and skips this step. A launch with the
+jail on and no trusted `bwrap` fails preflight with `bwrap-not-found`.
 
 ## Usage
 

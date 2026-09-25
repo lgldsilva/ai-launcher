@@ -700,6 +700,21 @@ Feature: Launcher command contract
       bwrap-not-found
       """
 
+  Scenario: Refuses a Linux jail whose only bwrap ai-jail would not trust
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      untrusted_commands: [bwrap]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      bwrap-not-found
+      """
+
   Scenario: Warns when jail options are set with the jail disabled
     Given a validation configuration
       """

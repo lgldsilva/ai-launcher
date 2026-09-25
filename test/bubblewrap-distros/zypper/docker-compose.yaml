@@ -1,10 +1,11 @@
 # Root argv, the command the launcher runs when it is uid 0.
-# Image: opensuse/tumbleweed:latest
+# Image: opensuse/tumbleweed:latest@sha256:007fde2c1e6b3de48681c765b3d6905d4e59d2f7a26f4585ec49dd11305c3fe7
 # Install: zypper --non-interactive install bubblewrap
 # The script is check.sh: Compose word-splits a string command and interpolates $.
 services:
   check:
-    image: opensuse/tumbleweed:latest
+    platform: linux/amd64
+    image: opensuse/tumbleweed:latest@sha256:007fde2c1e6b3de48681c765b3d6905d4e59d2f7a26f4585ec49dd11305c3fe7
     entrypoint: ["sh", "/check.sh"]
     volumes:
       - ./check.sh:/check.sh:ro
