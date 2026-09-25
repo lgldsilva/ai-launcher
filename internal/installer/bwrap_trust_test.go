@@ -134,13 +134,13 @@ func TestResolveBubblewrapSkipsNixOnAnUnprotectedStore(t *testing.T) {
 	}
 }
 
-func TestBubblewrapTableDropsBrewAndSlackpkg(t *testing.T) {
+func TestBubblewrapTableDropsManagersWithoutAUsableBwrap(t *testing.T) {
 	for _, manager := range bubblewrapManagers() {
-		if manager.Command == "brew" || manager.Command == "slackpkg" {
+		if manager.Command == "brew" || manager.Command == "slackpkg" || manager.Command == "opkg" {
 			t.Fatalf("%s is back in the table", manager.Command)
 		}
 	}
-	plan := resolve("linux", "", true, lookPathPresent(map[string]bool{"brew": true, "slackpkg": true}))
+	plan := resolve("linux", "", true, lookPathPresent(map[string]bool{"brew": true, "slackpkg": true, "opkg": true}))
 	if plan.Argv != nil {
 		t.Fatalf("argv = %v; neither manager yields a bwrap ai-jail runs", plan.Argv)
 	}

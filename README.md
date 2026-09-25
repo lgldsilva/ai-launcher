@@ -473,8 +473,8 @@ with `sudo -n` (no sudo for `nix` and `guix`, or when already root). A
 normal user on a host without `sudo` (for example `doas` on Alpine or Void)
 is told to run the command from a root shell instead; the launcher does
 not run it. The order is `apt-get`, `dnf`, `yum`, `microdnf`, `pacman`,
-`zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`, `emerge`, `opkg`, `nix`,
-`guix`, then `pamac`, `yay`, and `paru` only when `pacman` is absent.
+`zypper`, `apk`, `xbps-install`, `eopkg`, `urpmi`, `emerge`, `nix`, `guix`,
+then `pamac`, `yay`, and `paru` only when `pacman` is absent.
 `apt-get` and `eopkg` refresh their index before installing,
 `xbps-install` syncs with `-S`, and `nix` enables `nix-command` and
 `flakes` for that command; `nix` is skipped on a single-user store.

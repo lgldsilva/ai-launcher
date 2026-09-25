@@ -567,7 +567,7 @@ the executable behind /root.
   is Linux `bubblewrap`: ai-jail cannot sandbox without `bwrap`, and
   `--install-system-deps` runs the distro package install (`apt-get`,
   `dnf`, `yum`, `microdnf`, `pacman`, `zypper`, `apk`, `xbps-install`,
-  `eopkg`, `urpmi`, `emerge`, `opkg`, `nix`, `guix`, and, only when
+  `eopkg`, `urpmi`, `emerge`, `nix`, `guix`, and, only when
   `pacman` is absent, `pamac`, `yay`, or `paru`). `apt-get` and `eopkg`
   refresh their index first, `xbps-install` passes `-S`, and `nix` enables
   `nix-command` and `flakes` for that command. A row is only worth having

@@ -36,7 +36,8 @@ type packageManager struct {
 // bubblewrapManagers is the detection order. The binary of ai-jail itself
 // stays on the GitHub release path; this list only installs bwrap. Linuxbrew
 // is absent because its bwrap belongs to the brew user, which ai-jail
-// refuses; slackpkg is absent because stock Slackware has no bubblewrap.
+// refuses; slackpkg and opkg are absent because stock Slackware and the
+// OpenWrt feeds have no bubblewrap package.
 func bubblewrapManagers() []packageManager {
 	return []packageManager{
 		{Command: "apt-get", Script: "apt-get update && apt-get install -y " + bubblewrapPackage, Env: []string{"DEBIAN_FRONTEND=noninteractive"}, Sudo: true},
@@ -50,7 +51,6 @@ func bubblewrapManagers() []packageManager {
 		{Command: "eopkg", Script: "eopkg update-repo && eopkg install -y " + bubblewrapPackage, Sudo: true},
 		{Command: "urpmi", Args: []string{"--auto", bubblewrapPackage}, Sudo: true},
 		{Command: "emerge", Args: []string{"--ask=n", "sys-apps/bubblewrap"}, Sudo: true},
-		{Command: "opkg", Args: []string{"install", bubblewrapPackage}, Sudo: true},
 		{Command: "nix", Args: []string{"--extra-experimental-features", "nix-command flakes", "profile", "install", "nixpkgs#bubblewrap"}, NixStore: true},
 		{Command: "guix", Args: []string{"install", bubblewrapPackage}},
 		{Command: "pamac", Args: []string{"install", "--no-confirm", bubblewrapPackage}, Sudo: true, BlockedBy: []string{"pacman"}},
