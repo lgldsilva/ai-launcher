@@ -4,10 +4,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-yaml"
 
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -178,10 +181,13 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 	}
 
 	// F3 — jail_flags: non-zero flags weaken the sandbox posture and require
-	// explicit operator consent via profile or save. No per-flag CLI toggle
-	// exists yet; the opt-in is saving or selecting a profile.
-	if trust.optionsRaw && !trust.jailFlags.IsZero() {
-		return errors.New("local config sets options.jail_flags without operator save or profile; profiles and --save are needed to accept custom jail behaviour")
+	// explicit operator consent. Most of them have no per-flag CLI toggle, so
+	// the opt-in is --save (the same rule as container_dependencies) or a
+	// profile. --save used to be named here without being checked, which left a
+	// hand-edited file with jail_flags no way back to trusted from the CLI.
+	if trust.optionsRaw && !trust.jailFlags.IsZero() && !flagsWasSet(flags, "save") {
+		return errors.New("local config sets options.jail_flags without operator consent; " +
+			"review them and run with --save to accept, or move them to a trusted profile")
 	}
 
 	// F6 — yolo / extra_args: dangerous options require explicit consent.
@@ -403,4 +409,23 @@ func globalRequiresJail(global config.Global) bool {
 		}
 	}
 	return true
+}
+
+// announceAcceptedJailFlags prints the jail_flags an explicit --save is about
+// to accept from an untrusted local file. --save is the consent, so the
+// operator must see what the consent covers: without this, blessing a cloned
+// repository's file would weaken the sandbox without the values ever being
+// shown.
+func announceAcceptedJailFlags(w io.Writer, flags *flag.FlagSet, trust localTrust, savedLocally bool) {
+	if savedLocally || !trust.optionsRaw || trust.jailFlags.IsZero() || !flagsWasSet(flags, "save") {
+		return
+	}
+	rendered, err := yaml.Marshal(trust.jailFlags)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "ai-launcher: --save accepts these options.jail_flags from the local config:\n")
+	for _, line := range strings.Split(strings.TrimRight(string(rendered), "\n"), "\n") {
+		_, _ = fmt.Fprintf(w, "  %s\n", line)
+	}
 }

@@ -251,9 +251,11 @@ func resolveLaunchInputs(flags *flag.FlagSet, opts *cliOptions, global config.Gl
 	}
 	status, resolved := resolveAgentSelection(catalogue, opts.agent, local)
 	trust := localTrustFrom(catalogue, opts.agent, rawLocal, appliedProfile, opts.noLocalConfig)
-	if err := enforceLocalConfigTrust(flags, global, trust, config.LocalConfigTrusted(global, opts.localPath), interactiveTUI); err != nil {
+	savedLocally := config.LocalConfigTrusted(global, opts.localPath)
+	if err := enforceLocalConfigTrust(flags, global, trust, savedLocally, interactiveTUI); err != nil {
 		return resolvedLaunchInputs{}, err
 	}
+	announceAcceptedJailFlags(flags.Output(), flags, trust, savedLocally)
 	permissions := resolvePermissions(flags, opts, local, catalogue)
 	mounts, err := opts.applyToLocal(flags, &local, global.DefaultMounts)
 	if err != nil {
