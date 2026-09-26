@@ -279,10 +279,14 @@ func TestSymlinkAutoMountsSkippedWithoutJail(t *testing.T) {
 	}
 }
 
-func TestSymlinkedProjectJailConfigDisablesHideConfig(t *testing.T) {
+// ai-jail never reads a project .ai-jail through a symlink, so the launcher
+// stops the launch in pre-flight and names the file, instead of passing an argv
+// ai-jail will refuse inside the PTY. No consent flag or saved selection can
+// make that launch work, so none is asked for; --no-jail is the way out.
+func TestSymlinkedProjectJailConfigFailsPreflight(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
-	target := filepath.Join(dir, "ai-jail.toml")
+	target := filepath.Join(t.TempDir(), "ai-jail.toml")
 	if err := os.WriteFile(target, []byte("# jail config\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -290,27 +294,53 @@ func TestSymlinkedProjectJailConfigDisablesHideConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	restore := chdir(t, dir)
+	defer restore()
 	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
-	// A checkout-controlled .ai-jail symlink is refused by the trust boundary
-	// unless the selection was saved by the operator (provenance), so save first.
-	local, err := config.LoadLocal(localPath)
-	if err != nil {
-		t.Fatalf("LoadLocal() error = %v", err)
+
+	out, errOut, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err == nil || !strings.Contains(err.Error(), "pre-flight") {
+		t.Fatalf("run() error = %v; want a pre-flight failure", err)
 	}
-	if err := saveLocalSelection(globalPath, true, localPath, local, launcher.LaunchConfig{
-		Agent:     config.Agent{Command: "custom-cli"},
-		UseJail:   true,
-		UseMemory: false,
-	}); err != nil {
-		t.Fatalf("saveLocalSelection() error = %v", err)
+	if !strings.Contains(errOut, "jail-project-config-symlink") || !strings.Contains(errOut, ".ai-jail") {
+		t.Fatalf("stderr = %q; want the jail-project-config-symlink issue naming .ai-jail", errOut)
 	}
-	out, err := runDryRun(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
-	restore()
-	if err != nil {
-		t.Fatalf("run() error = %v", err)
+	if strings.Contains(out, "hide-config") || strings.Contains(errOut, "hide-config") {
+		t.Fatalf("stdout = %q, stderr = %q; config masking must no longer be toggled for a symlink", out, errOut)
 	}
-	if !strings.Contains(out, "--no-hide-config") {
-		t.Fatalf("dry-run = %q; want --no-hide-config for a symlinked .ai-jail", out)
+
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--no-jail", "--dry-run"); err != nil {
+		t.Fatalf("run(--no-jail) error = %v; the jail-only check must not block an unjailed launch", err)
+	}
+}
+
+// Launching from $HOME with a dotfile-managed ~/.ai-jail symlink is the
+// reported case: that file is then both the global and the project config.
+func TestHomeAsJailProjectFailsPreflight(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	target := filepath.Join(home, ".config", "ai-jail-config", "ai-jail.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("# jail config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(home, ".ai-jail")); err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, home)
+	defer restore()
+	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
+
+	_, errOut, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err == nil {
+		t.Fatal("run() = nil; launching from $HOME with a symlinked ~/.ai-jail must fail pre-flight")
+	}
+	if !strings.Contains(errOut, "jail-home-as-project") {
+		t.Fatalf("stderr = %q; want the jail-home-as-project issue", errOut)
+	}
+	if strings.Contains(errOut, "jail-project-config-symlink") {
+		t.Fatalf("stderr = %q; the home case must be reported once, not twice", errOut)
 	}
 }
 
@@ -329,45 +359,6 @@ func TestRealProjectJailConfigKeepsHideConfig(t *testing.T) {
 	}
 	if strings.Contains(out, "hide-config") {
 		t.Fatalf("dry-run = %q; a real .ai-jail file keeps the ai-jail default mask", out)
-	}
-}
-
-// Disabling the project's config mask because .ai-jail is a symlink is a
-// policy downgrade: it must be announced, naming the file and the effect,
-// not applied silently. Saved selections are trusted, so the warning path is
-// reached after recording provenance.
-func TestSymlinkedProjectJailConfigWarnsWhenDisablingHideConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	target := filepath.Join(dir, "ai-jail.toml")
-	if err := os.WriteFile(target, []byte("# jail config\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(dir, ".ai-jail")); err != nil {
-		t.Fatal(err)
-	}
-	restore := chdir(t, dir)
-	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
-	local, err := config.LoadLocal(localPath)
-	if err != nil {
-		t.Fatalf("LoadLocal() error = %v", err)
-	}
-	if err := saveLocalSelection(globalPath, true, localPath, local, launcher.LaunchConfig{
-		Agent:     config.Agent{Command: "custom-cli"},
-		UseJail:   true,
-		UseMemory: false,
-	}); err != nil {
-		t.Fatalf("saveLocalSelection() error = %v", err)
-	}
-	var out, errOut bytes.Buffer
-	err = run([]string{"--config", globalPath, "--local-config", localPath, "--dry-run"}, strings.NewReader(""), &out, &errOut)
-	restore()
-	if err != nil {
-		t.Fatalf("run() error = %v", err)
-	}
-	warning := errOut.String()
-	if !strings.Contains(warning, ".ai-jail") || !strings.Contains(warning, "hide-config") {
-		t.Fatalf("stderr = %q; want a warning naming .ai-jail and hide-config", warning)
 	}
 }
 
