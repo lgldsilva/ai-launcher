@@ -71,13 +71,13 @@ func TestJailConfigSymlinkHomeAsProject(t *testing.T) {
 // through a symlinked parent is still the same file.
 func TestJailConfigSymlinkHomeAsProjectThroughSymlinkedParent(t *testing.T) {
 	root := t.TempDir()
-	real := filepath.Join(root, "real")
+	realPath := filepath.Join(root, "real")
 	writeRegular(t, filepath.Join(root, "outside.toml"))
-	symlink(t, filepath.Join(root, "outside.toml"), filepath.Join(real, "home", ".ai-jail"))
-	symlink(t, real, filepath.Join(root, "alias"))
+	symlink(t, filepath.Join(root, "outside.toml"), filepath.Join(realPath, "home", ".ai-jail"))
+	symlink(t, realPath, filepath.Join(root, "alias"))
 
 	issues := jailConfigSymlinkIssues(LaunchConfig{UseJail: true},
-		fixedDir(filepath.Join(root, "alias", "home")), fixedDir(filepath.Join(real, "home")))
+		fixedDir(filepath.Join(root, "alias", "home")), fixedDir(filepath.Join(realPath, "home")))
 	requireSingleFatal(t, issues, "jail-home-as-project")
 }
 
