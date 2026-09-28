@@ -338,6 +338,33 @@ func TestLocalConfigJailFlagsRequireSaveOrProfile(t *testing.T) {
 	}
 }
 
+// --save is the consent the refusal names, so it must actually accept the
+// jail_flags: a hand-edited file (hash no longer recorded) otherwise has no way
+// back to trusted from the CLI. The accepted values are printed, and once saved
+// the file launches without further consent.
+func TestLocalConfigJailFlagsAcceptedBySave(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  jail_flags:\n    hide_config: false\n    seccomp: false\n")
+
+	_, stderr, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--save")
+	if err != nil {
+		t.Fatalf("run(--save) error = %v; --save must accept jail_flags", err)
+	}
+	for _, want := range []string{"options.jail_flags", "hide_config: false", "seccomp: false"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q; want the accepted jail_flags listed (%q)", stderr, want)
+		}
+	}
+
+	_, stderr, err = runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err != nil {
+		t.Fatalf("run(--dry-run) after --save error = %v; the saved file must be trusted", err)
+	}
+	if strings.Contains(stderr, "accepts these options.jail_flags") {
+		t.Errorf("stderr = %q; a trusted file must not re-announce its jail_flags", stderr)
+	}
+}
+
 // yolo from local config is refused unless --yolo.
 func TestLocalConfigYoloRequiresFlag(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t,

@@ -4,10 +4,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-yaml"
 
 	"github.com/lgldsilva/ai-launcher/internal/catalog"
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -177,43 +180,12 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 		return err
 	}
 
-	// F3 — jail_flags: non-zero flags weaken the sandbox posture and require
-	// explicit operator consent via profile or save. No per-flag CLI toggle
-	// exists yet; the opt-in is saving or selecting a profile.
-	if trust.optionsRaw && !trust.jailFlags.IsZero() {
-		return errors.New("local config sets options.jail_flags without operator save or profile; profiles and --save are needed to accept custom jail behaviour")
+	if err := enforceJailFlagsConsent(flags, trust); err != nil {
+		return err
 	}
-
-	// F6 — yolo / extra_args: dangerous options require explicit consent.
-	if trust.optionsRaw && trust.yolo && !flagsWasSet(flags, "yolo") {
-		return errors.New("local config sets options.yolo: true; run with --yolo or save the selection to accept")
+	if err := enforceHarnessOptionConsent(flags, trust); err != nil {
+		return err
 	}
-	if trust.optionsRaw && len(trust.extraArgs) > 0 {
-		if !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
-			return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")
-		}
-	}
-
-	// param_values: catalog-declared harness flags, filled in by the file.
-	//
-	// Narrower than extra_args — a value can only land behind a flag the
-	// catalog already declares, so a repository cannot invent an argument. It
-	// can still choose one: `model` picks what the agent runs as, and a param
-	// declared `takes_value: false` is a bare flag the file turns on, which is
-	// why pre-flight already warns `catalog-flag-param` about those. Choosing
-	// the model and the flags of the process about to read the checkout is an
-	// operator decision, so it takes the same opt-in as everything else here.
-	if trust.optionsRaw && len(trust.paramValues) > 0 && !flagsWasSet(flags, "param") {
-		names := make([]string, 0, len(trust.paramValues))
-		for name := range trust.paramValues {
-			names = append(names, name)
-		}
-		sort.Strings(names) // map order is random; the message must not be
-		return fmt.Errorf("local config sets options.param_values (%s) without --param; "+
-			"pass --param name=value to accept explicitly, or save the selection",
-			strings.Join(names, ", "))
-	}
-
 	if err := enforceMemoryScopeConsent(flags, trust); err != nil {
 		return err
 	}
@@ -278,6 +250,57 @@ func enforceMountConsent(trust localTrust) error {
 		if reason := launcher.DeniedMount(path); reason != nil {
 			return fmt.Errorf("local config mount %q is refused — %s; save the selection or use --mount to accept explicitly", path, reason.Reason)
 		}
+	}
+	return nil
+}
+
+// enforceJailFlagsConsent (F3) refuses an unsaved local config with non-zero
+// jail_flags: they weaken the sandbox posture and require explicit operator
+// consent. Most of them have no per-flag CLI toggle, so the opt-in is --save
+// (the same rule as container_dependencies) or a profile. --save used to be
+// named in the refusal without being checked, which left a hand-edited file
+// with jail_flags no way back to trusted from the CLI. announceAcceptedJailFlags
+// is the other half of that consent: it shows what --save is accepting.
+func enforceJailFlagsConsent(flags *flag.FlagSet, trust localTrust) error {
+	if trust.optionsRaw && !trust.jailFlags.IsZero() && !flagsWasSet(flags, "save") {
+		return errors.New("local config sets options.jail_flags without operator consent; " +
+			"review them and run with --save to accept, or move them to a trusted profile")
+	}
+	return nil
+}
+
+// enforceHarnessOptionConsent refuses an unsaved local config that decides how
+// the harness process itself runs: yolo, extra_args (F6) and param_values.
+// Each takes the CLI flag that repeats the same choice as its opt-in.
+func enforceHarnessOptionConsent(flags *flag.FlagSet, trust localTrust) error {
+	if !trust.optionsRaw {
+		return nil
+	}
+	if trust.yolo && !flagsWasSet(flags, "yolo") {
+		return errors.New("local config sets options.yolo: true; run with --yolo or save the selection to accept")
+	}
+	if len(trust.extraArgs) > 0 && !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
+		return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")
+	}
+
+	// param_values: catalog-declared harness flags, filled in by the file.
+	//
+	// Narrower than extra_args — a value can only land behind a flag the
+	// catalog already declares, so a repository cannot invent an argument. It
+	// can still choose one: `model` picks what the agent runs as, and a param
+	// declared `takes_value: false` is a bare flag the file turns on, which is
+	// why pre-flight already warns `catalog-flag-param` about those. Choosing
+	// the model and the flags of the process about to read the checkout is an
+	// operator decision, so it takes the same opt-in as everything else here.
+	if len(trust.paramValues) > 0 && !flagsWasSet(flags, "param") {
+		names := make([]string, 0, len(trust.paramValues))
+		for name := range trust.paramValues {
+			names = append(names, name)
+		}
+		sort.Strings(names) // map order is random; the message must not be
+		return fmt.Errorf("local config sets options.param_values (%s) without --param; "+
+			"pass --param name=value to accept explicitly, or save the selection",
+			strings.Join(names, ", "))
 	}
 	return nil
 }
@@ -379,4 +402,23 @@ func globalRequiresJail(global config.Global) bool {
 		}
 	}
 	return true
+}
+
+// announceAcceptedJailFlags prints the jail_flags an explicit --save is about
+// to accept from an untrusted local file. --save is the consent, so the
+// operator must see what the consent covers: without this, blessing a cloned
+// repository's file would weaken the sandbox without the values ever being
+// shown.
+func announceAcceptedJailFlags(w io.Writer, flags *flag.FlagSet, trust localTrust, savedLocally bool) {
+	if savedLocally || !trust.optionsRaw || trust.jailFlags.IsZero() || !flagsWasSet(flags, "save") {
+		return
+	}
+	rendered, err := yaml.Marshal(trust.jailFlags)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "ai-launcher: --save accepts these options.jail_flags from the local config:\n")
+	for _, line := range strings.Split(strings.TrimRight(string(rendered), "\n"), "\n") {
+		_, _ = fmt.Fprintf(w, "  %s\n", line)
+	}
 }

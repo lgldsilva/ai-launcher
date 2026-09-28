@@ -767,7 +767,7 @@ refuses, naming the explicit opt-in:
 | Set `options.yolo: true` | CLI: refused; pass `--yolo`. Bare TUI: shown as the `--yolo` option for review before `r` |
 | List `options.extra_args` | Refused. Pass `--args "<args>"` to accept it |
 | Set `options.param_values` (model selection, catalog flags) | Refused. Pass `--param name=value` to accept it |
-| Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: save the selection or select a profile |
+| Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: run `--save` (it lists the flags it accepts) or select a profile |
 
 What you type on the command line stays fully trusted: the boundary is around
 the file, not around you. The bare `ai-launcher` invocation is the interactive
