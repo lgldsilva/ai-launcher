@@ -370,63 +370,6 @@ func TestLocalConfigExtraArgsRequiresFlag(t *testing.T) {
 	}
 }
 
-// A checkout-controlled .ai-jail symlink changes what ai-jail reads and writes
-// when config masking is disabled. The launcher detects it and refuses the
-// launch unless the operator explicitly bypasses the local file.
-func TestLocalConfigSymlinkedProjectJailRequiresExplicitConsent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	target := filepath.Join(dir, "ai-jail.toml")
-	if err := os.WriteFile(target, []byte("# jail config\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(dir, ".ai-jail")); err != nil {
-		t.Fatal(err)
-	}
-	restore := chdir(t, dir)
-	defer restore()
-
-	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
-	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
-	if err == nil {
-		t.Fatal("run() = nil; symlinked .ai-jail must be refused without explicit consent")
-	}
-	if !strings.Contains(err.Error(), ".ai-jail") || !strings.Contains(err.Error(), "symlink") {
-		t.Errorf("error = %v; want refusal naming .ai-jail and symlink", err)
-	}
-
-	// --no-local-config is the explicit opt-out that bypasses the checkout file.
-	// --agent is required because DefaultLocal() picks the built-in "claude"
-	// agent when no workspace file owns the selection, and "claude" is not in
-	// the test PATH.
-	_, _, err = runCapture(t, "--config", globalPath, "--local-config", localPath,
-		"--no-local-config", "--no-jail", "--agent", "custom-cli", "--dry-run")
-	if err != nil {
-		t.Fatalf("run() error = %v; --no-local-config must bypass symlink refusal", err)
-	}
-}
-
-// A broken .ai-jail symlink also disables masking and must be refused rather
-// than launching into an undefined config path.
-func TestLocalConfigBrokenProjectJailSymlinkRequiresExplicitConsent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, ".ai-jail")); err != nil {
-		t.Fatal(err)
-	}
-	restore := chdir(t, dir)
-	defer restore()
-
-	globalPath, localPath, _ := writeTestConfigs(t, "agent: custom-cli\noptions:\n  jail: true\n  memory: false\n")
-	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
-	if err == nil {
-		t.Fatal("run() = nil; broken .ai-jail symlink must be refused")
-	}
-	if !strings.Contains(err.Error(), "broken symlink") {
-		t.Errorf("error = %v; want broken symlink refusal", err)
-	}
-}
-
 // A materialized Dockerfile must remain inside the checkout. A symlink could
 // redirect generation or a later build to an operator-unexpected path, so
 // container mode refuses it before probing or invoking the runtime.

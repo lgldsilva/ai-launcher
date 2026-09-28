@@ -104,47 +104,15 @@ func saveLocalSelectionOptions(globalPath string, save, keepOptions bool, path s
 	return config.RecordTrustedLocalConfig(globalPath, result.Path)
 }
 
-// projectJailConfigSymlink reports whether the working directory's .ai-jail
-// entry is a symlink and, if so, where it resolves. A checkout-controlled
-// symlink here can change what ai-jail reads and writes when config masking is
-// disabled, so the trust boundary needs to see it before the launch proceeds.
-func projectJailConfigSymlink() (link, target string, ok bool) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", "", false
-	}
-	link = filepath.Join(wd, ".ai-jail")
-	info, err := os.Lstat(link)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		return "", "", false
-	}
-	target, err = filepath.EvalSymlinks(link)
-	if err != nil {
-		return link, "", true
-	}
-	return link, target, true
-}
-
-// symlinkedProjectJailConfig returns a pointer to false when the working
-// directory's .ai-jail file is a symlink, nil otherwise. ai-jail's default
-// --hide-config masks <project>/.ai-jail with a bind mount, which bwrap
-// cannot create over a symlink ("Can't create file ... No such file or
-// directory"), so the mask must be disabled for that project.
-func symlinkedProjectJailConfig() *bool {
-	_, _, ok := projectJailConfigSymlink()
-	if !ok {
-		return nil
-	}
-	disable := false
-	return &disable
-}
-
 // applyJailAutoDetection adds the mounts and flags the launcher infers from the
 // host, announcing each one. ai-jail recreates home dotfile symlinks inside the
 // sandbox without their targets, so the resolved targets are mounted to keep
-// them resolving; bwrap cannot mask a symlinked .ai-jail, so config masking is
-// turned off for such a project. Both are automatic, which is exactly why they
-// are printed: a silent widening of the sandbox is one an operator will trust.
+// them resolving. The mounts are automatic, which is exactly why they are
+// printed: a silent widening of the sandbox is one an operator will trust.
+//
+// A symlinked .ai-jail is not handled here: ai-jail refuses to read one as the
+// project config, so pre-flight reports it (jailConfigSymlinkIssues) instead
+// of the launcher trying to work around it.
 func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Writer) launcher.LaunchConfig {
 	auto, refused := launcher.HomeSymlinkMounts(home)
 	for _, entry := range refused {
@@ -158,13 +126,6 @@ func applyJailAutoDetection(cfg launcher.LaunchConfig, home string, errOut io.Wr
 		_, _ = fmt.Fprintf(errOut, "ai-launcher: auto-mounting %s (%s), required by %s\n", mount.Path, mount.Mode, cfg.Agent.Command)
 	}
 	cfg.Mounts = launcher.MergeAutoMounts(cfg.Mounts, append(auto, required...))
-	if cfg.JailFlags.HideConfig != nil {
-		return cfg
-	}
-	if hide := symlinkedProjectJailConfig(); hide != nil {
-		warnf(errOut, ".ai-jail in this project is a symlink; ai-jail config masking is disabled for this launch (--no-hide-config)")
-		cfg.JailFlags.HideConfig = hide
-	}
 	return cfg
 }
 

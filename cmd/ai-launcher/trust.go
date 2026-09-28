@@ -217,9 +217,6 @@ func enforceLocalConfigTrust(flags *flag.FlagSet, global config.Global, trust lo
 	if err := enforceMemoryScopeConsent(flags, trust); err != nil {
 		return err
 	}
-	if err := enforceProjectJailSymlinkConsent(trust, savedLocally); err != nil {
-		return err
-	}
 
 	return nil
 }
@@ -305,27 +302,6 @@ func enforceMemoryScopeConsent(flags *flag.FlagSet, trust localTrust) error {
 			trust.project, trust.project)
 	}
 	return nil
-}
-
-// enforceProjectJailSymlinkConsent refuses when the project has a symlinked
-// .ai-jail file. A checkout-controlled symlink changes what ai-jail reads and
-// writes when config masking is disabled, so it must not happen without
-// operator consent. When the local file is ignored entirely the symlink is not
-// attributed to repository input, hence the check is gated on trust.optionsRaw.
-func enforceProjectJailSymlinkConsent(trust localTrust, savedLocally bool) error {
-	if savedLocally || !trust.optionsRaw {
-		return nil
-	}
-	link, target, ok := projectJailConfigSymlink()
-	if !ok {
-		return nil
-	}
-	if target == "" {
-		return fmt.Errorf("%s is a broken symlink; ai-jail config masking cannot be disabled safely. "+
-			"Remove the symlink, launch with --no-local-config, or save the selection", link)
-	}
-	return fmt.Errorf("%s is a symlink to %s; ai-jail config masking would be disabled for this launch. "+
-		"Pass --no-local-config, or save the selection to accept", link, target)
 }
 
 // enforceDockerfileSymlink refuses a checkout-controlled Dockerfile symlink

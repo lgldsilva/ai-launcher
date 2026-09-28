@@ -542,10 +542,24 @@ on is a distinct state from leaving unset, so neither form is ever suppressed:
 `allow_hosts` (ai-jail >= 2.0, one `--allow-host` per entry, and the launch
 emits `--no-network` instead of `--network`), and
 `status_bar_style` (`dark`/`light`/`pastel`, emitted as `--status-bar=STYLE`;
-when set it suppresses both boolean `--status-bar` forms). When unset,
-`hide_config` is auto-disabled for projects whose `.ai-jail` is a symlink
-(bwrap cannot mask a symlink). `save_config` has no such launcher-side
-handling — it only forwards ai-jail's write toggle.
+when set it suppresses both boolean `--status-bar` forms). `hide_config` and
+`save_config` only forward ai-jail's toggles; the launcher never flips them on
+its own.
+
+A symlinked `.ai-jail` is a pre-flight error, not something the launcher works
+around. ai-jail never reads a project `.ai-jail` through a symlink, and it
+reads a symlinked global `~/.ai-jail` only when the resolved target lies outside
+the project directory. Pre-flight (`internal/launcher/jailconfig.go`) predicts
+both refusals so they surface before the PTY starts:
+
+| Code | When |
+| --- | --- |
+| `jail-home-as-project` | Launched from `$HOME` with a symlinked `~/.ai-jail`: the file is then both the global and the project config |
+| `jail-project-config-symlink` | The working directory's `.ai-jail` is a symlink |
+| `jail-global-config-inside-project` | `~/.ai-jail` is a symlink whose target lies inside the working directory |
+
+A regular `~/.ai-jail` is fine from `$HOME`. The checks apply only when ai-jail
+runs (jail on, container backend off).
 
 ## Upstream version compatibility
 

@@ -71,6 +71,9 @@ type Validator struct {
 	// Getwd overrides the process working directory used by jail/cwd checks;
 	// empty means os.Getwd.
 	Getwd func() (string, error)
+	// Home overrides the home directory used to locate the global ai-jail
+	// config; nil skips the symlinked-config checks, as a nil Getwd does.
+	Home func() (string, error)
 	// Root reports whether the process is uid 0. Nil uses os.Geteuid.
 	// A root host skips sudo in the bwrap-not-found suggestion, as does a
 	// host with no sudo binary. Tests set Root so that text does not depend
@@ -92,7 +95,7 @@ type Validator struct {
 
 // NewValidator returns a Validator backed by the real PATH and filesystem.
 func NewValidator() Validator {
-	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd, BwrapProbe: installer.StatBwrap}
+	return Validator{LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd, Home: os.UserHomeDir, BwrapProbe: installer.StatBwrap}
 }
 
 // processIsRoot reports uid 0. A set Root wins, so tests can force either
@@ -148,6 +151,9 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 		// Advisory only — ai-jail works on macOS; the friction is ai-memory
 		// canonicalizing a /Volumes cwd *inside* the sandbox.
 		issues = append(issues, jailMemoryVolumeIssues(cfg, v.Getwd, goos)...)
+	}
+	if !cfg.UseDocker {
+		issues = append(issues, jailConfigSymlinkIssues(cfg, v.Getwd, v.Home)...)
 	}
 	if cfg.UseMemory {
 		if _, err := lookPath(aiMemoryCommand); err != nil {
