@@ -432,7 +432,7 @@ releases, sent as a Bearer header and never logged).
 
 ### go install
 
-Prerequisite: Go 1.25+ (the toolchain declared in `go.mod`).
+Prerequisite: Go 1.26+ (the toolchain declared in `go.mod`).
 
 ```bash
 go install github.com/lgldsilva/ai-launcher/cmd/ai-launcher@latest

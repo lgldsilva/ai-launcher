@@ -82,8 +82,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # goreleaser v2.13.0 requires go >= 1.25.4; go.mod pins 1.25.0.
-          go-version: "1.25.4"
+          go-version-file: go.mod
           cache: true
       - name: ShellCheck + shfmt + goreleaser check
         run: |
@@ -101,10 +100,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # gosec v2.28.0 requires go >= 1.25.8; go.mod pins 1.25.0 and
-          # setup-go sets GOTOOLCHAIN=local, so `go run` cannot fetch a newer
-          # toolchain by itself. Same shape as the dist job's goreleaser pin.
-          go-version: "1.25.8"
+          go-version-file: go.mod
           cache: true
       - name: gosec
         run: make sec-static
@@ -116,13 +112,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # golang/govulncheck-action installs govulncheck@latest. v1.8.0
-          # requires go >= 1.26.0, and setup-go sets GOTOOLCHAIN=local, so that
-          # install cannot run on the 1.25 line. The Makefile pin (v1.6.0)
-          # builds here. Keep the patched 1.25.13 toolchain: scanning with the
-          # go.mod minimum (1.25.0) reports stdlib CVEs that 1.25.13 already
-          # fixed, which are not vulnerabilities in this module.
-          go-version: "1.25.13"
+          # go.mod pins a patched toolchain (not a bare minor), so the stdlib
+          # govulncheck scans is the one release.yml ships. Bump it with the
+          # next Go patch release when govulncheck reports a stdlib CVE.
+          go-version-file: go.mod
           cache: true
       - name: govulncheck
         run: make sec-vuln
