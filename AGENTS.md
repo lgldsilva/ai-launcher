@@ -107,10 +107,10 @@ govet, revive, staticcheck…).
 
 ## Cursor Cloud specific instructions
 
-The environment install reads the `go` line in `go.mod` and puts that
+The environment install reads the version in `go.mod` and puts that
 toolchain on `/usr/local/bin/go`, ahead of the image's Go 1.22 at
 `/usr/bin/go`. The wrapper sets `GOTOOLCHAIN=local` so a newer patch is not
-downloaded over the version CI installs from `go.mod`.
+downloaded over the version in `go.mod`.
 
 `make test` requires the `docker` CLI on `PATH`. Container-backend preflight
 fails with `docker-not-found` when it is missing. The Docker daemon is
