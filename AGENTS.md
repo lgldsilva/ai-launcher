@@ -107,10 +107,10 @@ govet, revive, staticcheck…).
 
 ## Cursor Cloud specific instructions
 
-The base image ships Go 1.22. `go.mod` requires Go 1.26.8, and
-`GOTOOLCHAIN=auto` downloads that toolchain into the module cache on the
-first `go` command in this repo. The environment install runs
-`go mod download`, so `make build` and `make test` use 1.26.8.
+`go.mod` pins Go 1.26.8. The environment install puts that exact toolchain
+on `/usr/local/bin/go` (ahead of the image's Go 1.22 at `/usr/bin/go`).
+Leaving the image Go first is wrong: `GOTOOLCHAIN=auto` on Go 1.22 downloads
+a newer 1.26 patch than the one CI installs from `go.mod`.
 
 `make test` requires the `docker` CLI on `PATH`. Container-backend preflight
 fails with `docker-not-found` when it is missing. The Docker daemon is
