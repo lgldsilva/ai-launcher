@@ -104,3 +104,22 @@ govet, revive, staticcheck…).
 - Every documented flag/option must exist in the code — check
   `cmd/ai-launcher/main.go` and `internal/config/config.go` before
   documenting.
+
+## Cursor Cloud specific instructions
+
+The environment install reads the version in `go.mod` and puts that
+toolchain on `/usr/local/bin/go`, ahead of the image's Go 1.22 at
+`/usr/bin/go`. The wrapper sets `GOTOOLCHAIN=local` so a newer patch is not
+downloaded over the version in `go.mod`.
+
+`make test` requires the `docker` CLI on `PATH`. Container-backend preflight
+fails with `docker-not-found` when it is missing. The Docker daemon is
+started on boot. The default suite does not need a running daemon; the live
+container tests stay behind the `container_integration` build tag.
+
+`make lint-dist` needs `shellcheck` (installed with the environment) plus
+`shfmt` and `goreleaser`, which the Makefile runs with `go run`.
+
+There is no application server. A working check is `make build`, then
+`bin/ai-launcher --version`, then a `--dry-run` of a harness that exists on
+`PATH`. With `--no-jail --no-memory`, that same command executes the harness.
