@@ -51,6 +51,23 @@ type LaunchConfig struct {
 	// exported AI_MEMORY_RUN_AUTOWIRE=true. Otherwise a 2.3+ run is passed
 	// --no-autowire, because the launcher's --install already owns that step.
 	MemoryAutowire bool
+	// MemoryRequireServer keeps managed launches fail-closed when the
+	// ai-memory server is unreachable, which is ai-memory's own behavior
+	// through 2.5 and the launcher's default from 2.6.0 on (that release
+	// downgrades to a degraded launch instead). Nil means fail-closed; an
+	// explicit false adopts the degraded mode. Exported as the env var, never
+	// a flag, so every run shape and pre-2.6 CLIs are covered.
+	MemoryRequireServer *bool
+	// MemoryProfile, MemoryEnvFile and MemoryJail forward ai-memory's own
+	// run options (--profile, --env-file, --jail[=TOGGLES]/--no-jail). The
+	// first two precede the harness — ai-memory requires that — so a jailed
+	// launch additionally gates on MinPreHarnessAIJailVersion (the 1.x
+	// managed-harness parser bails on unknown pre-harness dash tokens).
+	// MemoryJail is emitted on host launches only: ai-memory ignores --jail
+	// inside ai-jail and a container image has no ai-jail to run.
+	MemoryProfile string
+	MemoryEnvFile string
+	MemoryJail    string
 	// JailEnv names the environment variables to forward into the sandbox with
 	// ai-jail's --env. Filled by ResolveHostBinaries from JailEnvPassthrough,
 	// so Build stays free of environment reads and --dry-run shows exactly the
@@ -175,6 +192,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		if resolved := resolve.hostPath(cfg.Executable); resolved != "" {
 			command = append(command, "--executable", resolved)
 		}
+		command = appendMemoryRunOptions(command, cfg)
 		// Harness name must be one ai-memory accepts (claude, opencode, …).
 		// Wrappers like "oc" keep Agent.Command for PATH/display but remap here.
 		command = append(command, memoryRunHarness(cfg.Agent))
@@ -199,6 +217,50 @@ func Build(cfg LaunchConfig) ([]string, error) {
 	command = appendYoloFlag(command, cfg)
 	command = append(command, cfg.ExtraArgs...)
 	return command, nil
+}
+
+// appendMemoryRunOptions emits ai-memory's own pre-harness run options.
+// --profile and --env-file must precede the harness name; through a jail
+// that additionally needs an ai-jail new enough to forward unknown
+// pre-harness flags instead of bailing on them (MinPreHarnessAIJailVersion,
+// verified with --dry-run on 2.9.0). memory_jail never rides the jail:
+// ai-memory ignores --jail inside one, and the container backend has its own
+// chain. Emission stays silent below every floor — pre-flight is what
+// refuses the configuration.
+func appendMemoryRunOptions(command []string, cfg LaunchConfig) []string {
+	preHarnessJailOK := !cfg.UseJail || jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion)
+	if profile := strings.TrimSpace(cfg.MemoryProfile); profile != "" && MemorySupportsProfile(cfg.MemoryVersion) && preHarnessJailOK {
+		command = append(command, "--profile", profile)
+	}
+	if envFile := strings.TrimSpace(cfg.MemoryEnvFile); envFile != "" && MemorySupportsEnvFile(cfg.MemoryVersion) && preHarnessJailOK {
+		command = append(command, "--env-file", envFile)
+	}
+	if flag, ok := memoryJailFlag(cfg); ok {
+		command = append(command, flag)
+	}
+	return command
+}
+
+// memoryJailFlag renders jail_flags-agnostic memory_jail: --no-jail for the
+// opt-out spellings, --jail=LIST for a toggle list, bare --jail for the
+// smart defaults. ok is false unless the launch is a host launch with an
+// ai-memory new enough to accept the flag.
+func memoryJailFlag(cfg LaunchConfig) (string, bool) {
+	declared := strings.TrimSpace(cfg.MemoryJail)
+	if declared == "" || cfg.UseJail || cfg.UseDocker {
+		return "", false
+	}
+	if !MemorySupportsJail(cfg.MemoryVersion) {
+		return "", false
+	}
+	switch strings.ToLower(declared) {
+	case "no", "false", "none":
+		return "--no-jail", true
+	case "smart", "true", "default":
+		return "--jail", true
+	default:
+		return "--jail=" + declared, true
+	}
 }
 
 // memoryRunHarness is the token after `ai-memory run`: an explicit
@@ -269,6 +331,12 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 		// there and honored from 2.3 on.
 		if disableMemoryAutowire(cfg) {
 			run.Env = append(run.Env, "AI_MEMORY_RUN_AUTOWIRE=false")
+		}
+		// Same reasoning for require-server: an image's ai-memory below 2.6
+		// ignores the variable and already fails closed; 2.6+ honors it and
+		// the launch stays fail-closed unless the operator opted out.
+		if memoryRequiresServer(cfg) {
+			run.Env = append(run.Env, "AI_MEMORY_RUN_REQUIRE_SERVER=true")
 		}
 	}
 	run.GHConfig = permissionHomeMount(cfg, config.PermissionGitHub, ".config/gh")

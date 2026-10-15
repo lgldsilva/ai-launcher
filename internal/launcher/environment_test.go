@@ -131,6 +131,57 @@ func TestEnvironmentLeavesAutowireAloneBelowAIMemory23(t *testing.T) {
 	}
 }
 
+// ai-memory 2.6.0 downgrades an unreachable server to a degraded launch. The
+// launcher keeps the pre-2.6 fail-closed behavior by default, via the env
+// form so every run shape (harness or continue) is covered.
+func TestEnvironmentRequiresServerByDefaultFromAIMemory26(t *testing.T) {
+	cfg := LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: "2.6.0",
+	}
+	for _, entry := range Environment(cfg) {
+		if entry == "AI_MEMORY_RUN_REQUIRE_SERVER=true" {
+			return
+		}
+	}
+	t.Fatal("Environment() did not set AI_MEMORY_RUN_REQUIRE_SERVER=true")
+}
+
+// memory_require_server: false is the operator adopting the degraded mode;
+// the launcher then exports nothing and ai-memory's own default applies.
+func TestEnvironmentDropsRequireServerWhenTheOperatorOptsOut(t *testing.T) {
+	t.Setenv("AI_MEMORY_RUN_REQUIRE_SERVER", "true")
+	cfg := LaunchConfig{
+		Agent:               config.Agent{Command: "claude"},
+		UseMemory:           true,
+		MemoryVersion:       "3.0.0",
+		MemoryRequireServer: boolPtr(false),
+	}
+	for _, entry := range Environment(cfg) {
+		if strings.HasPrefix(entry, "AI_MEMORY_RUN_REQUIRE_SERVER=") {
+			t.Fatalf("env carried %q; the operator opted into degraded mode", entry)
+		}
+	}
+}
+
+// Below 2.6.0 the variable does not exist and the CLI already fails closed;
+// exporting it would be noise, and forwarding an inherited one would be a
+// promise the installed ai-memory cannot keep.
+func TestEnvironmentLeavesRequireServerAloneBelowAIMemory26(t *testing.T) {
+	t.Setenv("AI_MEMORY_RUN_REQUIRE_SERVER", "true")
+	cfg := LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: "2.4.0",
+	}
+	for _, entry := range Environment(cfg) {
+		if strings.HasPrefix(entry, "AI_MEMORY_RUN_REQUIRE_SERVER=") {
+			t.Fatalf("env forwarded %q; 2.4.0 already fails closed", entry)
+		}
+	}
+}
+
 func TestJailEnvPassthroughDeduplicates(t *testing.T) {
 	cfg := LaunchConfig{
 		Agent:     config.Agent{Command: "claude", EnvPassthrough: []string{"AI_MEMORY_SERVER_URL", "AI_MEMORY_SERVER_URL"}},

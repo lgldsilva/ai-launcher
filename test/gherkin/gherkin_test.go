@@ -61,6 +61,9 @@ type launchSpec struct {
 	MemoryVersion     string            `yaml:"memory_version"`
 	MemoryServerURL   string            `yaml:"memory_server_url"`
 	MemoryAutowire    bool              `yaml:"memory_autowire"`
+	MemoryProfile     string            `yaml:"memory_profile"`
+	MemoryEnvFile     string            `yaml:"memory_env_file"`
+	MemoryJail        string            `yaml:"memory_jail"`
 	JailEnv           []string          `yaml:"jail_env"`
 	Project           string            `yaml:"project"`
 	Permissions       map[string]bool   `yaml:"permissions"`
@@ -302,6 +305,9 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		MemoryVersion:                  spec.MemoryVersion,
 		MemoryServerURL:                spec.MemoryServerURL,
 		MemoryAutowire:                 spec.MemoryAutowire,
+		MemoryProfile:                  spec.MemoryProfile,
+		MemoryEnvFile:                  spec.MemoryEnvFile,
+		MemoryJail:                     spec.MemoryJail,
 		JailEnv:                        append([]string(nil), spec.JailEnv...),
 		Workspace:                      spec.Workspace,
 		Project:                        spec.Project,

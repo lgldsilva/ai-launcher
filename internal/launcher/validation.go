@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -144,6 +145,13 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	issues = append(issues, allowTCPPortIssues(cfg)...)
 	issues = append(issues, allowHostIssues(cfg)...)
+	issues = append(issues, agentStateIssues(cfg)...)
+	issues = append(issues, jailToggleFloorIssues(cfg)...)
+	issues = append(issues, forwardPortIssues(cfg)...)
+	issues = append(issues, memoryRunFlagIssues(cfg, stat)...)
+	issues = append(issues, lockdownNetworkIssues(cfg)...)
+	issues = append(issues, secretsIssues(cfg)...)
+	issues = append(issues, envFromFileIssues(cfg, stat)...)
 	issues = append(issues, containerNetworkInternalIssues(cfg)...)
 	issues = append(issues, containerNetworkAllowedDomainsIssues(cfg)...)
 	// Getwd is optional: unit tests leave it nil; NewValidator sets os.Getwd.
@@ -500,6 +508,372 @@ func allowHostMemoryIssues(cfg LaunchConfig, hosts []string) []Issue {
 		}}
 	}
 	return nil
+}
+
+// agentStateIssues refuses a configured agent_state the installed ai-jail
+// cannot apply. The gate mirrors allow-host-requires-ai-jail-2: an unknown
+// version is refused too, because ai-jail below 2.6.0 rejects --agent-state
+// outright and the refusal must surface in pre-flight instead of as an opaque
+// clap error inside the jail (invariant 6b). An unset agent_state emits
+// nothing below 2.6.0 and is always valid.
+func agentStateIssues(cfg LaunchConfig) []Issue {
+	if cfg.JailFlags.AgentState == nil {
+		return nil
+	}
+	if !cfg.UseJail {
+		// --no-jail already reports jail-options-without-jail for any set
+		// jail_flags key; repeating it here would double-report.
+		return nil
+	}
+	if jailSupportsAgentState(cfg.JailVersion) {
+		return nil
+	}
+	seen := strings.TrimSpace(cfg.JailVersion)
+	if seen == "" {
+		seen = "unknown"
+	}
+	return []Issue{{
+		Code: "agent-state-requires-ai-jail-2-6",
+		Message: fmt.Sprintf(
+			"jail_flags.agent_state needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove agent_state",
+			config.MinAgentStateAIJailVersion, seen),
+	}}
+}
+
+// jailToggleFloorIssues refuses configured capability toggles the installed
+// ai-jail cannot apply, one issue per floor batch so the code names the
+// release that introduced the flags. An unreadable version is refused too —
+// the probe staying silent must not turn into "new enough".
+func jailToggleFloorIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail {
+		return nil
+	}
+	byFloor := make(map[string][]string)
+	for _, toggle := range jailToggles(cfg.JailFlags) {
+		if toggle.floor == "" || toggle.value == nil {
+			continue
+		}
+		if !jailSupportsFlag(cfg.JailVersion, toggle.floor) {
+			byFloor[toggle.floor] = append(byFloor[toggle.floor], toggle.name)
+		}
+	}
+	if len(byFloor) == 0 {
+		return nil
+	}
+	seen := strings.TrimSpace(cfg.JailVersion)
+	if seen == "" {
+		seen = "unknown"
+	}
+	floors := make([]string, 0, len(byFloor))
+	for floor := range byFloor {
+		floors = append(floors, floor)
+	}
+	sort.Strings(floors)
+	issues := make([]Issue, 0, len(floors))
+	for _, floor := range floors {
+		names := byFloor[floor]
+		sort.Strings(names)
+		issues = append(issues, Issue{
+			Code: toggleFloorCode(floor),
+			Message: fmt.Sprintf(
+				"jail_flags %s need ai-jail >= %s (installed: %s); upgrade ai-jail, or remove them",
+				strings.Join(names, ", "), floor, seen),
+		})
+	}
+	return issues
+}
+
+// toggleFloorCode names the refusal for one floor batch.
+func toggleFloorCode(floor string) string {
+	switch floor {
+	case config.MinAuditLogAIJailVersion:
+		return "jail-toggles-require-ai-jail-2"
+	case config.MinTogglesAIJailVersion:
+		return "jail-toggles-require-ai-jail-2-5"
+	case config.MinModernTogglesAIJailVersion:
+		return "jail-toggles-require-ai-jail-2-9"
+	}
+	return "jail-toggles-require-newer-ai-jail"
+}
+
+// secretsIssues refuses --secret entries the installed ai-jail cannot apply
+// or that cannot work: the substitution happens in the filtered-egress
+// proxy, so secrets without allow_hosts are inert, and KEY=host is the whole
+// form.
+func secretsIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail || len(cfg.JailFlags.Secrets) == 0 {
+		return nil
+	}
+	if !jailSupportsFlag(cfg.JailVersion, config.MinSecretAIJailVersion) {
+		seen := strings.TrimSpace(cfg.JailVersion)
+		if seen == "" {
+			seen = "unknown"
+		}
+		return []Issue{{
+			Code: "secrets-require-ai-jail-2-2",
+			Message: fmt.Sprintf(
+				"jail_flags.secrets needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove secrets",
+				config.MinSecretAIJailVersion, seen),
+		}}
+	}
+	if !filteredEgress(cfg) {
+		return []Issue{{
+			Code:    "secrets-require-filtered-egress",
+			Message: "jail_flags.secrets substitutes values in the filtered-egress proxy, so it needs jail_flags.allow_hosts; add the host to the list or remove secrets",
+		}}
+	}
+	var invalid []string
+	for _, entry := range cfg.JailFlags.Secrets {
+		key, host, ok := strings.Cut(entry, "=")
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(host) == "" || strings.ContainsAny(entry, " \t") {
+			invalid = append(invalid, entry)
+		}
+	}
+	if len(invalid) > 0 {
+		return []Issue{{
+			Code: "secret-invalid",
+			Message: fmt.Sprintf(
+				"jail_flags.secrets entries %s are not KEY=host; the child sees KEY's placeholder and the proxy substitutes it only for requests to host",
+				strings.Join(invalid, ", ")),
+		}}
+	}
+	return nil
+}
+
+// envFromFileIssues refuses --env-from-file entries the installed ai-jail
+// cannot apply or cannot read. ai-jail enforces the user-owned and
+// outside-the-project rules itself at launch; the mode check (0600 or
+// stricter) and existence are the parts pre-flight can see, and either
+// failing would abort inside the wrapper.
+func envFromFileIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {
+	if !cfg.UseJail || len(cfg.JailFlags.EnvFromFiles) == 0 {
+		return nil
+	}
+	if !jailSupportsFlag(cfg.JailVersion, config.MinEnvFromFileAIJailVersion) {
+		seen := strings.TrimSpace(cfg.JailVersion)
+		if seen == "" {
+			seen = "unknown"
+		}
+		return []Issue{{
+			Code: "env-from-files-require-ai-jail-2",
+			Message: fmt.Sprintf(
+				"jail_flags.env_from_files needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove env_from_files",
+				config.MinEnvFromFileAIJailVersion, seen),
+		}}
+	}
+	if stat == nil {
+		return nil
+	}
+	var missing, loose []string
+	for _, path := range cfg.JailFlags.EnvFromFiles {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		info, err := stat(path)
+		if err != nil {
+			missing = append(missing, path)
+			continue
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			loose = append(loose, fmt.Sprintf("%s (mode %04o)", path, info.Mode().Perm()))
+		}
+	}
+	if len(missing) > 0 {
+		return []Issue{{
+			Code: "env-from-file-not-found",
+			Message: fmt.Sprintf(
+				"jail_flags.env_from_files entries %s do not exist; ai-jail reads them (user-owned, mode 0600, outside the project) before the launch",
+				strings.Join(missing, ", ")),
+		}}
+	}
+	if len(loose) > 0 {
+		return []Issue{{
+			Code: "env-from-file-not-locked-down",
+			Message: fmt.Sprintf(
+				"jail_flags.env_from_files entries %s are not mode 0600; ai-jail refuses group- or world-readable env files",
+				strings.Join(loose, ", ")),
+		}}
+	}
+	return nil
+}
+
+// forwardPortIssues refuses --forward-port configurations ai-jail would abort
+// on at launch, mirroring the upstream rules: the flag exists only from
+// 2.9.0, unrestricted network makes the relay pointless (the host loopback is
+// already reachable), ports live in 1024..65535, and at most 256 relays run
+// per launch.
+func forwardPortIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail || len(cfg.JailFlags.ForwardPorts) == 0 {
+		return nil
+	}
+	if !jailSupportsFlag(cfg.JailVersion, config.MinForwardPortAIJailVersion) {
+		seen := strings.TrimSpace(cfg.JailVersion)
+		if seen == "" {
+			seen = "unknown"
+		}
+		return []Issue{{
+			Code: "forward-ports-require-ai-jail-2-9",
+			Message: fmt.Sprintf(
+				"jail_flags.forward_ports needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove forward_ports",
+				config.MinForwardPortAIJailVersion, seen),
+		}}
+	}
+	if unrestrictedNetwork(cfg) {
+		return []Issue{{
+			Code: "forward-ports-conflict-with-network",
+			Message: "jail_flags.forward_ports is a filtered-egress relay and cannot be combined with unrestricted network; " +
+				"ai-jail rejects --forward-port together with --network",
+		}}
+	}
+	var invalid []string
+	for _, port := range cfg.JailFlags.ForwardPorts {
+		if port < 1024 || port > 65535 {
+			invalid = append(invalid, strconv.Itoa(port))
+		}
+	}
+	if len(invalid) > 0 {
+		return []Issue{{
+			Code: "forward-port-invalid",
+			Message: fmt.Sprintf(
+				"jail_flags.forward_ports entries %s fall outside 1024-65535; ai-jail refuses ports below 1024 and there is no port above 65535",
+				strings.Join(invalid, ", ")),
+		}}
+	}
+	if len(cfg.JailFlags.ForwardPorts) > forwardPortsMax {
+		return []Issue{{
+			Code:    "forward-ports-too-many",
+			Message: fmt.Sprintf("jail_flags.forward_ports has %d entries; ai-jail runs at most %d relays per launch", len(cfg.JailFlags.ForwardPorts), forwardPortsMax),
+		}}
+	}
+	return nil
+}
+
+// forwardPortsMax mirrors ai-jail's relay cap for --forward-port.
+const forwardPortsMax = 256
+
+// memoryRunFlagIssues refuses ai-memory run options the installed pair
+// cannot apply. --profile and --env-file precede the harness, so a jailed
+// launch needs both the ai-memory floor for the flag and an ai-jail new
+// enough to forward unknown pre-harness flags instead of bailing on them
+// (the 1.x managed-harness parser falls back to the outer command and the
+// agent silently loses its state mounts). memory_jail is a host-launch
+// option: ai-memory ignores --jail inside ai-jail, and a container image has
+// no ai-jail to run — configured anyway, that is a warning, not a refusal,
+// because the launch itself is valid.
+func memoryRunFlagIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {
+	if !cfg.UseMemory {
+		return nil
+	}
+	var issues []Issue
+	if profile := strings.TrimSpace(cfg.MemoryProfile); profile != "" {
+		if !MemorySupportsProfile(cfg.MemoryVersion) {
+			issues = append(issues, versionFloorIssue("memory-profile-requires-ai-memory-2-6", "memory_profile", cfg.MemoryVersion, config.MinProfileAIMemoryVersion))
+		} else if cfg.UseJail && !jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion) {
+			issues = append(issues, preHarnessJailIssue("memory_profile"))
+		}
+	}
+	if envFile := strings.TrimSpace(cfg.MemoryEnvFile); envFile != "" {
+		if !MemorySupportsEnvFile(cfg.MemoryVersion) {
+			issues = append(issues, versionFloorIssue("memory-env-file-requires-ai-memory-2-5", "memory_env_file", cfg.MemoryVersion, config.MinEnvFileAIMemoryVersion))
+		} else {
+			if cfg.UseJail && !jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion) {
+				issues = append(issues, preHarnessJailIssue("memory_env_file"))
+			}
+			if stat != nil {
+				if _, err := stat(envFile); err != nil {
+					issues = append(issues, Issue{
+						Code:    "memory-env-file-not-found",
+						Message: fmt.Sprintf("memory_env_file %q does not exist; ai-memory reads it before spawning the harness", envFile),
+					})
+				}
+			}
+		}
+	}
+	if declared := strings.TrimSpace(cfg.MemoryJail); declared != "" {
+		if !MemorySupportsJail(cfg.MemoryVersion) {
+			issues = append(issues, versionFloorIssue("memory-jail-requires-ai-memory-2-5-2", "memory_jail", cfg.MemoryVersion, config.MinMemoryJailAIMemoryVersion))
+		}
+		switch {
+		case cfg.UseJail:
+			issues = append(issues, Issue{
+				Code:    "memory-jail-with-launcher-jail",
+				Warning: true,
+				Message: "memory_jail is ignored here: this launch is already jailed by the launcher, and ai-memory skips --jail inside ai-jail; remove memory_jail to stop the reminder",
+			})
+		case cfg.UseDocker:
+			issues = append(issues, Issue{
+				Code:    "memory-jail-in-container",
+				Warning: true,
+				Message: "memory_jail cannot apply in the container backend: the image has no ai-jail, and ai-memory refuses to run unjailed when --jail is set; remove memory_jail for container launches",
+			})
+		}
+	}
+	return issues
+}
+
+// versionFloorIssue renders one "configured below the upstream floor"
+// refusal with the unreadable-version rule applied.
+func versionFloorIssue(code, key, version, floor string) Issue {
+	seen := strings.TrimSpace(version)
+	if seen == "" {
+		seen = "unknown"
+	}
+	return Issue{
+		Code: code,
+		Message: fmt.Sprintf(
+			"%s needs ai-memory >= %s (installed: %s); upgrade ai-memory, or remove it",
+			key, floor, seen),
+	}
+}
+
+// preHarnessJailIssue names the ai-jail side of a pre-harness wrapper flag:
+// the option itself parses on the installed ai-memory, but the jail's
+// managed-harness parser would bail on the unknown dash token before the
+// harness and silently drop the agent-state mounts.
+func preHarnessJailIssue(key string) Issue {
+	return Issue{
+		Code: "memory-run-flag-requires-ai-jail-2-9",
+		Message: fmt.Sprintf(
+			"%s precedes the harness, and this launch is jailed: ai-jail >= 2.9.0 is required to forward it (older parsers fall back to the outer command and the agent loses its state mounts); upgrade ai-jail, disable the jail for this launch, or remove %s",
+			key, key),
+	}
+}
+
+// unrestrictedNetwork reports whether this launch would carry --network:
+// an explicit jail_flags network on (filtered egress replaces it), or the
+// network permission without filtered egress.
+func unrestrictedNetwork(cfg LaunchConfig) bool {
+	if filteredEgress(cfg) {
+		return false
+	}
+	return explicitNetworkOn(cfg) || cfg.Permissions[config.PermissionNetwork]
+}
+
+// lockdownNetworkIssues warns about lockdown combined with unrestricted
+// network on ai-jail 2.6.2+: that release makes --lockdown always force
+// --unshare-net, so the launch is offline no matter what --network says.
+// Before it the combination kept the network — the same argv, opposite
+// outcome — which is why this is surfaced instead of left to ai-jail. A
+// warning, not a refusal: ai-jail resolves the contradiction itself, and the
+// operator only needs to know which side won.
+func lockdownNetworkIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseJail {
+		return nil
+	}
+	if cfg.JailFlags.Lockdown == nil || !*cfg.JailFlags.Lockdown || !unrestrictedNetwork(cfg) {
+		return nil
+	}
+	if !jailSupportsFlag(cfg.JailVersion, config.MinLockdownUnshareAIJailVersion) {
+		return nil
+	}
+	return []Issue{{
+		Code:    "lockdown-forces-offline",
+		Warning: true,
+		Message: fmt.Sprintf(
+			"jail_flags lockdown: true with unrestricted network is offline on ai-jail >= %s: --lockdown forces --unshare-net there; drop network or lockdown to say what you mean",
+			config.MinLockdownUnshareAIJailVersion),
+	}}
 }
 
 func allowTCPPortIssues(cfg LaunchConfig) []Issue {

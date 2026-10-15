@@ -553,6 +553,51 @@ the nvm node bin dir to PATH. The runtime user is non-root; nvm and SDKMAN are
 installed under `/opt/nvm` and `/opt/sdkman` so host UID mapping cannot strand
 the executable behind /root.
 
+## Why upstream default flips are stated or pinned, never inherited
+
+**Decision.** When upstream changes what an existing argv *means*, the
+launcher either states the decision explicitly (agent_state from ai-jail
+2.6.0, like `--docker` and `--network` before it) or pins the previous
+behavior behind an overridable config key (`memory_require_server` restoring
+ai-memory's pre-2.6 fail-closed `run`). Never a hard pin without an opt-out,
+and never silent inheritance across a version boundary.
+
+**Why.** The revalidation to ai-jail 2.9 / ai-memory 3.0 surfaced exactly two
+meaning flips inside the validated range: ai-jail 2.6.0 mounting agent
+credential dirs read-write by default, and ai-memory 2.6.0 downgrading an
+unreachable server to a degraded launch. Both keep every flag the launcher
+emits, so the Gherkin contract — which locks argv shape, not meaning —
+cannot see them. agent_state follows the upstream default (on) because the
+launcher's permission model still governs everything else and the network
+decision already set the precedent of adopting a new upstream default
+explicitly; require_server stays fail-closed because the launcher's
+preflight promises that the server is part of the launch contract. In both
+cases the operator keeps the other behavior one config key away.
+
+## Why ai-memory's own jailing is exposed, not suppressed
+
+**Decision.** `memory_jail` maps to ai-memory 2.5.2's `run --jail[=TOGGLES]`
+/ `--no-jail` on host launches the launcher does not jail, and nothing ever
+blocks those flags from `extra_args`. Inside the launcher's jail the key
+draws a warning instead of a refusal (ai-memory ignores `--jail` there, so
+the launch is valid — the operator just gets a reminder the setting is
+inert). The `--env KEY=VALUE` form is the one deliberate exception: ai-jail
+2.5+ refuses a flag spelled like its own after the command word, so
+`memory_env_file` — the form that works jailed and unjailed alike — is the
+exposed surface instead.
+
+**Why.** ai-memory's `--yolo` ai-jail offer and `--jail` exist for exactly
+the launches this launcher does not wrap itself (a bare `ai-memory run` on
+the host), and suppressing them would remove an upstream capability rather
+than compose with it. The launcher remains the jail composer by default;
+`memory_jail` is the hand-off for the host path, documented next to the
+warning that fires when both are configured. The pre-harness flags
+(`--profile`, `--env-file`) additionally gate on ai-jail ≥ 2.9.0 when
+jailed, verified by dry-run: the 1.x managed-harness parser bails on
+unknown pre-harness dash tokens and the agent would silently lose its state
+mounts — the exact failure the `--executable`-before-harness contract
+exists to prevent.
+
 ## What we are NOT doing (yet)
 
 - **Native sandbox on Windows.** Depends on upstream (ai-jail "probably

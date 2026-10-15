@@ -34,6 +34,41 @@ func TestPrepareDockerRunDisablesAutowireByEnvNotArgv(t *testing.T) {
 	}
 }
 
+// The container's ai-memory is 2.6+ on rebuilt images, and that line degrades
+// instead of failing when the server is unreachable. The launcher keeps its
+// fail-closed stance via the env — an argv flag would be an unknown option on
+// a pre-2.6 image, the env there is simply ignored — and opts out only via
+// the config key. run.Env reaches both the docker-run backend and Compose.
+func TestPrepareDockerRunRequiresServerByEnvNotArgv(t *testing.T) {
+	cfg := dockerLaunchConfig(t)
+	cfg.UseMemory = true
+	cfg.MemoryVersion = "3.0.0"
+	run, err := prepareDockerRunConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsArg(run.Env, "AI_MEMORY_RUN_REQUIRE_SERVER=true") {
+		t.Fatalf("env = %#v; want AI_MEMORY_RUN_REQUIRE_SERVER=true", run.Env)
+	}
+	cfg.MemoryVersion = "2.4.0"
+	run, err = prepareDockerRunConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsArg(run.Env, "AI_MEMORY_RUN_REQUIRE_SERVER=true") {
+		t.Fatalf("env = %#v; 2.4.0 already fails closed and must not be told otherwise", run.Env)
+	}
+	cfg.MemoryVersion = "3.0.0"
+	cfg.MemoryRequireServer = boolPtr(false)
+	run, err = prepareDockerRunConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsArg(run.Env, "AI_MEMORY_RUN_REQUIRE_SERVER=true") {
+		t.Fatalf("env = %#v; the operator opted into degraded mode", run.Env)
+	}
+}
+
 func dockerLaunchConfig(t *testing.T) LaunchConfig {
 	t.Helper()
 	stubAllMountSourcesExist(t)

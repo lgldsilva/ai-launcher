@@ -13,10 +13,11 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
-// TestLiveUpstreamScenarios execs the real ai-jail 2.x and ai-memory 2.x
-// binaries for the scenarios the Gherkin contract only assembles. The contract
-// locks argv shape; this is the run that checks the installed CLIs accept it.
-// CI and the mutation container have no upstream install, so they skip.
+// TestLiveUpstreamScenarios execs the real ai-jail and ai-memory binaries
+// (validated through ai-jail 2.9.0 and ai-memory 3.0.0) for the scenarios the
+// Gherkin contract only assembles. The contract locks argv shape; this is the
+// run that checks the installed CLIs accept it. CI and the mutation container
+// have no upstream install, so they skip.
 func TestLiveUpstreamScenarios(t *testing.T) {
 	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" || os.Getenv("MUTATION_BASE") != "" {
 		t.Skip("live upstream exec is host-only")
@@ -140,7 +141,11 @@ func liveMemoryAcceptsNoAutowire(t *testing.T, memoryPath string) {
 		if strings.Contains(got, "invalid value") || strings.Contains(got, "unexpected argument") {
 			t.Fatalf("ai-memory rejected harness %s with --no-autowire:\n%s", name, got)
 		}
-		if !strings.Contains(got, "the agent was not started") {
+		// ai-memory 3.0 resolves some managed executables (oh-my-pi → omp)
+		// before it opens the workstream, so a harness this host lacks stops
+		// on the missing executable instead of the unreachable server. Either
+		// way the agent never started and no workstream was opened.
+		if !strings.Contains(got, "the agent was not started") && !strings.Contains(got, "was not found in the host PATH") {
 			t.Fatalf("harness %s did not stop before the agent:\n%s", name, got)
 		}
 	}
@@ -176,7 +181,9 @@ func liveDoctorReportsManagedRunnerBehind(t *testing.T, bin, jailPath, memoryPat
 
 // runMemory execs `ai-memory run` against a data dir and server that do not
 // exist, so a parsed harness fails while opening the workstream instead of
-// starting an agent or writing to the operator's store.
+// starting an agent or writing to the operator's store. AI_MEMORY_RUN_REQUIRE_SERVER
+// keeps that premise on ai-memory 2.6.0+, which otherwise downgrades an
+// unreachable server to a degraded launch and keeps going.
 func runMemory(t *testing.T, memoryPath string, args ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -189,6 +196,7 @@ func runMemory(t *testing.T, memoryPath string, args ...string) string {
 		"USERPROFILE=" + dir,
 		"AI_MEMORY_DATA_DIR=" + filepath.Join(dir, "data"),
 		"AI_MEMORY_SERVER_URL=http://127.0.0.1:9",
+		"AI_MEMORY_RUN_REQUIRE_SERVER=true",
 	})
 	out, _ := cmd.CombinedOutput()
 	return string(out)

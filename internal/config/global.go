@@ -11,13 +11,19 @@ import (
 
 // Global is the machine-wide catalog of agents, tools, and permissions.
 type Global struct {
-	Version         string       `yaml:"version"`
-	MemoryServerURL string       `yaml:"memory_server_url,omitempty"`
-	MemoryAuthToken string       `yaml:"memory_auth_token,omitempty"`
-	Agents          []Agent      `yaml:"agents"`
-	Tools           []Tool       `yaml:"tools,omitempty"`
-	Permissions     []Permission `yaml:"permissions"`
-	DefaultMounts   []string     `yaml:"default_mounts,omitempty"`
+	Version         string `yaml:"version"`
+	MemoryServerURL string `yaml:"memory_server_url,omitempty"`
+	MemoryAuthToken string `yaml:"memory_auth_token,omitempty"`
+	// MemoryRequireServer keeps managed launches fail-closed when the
+	// ai-memory server is unreachable — the launcher's default, nil included.
+	// Set it to false to adopt ai-memory 2.6.0+'s degraded mode: the harness
+	// still starts, hooks spool locally, and `ai-memory recover` drains them
+	// when the server returns.
+	MemoryRequireServer *bool        `yaml:"memory_require_server,omitempty"`
+	Agents              []Agent      `yaml:"agents"`
+	Tools               []Tool       `yaml:"tools,omitempty"`
+	Permissions         []Permission `yaml:"permissions"`
+	DefaultMounts       []string     `yaml:"default_mounts,omitempty"`
 	// ContainerDependencies is the trusted machine-wide dependency-directory
 	// override catalog. Workspace-local settings are layered over this value
 	// only after the normal local-config trust checks.
