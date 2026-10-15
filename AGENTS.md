@@ -94,6 +94,27 @@ govet, revive, staticcheck…).
   There is no Gitea workflow either — GitHub is the only forge.
 - See `docs/cicd.md` for the full pipeline and the release process.
 
+## Cursor Cloud specific instructions
+
+The base image ships Go 1.22. `go.mod` declares `go 1.26.9`, and the `go`
+command downloads that toolchain on first use (`GOTOOLCHAIN=auto`, stored in
+the module cache). Leave `GOTOOLCHAIN` unset. `GOTOOLCHAIN=local` stays on
+1.22 and cannot build this module.
+
+Linux jail preflight needs a root-owned `bwrap` (`bubblewrap` package).
+Container-backend tests resolve `docker` on `PATH`, the same way the
+GitHub-hosted runners do, so the `docker.io` CLI is installed. The daemon
+is not started: preflight only checks that the binary exists, and the live
+container tests are behind the `container_integration` build tag.
+`shellcheck` is required for `make lint-dist`. `shfmt` and `goreleaser`
+stay on the Makefile `go run` pins. There is no launcher daemon:
+`make build`, `make test`, `make lint`, and `make test-coverage` are the
+development loop. `bin/ai-launcher --version` prints the build, and
+`--dry-run` prints the composed argv once the selected harness is on
+`PATH` (plus `ai-jail` / `ai-memory` when those layers are on).
+`make test-mutation` needs a running Docker daemon and is outside this
+loop.
+
 ## Documentation conventions
 
 - **English** in all documentation (README, docs/, this file).
