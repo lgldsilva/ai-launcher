@@ -125,14 +125,23 @@ func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) [
 	}
 	command = appendDockerDecision(command, cfg)
 	command = appendNetworkDecision(command, cfg)
+	command = appendAgentStateDecision(command, cfg)
 	command = appendEnvPassthrough(command, cfg)
-	command = appendJailFlags(command, cfg.JailFlags)
+	command = appendJailFlags(command, cfg.JailFlags, cfg.JailVersion)
 	command = appendAllowHosts(command, cfg)
 	command = appendPermissionArgs(command, cfg)
 	if cfg.UseMemory {
 		command = appendHostDirMount(command, cfg.MemoryExecutable, cfg.Mounts, resolve)
 	}
 	command = appendExecutableMount(command, cfg, resolve)
+	// ai-memory reads --env-file before it spawns the harness; inside the
+	// jail that read happens against the tmpfs $HOME, so the file rides
+	// along read-only like the memory and harness directories do.
+	if cfg.UseMemory && cfg.UseJail {
+		if envFile := strings.TrimSpace(cfg.MemoryEnvFile); envFile != "" {
+			command = append(command, "--map", envFile)
+		}
+	}
 	for _, mount := range cfg.Mounts {
 		path := strings.TrimSpace(mount.Path)
 		if path == "" {
@@ -268,6 +277,43 @@ func appendEnvPassthrough(command []string, cfg LaunchConfig) []string {
 		command = append(command, "--env", name)
 	}
 	return command
+}
+
+// appendAgentStateDecision emits exactly one of --agent-state /
+// --no-agent-state on ai-jail 2.6.0+, and nothing below it.
+//
+// ai-jail 2.6.0 turned agent state on by default: the harness's own
+// credential dirs (~/.claude, ~/.codex, ~/.claude.json, ...) are mounted
+// read-write and provider API keys are copied from the host, so harnesses
+// start pre-authenticated. The same argv therefore builds a more permissive
+// sandbox on 2.6.0 than on 2.5.x — the launcher states the decision instead
+// of letting the installed version decide, exactly like --docker and
+// --network. Unset follows the upstream default, which is on; this adopts
+// the new default rather than freezing the old isolation, and jail_flags
+// agent_state: false is what restores it.
+//
+// --lockdown forces agent state off upstream ("default: on; off under
+// --lockdown"), and the argv never contradicts itself, so an explicit
+// lockdown emits --no-agent-state whatever agent_state says.
+//
+// Below 2.6.0, or when the version is unreadable, nothing is emitted: older
+// releases reject the flag outright, and pre-flight refuses a configured
+// agent_state there so the silence is never an accident.
+func appendAgentStateDecision(command []string, cfg LaunchConfig) []string {
+	if !jailSupportsAgentState(cfg.JailVersion) {
+		return command
+	}
+	enabled := true
+	if declared := cfg.JailFlags.AgentState; declared != nil {
+		enabled = *declared
+	}
+	if cfg.JailFlags.Lockdown != nil && *cfg.JailFlags.Lockdown {
+		enabled = false
+	}
+	if enabled {
+		return append(command, "--agent-state")
+	}
+	return append(command, "--no-agent-state")
 }
 
 // appendNetworkDecision emits exactly one of --network / --no-network, always,

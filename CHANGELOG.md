@@ -13,6 +13,115 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the rest of the ai-jail jail_flags mirror (x11, host_shm, audio, audit_log, secrets, env_from_files)
+
+`jail_flags` now mirrors the remaining ai-jail launch capabilities: `x11` and
+`host_shm` (1.18 opt-ins, emitted across the whole supported range), `audio`,
+`terminal_passthrough`, `macos_host_ipc` and `update_check` (floored at the
+2.9.0 they were verified against — arrival releases not pinned in the
+changelog digest), `audit_log` (2.0.0's opt-in audit journal), `secrets`
+(`--secret KEY=host`, 2.2.0: the child sees a placeholder and the
+filtered-egress proxy substitutes the real value only for requests to host —
+refused without `allow_hosts`), and `env_from_files` (`--env-from-file`,
+2.0.0; existence checked in pre-flight, the user-owned/0600/outside-project
+rules stay ai-jail's). Every floored key refuses below its floor with one
+issue per batch naming the release (`jail-toggles-require-ai-jail-2`,
+`…-2-5`, `…-2-9`). `--clean` and the audit query verbs stay out of
+`jail_flags` on purpose (setup/diagnostic scope, design-decisions).
+
+**What you need to do:** nothing — every key is opt-in and unset configs
+build the same argv as before.
+
+### Changed — two quieter ai-jail default flips are now surfaced
+
+ai-jail 2.6.2 makes `--lockdown` always force `--unshare-net`, so
+`lockdown: true` combined with unrestricted network — a combination that kept
+the network on every earlier release — is offline from it on. Pre-flight now
+warns (`lockdown-forces-offline`) on 2.6.2+ instead of letting the launch
+answer the question silently. And ai-jail 2.8.0 unions the selected harness's
+own default API host into `--allow-host` filtered egress, so an allow list
+built for one purpose quietly carries the harness's API too; the README
+`jail_flags` table now says the list is not exact from 2.8 on.
+
+**What you need to do:** nothing — both are informational. If you relied on
+lockdown + network being networked, that combination is gone upstream; say
+`network: true` without lockdown, or accept the offline lockdown.
+
+### Added — the ai-memory 2.5-3.0 run surface (profiles, env files, memory_jail, copilot)
+
+Local config gains three `ai-memory run` options: `memory_profile` (≥ 2.6.0,
+`run --profile`), `memory_env_file` (≥ 2.5.0, `run --env-file`, mounted
+read-only into the jail), and `memory_jail` (≥ 2.5.2) mapping to ai-memory's
+own `--jail[=TOGGLES]` / `--no-jail` on launches the launcher itself neither
+jails nor containers — `no` skips the `--yolo` ai-jail offer, a toggle list
+is exact, and inside the launcher's jail it only draws a warning (ai-memory
+ignores `--jail` there). `--profile` and `--env-file` precede the harness, so
+a jailed launch additionally needs ai-jail ≥ 2.9.0 — the 1.x
+managed-harness parser bails on unknown pre-harness flags and the agent would
+silently lose its state mounts — and pre-flight refuses the combination
+(`memory-run-flag-requires-ai-jail-2-9`) along with every ai-memory floor
+(`memory-profile-requires-ai-memory-2-6`, `memory-env-file-requires-ai-memory-2-5`,
+`memory-jail-requires-ai-memory-2-5-2`). `--env KEY=VALUE` is deliberately
+not exposed (ai-jail refuses a flag spelled like its own after the command
+word); `--force-unlock` and friends keep riding `extra_args`, which ai-memory
+re-extracts. `copilot` / `copilot-cli` join the harness list, gated on
+ai-memory 3.0.0 by the existing `memory-harness-version` check.
+
+**What you need to do:** nothing — every option is opt-in.
+
+### Added — the ai-jail 2.5-2.9 jail_flags surface (toolchains, kvm, credentials, forward_ports)
+
+`jail_flags` gains the tri-state toggles `toolchains`, `kvm`, `github`, `aws`,
+`kube`, `gcloud` and `docker_config` (ai-jail >= 2.5.0) and the `forward_ports`
+list (ai-jail >= 2.9.0, one `--forward-port` per entry). Unset keeps ai-jail's
+own default in charge — toolchains on, kvm and the credential mounts off —
+and a configured value forces its form, emitted only when the detected ai-jail
+accepts the flag; below the floor pre-flight refuses the configuration
+(`jail-toggles-require-ai-jail-2-5`, `forward-ports-require-ai-jail-2-9`)
+instead of letting it die as an unknown option inside the wrapper.
+`forward_ports` refuses the combinations ai-jail aborts on: unrestricted
+network, ports outside 1024-65535, and more than 256 entries. `github` is the
+keyring-token flow over the shared gh config, complementary to the `gh`
+permission.
+
+**What you need to do:** nothing — the flags are opt-in and the argv for an
+unset config is unchanged.
+
+### Changed — managed launches stay fail-closed on ai-memory 2.6+ (memory_require_server)
+
+ai-memory 2.6.0 downgraded an unreachable server from a launch failure to a
+degraded launch: the harness still starts, but with no workstream lease, no
+cross-harness context, no `AI_MEMORY_WORKSTREAM_ID` on the child, and hooks
+spooling locally. The launcher keeps the pre-2.6 fail-closed behavior — its
+preflight already validates the server — by exporting
+`AI_MEMORY_RUN_REQUIRE_SERVER=true` on ai-memory 2.6.0+ (host, jailed, and
+container backends; a pre-2.6 CLI ignores the variable and already fails
+closed). The env var is launcher-owned: the surface for opting out is the
+global config key `memory_require_server: false`, which adopts the degraded
+mode (`ai-memory recover` drains the spool when the server returns).
+
+**What you need to do:** nothing to keep today's behavior. Set
+`memory_require_server: false` only if you want launches to survive a memory
+server outage.
+
+### Changed — ai-jail >= 2.6.0 launches are pre-authenticated unless agent_state: false
+
+ai-jail 2.6.0 turned agent state on by default: the harness's own credential
+dirs (`~/.claude`, `~/.codex`, `~/.claude.json`, ...) are mounted read-write
+and provider API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...) are copied
+from the host, so agents start already signed in. The launcher now states
+that decision explicitly — `--agent-state` when unset (the upstream default),
+`--no-agent-state` for `agent_state: false` — like it already did for
+`--docker` and `--network`, so the same config builds the same sandbox on
+every ai-jail in the range. Below 2.6.0 nothing is emitted and a configured
+`agent_state` is refused in pre-flight (`agent-state-requires-ai-jail-2-6`).
+An explicit `lockdown` always emits `--no-agent-state`, matching ai-jail.
+
+**What you need to do:** nothing, unless you want the pre-2.6 isolation on a
+newer ai-jail — set `agent_state: false` in `jail_flags` (or `lockdown: true`).
+Agent state is complementary to the `gh` permission: it mounts harness state,
+not `~/.config/gh`.
+
 ### Added — Linux installs can fetch the bubblewrap package
 
 ai-jail's GitHub binary still needs `bwrap`. `--install` names the command
@@ -45,17 +154,28 @@ skipped on a single-user store. `eopkg` refreshes its index first.
 install the distro `bubblewrap` package (or, on Slackware, build it as root
 so root owns `/usr/bin/bwrap`), or point `BWRAP_BIN` at a root-owned copy.
 
-### Changed — the validated upstream range now includes ai-jail 2.2 and ai-memory 2.4
+### Changed — the validated upstream range now includes ai-jail 2.9 and ai-memory 3.0
 
-`UntestedAIJailVersion` moves from `1.21.0` to `2.3.0` and
-`UntestedAIMemoryVersion` from `1.35.0` to `2.5.0`. The floors stay `1.20.1`
+`UntestedAIJailVersion` moves from `1.21.0` to `3.0.0` and
+`UntestedAIMemoryVersion` from `1.35.0` to `3.1.0`. The floors stay `1.20.1`
 and `1.25.0`: the argv this launcher already emitted is accepted by every
-release in between. ai-jail 2.0.0 added opt-in flags and declared the 1.x
-surface unchanged. ai-memory 2.0 migrated the server store; the `run` grammar
-did not move.
+release in between — re-validated live against ai-jail 2.9.0 and ai-memory
+3.0.0 (composed argv dry-run, the `--allow-host` launch, and the harness
+aliases on the 3.0 harness list). ai-jail 2.0.0 added opt-in flags and
+declared the 1.x surface unchanged; 2.5.0 and 2.8.0 add default filtered
+egress only when network is left unstated, which this launcher never does.
+ai-memory 2.0 migrated the server store; the `run` grammar kept every token
+this launcher emits.
+
+Two changes inside the range alter what the same argv *means*, and each gets
+its own launcher surface in this release: ai-jail 2.6.0 turns agent_state on
+by default (agent credential dirs read-write, provider API keys copied from
+the host), and ai-memory 2.6.0 downgrades an unreachable server to a degraded
+launch instead of failing (`--require-server` /
+`AI_MEMORY_RUN_REQUIRE_SERVER` restores fail-closed).
 
 **What you need to do:** nothing to keep launching. `ai-launcher --doctor`
-stops calling 2.2 / 2.4 untested. A managed ai-memory older than the one on
+stops calling 2.9 / 3.0 untested. A managed ai-memory older than the one on
 `PATH` is now reported as `ai-memory-native-behind-path`; `ai-launcher
 --upgrade` refreshes that copy.
 

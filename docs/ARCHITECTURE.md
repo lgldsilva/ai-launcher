@@ -544,7 +544,39 @@ emits `--no-network` instead of `--network`), and
 `status_bar_style` (`dark`/`light`/`pastel`, emitted as `--status-bar=STYLE`;
 when set it suppresses both boolean `--status-bar` forms). `hide_config` and
 `save_config` only forward ai-jail's toggles; the launcher never flips them on
-its own.
+its own. The ai-jail 2.5.0 batch — `toolchains`, `kvm`, `github`, `aws`,
+`kube`, `gcloud`, `docker_config` (`MinTogglesAIJailVersion`) — and
+`forward_ports` (`MinForwardPortAIJailVersion`, one `--forward-port` per
+entry under filtered egress) are floor-gated the same way `allow_hosts` is:
+emitted only when the detected ai-jail knows the flag, refused in pre-flight
+when configured below it (`jail-toggles-require-ai-jail-2-5`,
+`forward-ports-require-ai-jail-2-9`, plus the upstream-mirroring
+`forward-ports-conflict-with-network`, `forward-port-invalid`, and
+`forward-ports-too-many`).
+
+`agent_state` is not in that auto-mode list: like `docker` and `network`, it is
+a decision the launcher states explicitly — but only from ai-jail 2.6.0
+(`MinAgentStateAIJailVersion`), the release that turned agent state on by
+default. Below it (or when the version is unreadable) nothing is emitted and a
+configured `agent_state` is a pre-flight refusal
+(`agent-state-requires-ai-jail-2-6`); at or above it
+`appendAgentStateDecision` emits `--agent-state` (unset follows the upstream
+default, on) or `--no-agent-state` (`agent_state: false`, or any explicit
+`lockdown`, which forces agent state off upstream). Agent state mounts the
+harness's own credential dirs; it is complementary to the `gh` permission's
+`--rw-map ~/.config/gh`, not a replacement.
+
+The rest of the mirror completes with the same floor discipline: `x11` and
+`host_shm` (1.18 opt-ins, no floor), `audio`, `terminal_passthrough`,
+`macos_host_ipc` and `update_check` (`MinModernTogglesAIJailVersion`, the
+version they were verified against — arrival releases not pinned), `audit_log`
+(`MinAuditLogAIJailVersion`, 2.0.0), `secrets` (`MinSecretAIJailVersion`,
+2.2.0, `--secret KEY=host` values substituted by the filtered-egress proxy
+and therefore refused without `allow_hosts`) and `env_from_files`
+(`MinEnvFromFileAIJailVersion`, 2.0.0, existence checked in pre-flight;
+ai-jail itself enforces user-owned/0600/outside-the-project). One issue per
+floor batch (`jail-toggles-require-ai-jail-2`, `…-2-5`, `…-2-9`) names the
+flags to drop.
 
 A symlinked `.ai-jail` is a pre-flight error, not something the launcher works
 around. ai-jail never reads a project `.ai-jail` through a symlink, and it
@@ -566,7 +598,7 @@ runs (jail on, container backend off).
 The launcher composes a specific upstream surface, bounded at both ends by four
 constants in `internal/config`: `MinAIJailVersion` (`1.20.1`) and
 `MinAIMemoryVersion` (`1.25.0`) are the floor, `UntestedAIJailVersion`
-(`2.3.0`) and `UntestedAIMemoryVersion` (`2.5.0`) the first version the argv
+(`3.0.0`) and `UntestedAIMemoryVersion` (`3.1.0`) the first version the argv
 has *not* been validated against. Below the floor is `…-version-too-old`; at or
 above the ceiling is `…-version-untested`, which warns and never blocks.
 
@@ -574,7 +606,16 @@ The ceiling exists because the floor only ever looked down. The failure that
 costs an afternoon is upstream keeping every flag the launcher emits while
 changing what they *mean* — ai-jail 1.18.0 is the worked example — and the
 Gherkin contract cannot catch it, because it locks the shape of the argv, not
-its meaning.
+its meaning. Two such meaning changes now sit inside the validated range and
+are handled by their own launcher surface rather than by the ceiling: ai-jail
+2.6.0 turns agent_state on by default (see the `jail_flags` mirror list), and
+ai-memory 2.6.0 downgrades an unreachable server to a degraded launch instead
+of failing. Two more are surfaced as pre-flight warnings for the same reason:
+ai-jail 2.6.2 makes `--lockdown` force `--unshare-net` even with `--network`
+(`lockdown-forces-offline`), and ai-jail 2.8.0 unions the harness's own
+default API host into `--allow-host` filtered egress, so an allow list is no
+longer an exact egress description from there on (documented with the
+`jail_flags` table in the README).
 
 `ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version`
 (5-second timeout each), plus the launcher-managed ai-memory native binary

@@ -104,7 +104,7 @@ const DefaultMemoryServerURL = ""
 // accepts. A catalog entry that sets Memory.RunHarness papers over the gap for
 // itself, but nothing forces it to, and an operator naming the agent directly
 // gets the refusal with no override in sight. The names below were verified
-// against ai-memory 2.4.0 (RunHarnessChoice). A claude* wildcard that upstream
+// against ai-memory 3.0.0 (RunHarnessChoice). A claude* wildcard that upstream
 // also accepts is intentionally absent: pre-flight stays a closed list, and a
 // per-account wrapper uses run_harness: claude.
 var memoryRunHarnesses = []string{
@@ -114,6 +114,7 @@ var memoryRunHarnesses = []string{
 	"kiro", "kiro-cli",
 	"grok", "grok-build",
 	"antigravity", "antigravity-cli", "agy",
+	"copilot", "copilot-cli",
 }
 
 // MemoryRunHarnesses returns the harnesses `ai-memory run` accepts.
@@ -141,11 +142,21 @@ var memoryHarnessAddedIn23 = map[string]struct{}{
 	kimiCodeID: {}, "grok-build": {},
 }
 
+// memoryHarnessAddedIn30 are the harnesses ai-memory 3.0.0 added. Refused
+// below 3.0.0 when the installed version is known.
+var memoryHarnessAddedIn30 = map[string]struct{}{
+	"copilot": {}, "copilot-cli": {},
+}
+
 // MemoryHarnessMinVersion is the first ai-memory that accepts name, or ""
 // when the 1.25 floor already did. Unknown names return "".
 func MemoryHarnessMinVersion(name string) string {
-	if _, ok := memoryHarnessAddedIn23[strings.TrimSpace(name)]; ok {
+	name = strings.TrimSpace(name)
+	if _, ok := memoryHarnessAddedIn23[name]; ok {
 		return MinNoAutowireAIMemoryVersion
+	}
+	if _, ok := memoryHarnessAddedIn30[name]; ok {
+		return MinCopilotAIMemoryVersion
 	}
 	return ""
 }
@@ -216,16 +227,33 @@ const (
 // meaning. These bounds are the part that can.
 //
 // Both bounds record how far the upstream surface was actually read, not a
-// guess. ai-jail 1.21.0 through 2.2.0 kept every flag this launcher already
+// guess. ai-jail 1.21.0 through 2.9.0 kept every flag this launcher already
 // emitted; 2.0.0 added opt-in flags (--allow-host, --audit-log,
-// --env-from-file) and 2.2.0 added --secret, none of which the default argv
-// sends. ai-memory 1.35.0 through 2.4.0 kept the `run` grammar
-// (--workspace, --project, --workstream, --new, --executable, harness,
-// --fresh). 2.3.0 added --no-autowire, which is emitted only at or above
-// MinNoAutowireAIMemoryVersion, and the harness opencode2.
+// --env-from-file), 2.2.0 added --secret and 2.9.0 added --forward-port, none
+// of which the default argv sends. What moved inside the range is meaning,
+// not shape: 2.6.0 turns agent_state on by default (agent credential dirs
+// read-write, provider API keys copied from the host), so the same argv
+// builds a more permissive sandbox on 2.6.0 than on 2.5.x; 2.5.0 (Linux) and
+// 2.8.0 (per-harness API hosts) add default filtered egress whenever network
+// is left unstated, which this launcher never does, and from 2.8.0 the
+// harness's own API host is unioned into --allow-host lists, so allow_hosts
+// stops being an exact egress description there; 2.6.2 moves --env values
+// off the argv and makes --lockdown force --unshare-net even with --network,
+// and 2.5.0 refuses a flag spelled like ai-jail's own after the
+// command word, which is why ai-memory's pre-harness --env KEY=VALUE cannot
+// ride through the jail while --env-file can. ai-memory 1.35.0 through 3.0.0
+// kept the `run` grammar this launcher emits (--workspace, --project,
+// --workstream, --new, --executable, harness, --fresh); the additions are
+// wrapper flags re-extracted from native args (--yolo's own ai-jail offer in
+// 2.5.0, --true-yolo, --env/--env-file, --profile, --require-server and
+// --force-unlock in 2.6.0, --jail/--no-jail in 2.5.2 -- ignored inside
+// ai-jail). 2.6.0 also downgrades an unreachable server to a degraded launch
+// instead of failing, and 3.0.0 adds the copilot/copilot-cli harnesses while
+// removing the 1.x token commands and OPENCODE_ZEN_BASE_URL, none of which
+// this launcher uses.
 const (
-	UntestedAIJailVersion   = "2.3.0"
-	UntestedAIMemoryVersion = "2.5.0"
+	UntestedAIJailVersion   = "3.0.0"
+	UntestedAIMemoryVersion = "3.1.0"
 )
 
 // MinAllowHostAIJailVersion is the first ai-jail that accepts --allow-host.
@@ -233,9 +261,94 @@ const (
 // allow list below this instead of emitting it.
 const MinAllowHostAIJailVersion = "2.0.0"
 
+// MinAgentStateAIJailVersion is the first ai-jail with --agent-state, and the
+// release that turned agent state on by default (harness credential dirs
+// read-write, provider API keys copied from the host). Below it the flag is an
+// unknown option, so a configured agent_state is refused instead of emitted;
+// at or above it the decision is always stated explicitly, like --docker and
+// --network.
+const MinAgentStateAIJailVersion = "2.6.0"
+
+// MinTogglesAIJailVersion is the floor for the ai-jail 2.5.0 toggle batch:
+// --toolchains (the jail-owned dev cache store, on by default upstream),
+// --kvm, and the opt-in credential mounts --github, --aws, --kube, --gcloud
+// and --docker-config. Below it every one of them is an unknown option, so
+// configuring any is refused instead of emitted.
+const MinTogglesAIJailVersion = "2.5.0"
+
+// MinForwardPortAIJailVersion is the first ai-jail with --forward-port, which
+// relays a host loopback port into the sandbox's own loopback.
+const MinForwardPortAIJailVersion = "2.9.0"
+
+// MinLockdownUnshareAIJailVersion is the first ai-jail where --lockdown
+// always forces --unshare-net even when --network is passed. Before it a
+// lockdown with network kept the network; from it the same argv is offline.
+const MinLockdownUnshareAIJailVersion = "2.6.2"
+
+// MinEgressUnionAIJailVersion is the first ai-jail that unions the harness's
+// own default API host into --allow-host filtered egress, so an allow list is
+// no longer an exact egress description from it on.
+const MinEgressUnionAIJailVersion = "2.8.0"
+
+// MinAuditLogAIJailVersion and MinEnvFromFileAIJailVersion are the 2.0.0
+// additions this launcher now mirrors: --audit-log (opt-in launch audit at
+// ~/.local/share/ai-jail/history.jsonl) and --env-from-file (KEY=VALUE lines
+// read with ownership/mode checks upstream applies itself).
+const (
+	MinAuditLogAIJailVersion    = "2.0.0"
+	MinEnvFromFileAIJailVersion = "2.0.0"
+)
+
+// MinSecretAIJailVersion is the first ai-jail with --secret KEY=host, which
+// keeps the real value out of the sandbox entirely (the child sees a
+// placeholder; the filtered-egress proxy substitutes it only for requests to
+// host).
+const MinSecretAIJailVersion = "2.2.0"
+
+// MinModernTogglesAIJailVersion is the floor for the remaining 2.9 toggles
+// this launcher mirrors (--audio, --terminal-passthrough, --macos-host-ipc,
+// --update-check). Their arrival releases were not pinned in the changelog
+// digest, so the floor is the version they were verified against — older
+// jails keep working exactly as before, and a configured toggle below it is
+// refused with the floor named. --x11 and --host-shm carry no floor: the
+// repository's own 1.18.0 notes name both as opt-ins of that release.
+const MinModernTogglesAIJailVersion = "2.9.0"
+
+// MinEnvFileAIMemoryVersion is the first ai-memory whose `run` accepts
+// --env-file (KEY=VALUE lines for the spawned harness, read before the
+// harness name).
+const MinEnvFileAIMemoryVersion = "2.5.0"
+
+// MinProfileAIMemoryVersion is the first ai-memory whose `run` accepts
+// --profile (named env-only launch profiles from config.toml).
+const MinProfileAIMemoryVersion = "2.6.0"
+
+// MinMemoryJailAIMemoryVersion is the first ai-memory whose `run` accepts
+// --jail[=TOGGLES] / --no-jail — ai-memory jailing the session itself.
+const MinMemoryJailAIMemoryVersion = "2.5.2"
+
+// MinCopilotAIMemoryVersion is the first ai-memory with the copilot and
+// copilot-cli harnesses.
+const MinCopilotAIMemoryVersion = "3.0.0"
+
+// MinPreHarnessAIJailVersion is the first ai-jail verified to forward
+// ai-memory's newer pre-harness wrapper flags (--profile, --env-file)
+// through the managed-harness window instead of bailing on the unknown dash
+// token. The 1.x parser accepts exactly five value options there and falls
+// back to the outer command on anything else, silently dropping the
+// agent-state mounts (the build.go comment documents that failure); the
+// forwarding was verified against 2.9.0 with --dry-run.
+const MinPreHarnessAIJailVersion = "2.9.0"
+
 // MinNoAutowireAIMemoryVersion is the first ai-memory whose `run` accepts
 // --no-autowire. Below it the flag is an unknown option, so it is omitted.
 const MinNoAutowireAIMemoryVersion = "2.3.0"
+
+// MinRequireServerAIMemoryVersion is the first ai-memory that knows
+// AI_MEMORY_RUN_REQUIRE_SERVER, and the release that downgraded an
+// unreachable server to a degraded launch. Below it the CLI already fails
+// closed, so the launcher exports nothing there.
+const MinRequireServerAIMemoryVersion = "2.6.0"
 
 // Shared catalog names and platform identifiers. Keeping these values in the
 // config package avoids slightly different spellings in the CLI, catalog and

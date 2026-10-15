@@ -505,6 +505,22 @@ func TestDetectMemoryVersionIgnoresAFailedProbe(t *testing.T) {
 	}
 }
 
+// The floor checks are inclusive: the release that added the flag parses it.
+func TestMemoryRunFloorsIncludeTheExactRelease(t *testing.T) {
+	if !MemorySupportsEnvFile(config.MinEnvFileAIMemoryVersion) {
+		t.Fatalf("MemorySupportsEnvFile(%s) = false", config.MinEnvFileAIMemoryVersion)
+	}
+	if !MemorySupportsProfile(config.MinProfileAIMemoryVersion) {
+		t.Fatalf("MemorySupportsProfile(%s) = false", config.MinProfileAIMemoryVersion)
+	}
+	if !MemorySupportsJail(config.MinMemoryJailAIMemoryVersion) {
+		t.Fatalf("MemorySupportsJail(%s) = false", config.MinMemoryJailAIMemoryVersion)
+	}
+	if MemorySupportsProfile("2.5.9") || MemorySupportsEnvFile("") || MemorySupportsJail("2.5.1") {
+		t.Fatal("a version below the floor, or an unreadable probe, must not clear it")
+	}
+}
+
 func TestManagedRunnerProbePathMatchesTheInstalledLocation(t *testing.T) {
 	got := managedRunnerProbePath()
 	if got != managedNativeRunnerPath("") {

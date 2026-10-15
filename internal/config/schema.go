@@ -167,7 +167,16 @@ type JailFlags struct {
 	// Network is the second capability the launcher never leaves unstated.
 	// ai-jail 1.18.0 made it opt-in; a sandbox without it cannot reach any
 	// model API, so appendNetworkDecision always emits one form or the other.
-	Network    *bool `yaml:"network,omitempty"`
+	Network *bool `yaml:"network,omitempty"`
+	// AgentState is the third decision the launcher states explicitly, but
+	// only from ai-jail 2.6.0: that release turned agent state on by default
+	// (the harness's own credential dirs mounted read-write, provider API
+	// keys copied from the host), so the same argv builds a more permissive
+	// sandbox on 2.6.0 than on 2.5.x. At or above MinAgentStateAIJailVersion
+	// appendAgentStateDecision emits one form or the other — unset follows
+	// the upstream default, which is on. Below it (or when the version is
+	// unreadable) nothing is emitted and configuring the key is refused.
+	AgentState *bool `yaml:"agent_state,omitempty"`
 	Tailscale  *bool `yaml:"tailscale,omitempty"`
 	GPU        *bool `yaml:"gpu,omitempty"`
 	Display    *bool `yaml:"display,omitempty"`
@@ -199,6 +208,46 @@ type JailFlags struct {
 	// StatusBarStyle selects a status bar theme ("dark", "light", or
 	// "pastel"); when set it wins over the StatusBar boolean toggle.
 	StatusBarStyle string `yaml:"status_bar_style,omitempty"`
+	// The ai-jail 2.5.0 toggle batch (MinTogglesAIJailVersion): toolchains
+	// is the jail-owned dev-toolchain cache store (on by default upstream,
+	// Linux); kvm passes /dev/kvm through; the credential toggles are the
+	// opt-in read-only mounts and, for github, the keyring token flow —
+	// complementary to the gh permission, which mounts ~/.config/gh. nil
+	// leaves each in ai-jail's auto mode; configuring any below the floor is
+	// refused in pre-flight.
+	Toolchains   *bool `yaml:"toolchains,omitempty"`
+	KVM          *bool `yaml:"kvm,omitempty"`
+	GitHub       *bool `yaml:"github,omitempty"`
+	AWS          *bool `yaml:"aws,omitempty"`
+	Kube         *bool `yaml:"kube,omitempty"`
+	GCloud       *bool `yaml:"gcloud,omitempty"`
+	DockerConfig *bool `yaml:"docker_config,omitempty"`
+	// ForwardPorts (ai-jail >= 2.9.0) relays a host loopback port into the
+	// sandbox's own loopback, one --forward-port per entry. Pre-flight
+	// refuses the combinations ai-jail itself aborts on: unrestricted
+	// network, ports below 1024 or above 65535, and more than 256 entries.
+	ForwardPorts []int `yaml:"forward_ports,omitempty"`
+	// The remaining ai-jail toggle mirror. X11 and HostSHM are 1.18 opt-ins
+	// (no floor); Audio, TerminalPassthrough, MacOSHostIPC and UpdateCheck
+	// are floored at the version they were verified on
+	// (MinModernTogglesAIJailVersion); AuditLog is the 2.0.0 opt-in audit
+	// journal. nil leaves each in ai-jail's auto mode, which is off for
+	// every one of them.
+	X11              *bool `yaml:"x11,omitempty"`
+	HostSHM          *bool `yaml:"host_shm,omitempty"`
+	Audio            *bool `yaml:"audio,omitempty"`
+	TerminalPassthru *bool `yaml:"terminal_passthrough,omitempty"`
+	MacOSHostIPC     *bool `yaml:"macos_host_ipc,omitempty"`
+	UpdateCheck      *bool `yaml:"update_check,omitempty"`
+	AuditLog         *bool `yaml:"audit_log,omitempty"`
+	// Secrets (ai-jail >= 2.2.0) forwards one --secret KEY=host per entry:
+	// the child sees a placeholder and the filtered-egress proxy substitutes
+	// the real value only for requests to host. Requires allow_hosts.
+	Secrets []string `yaml:"secrets,omitempty"`
+	// EnvFromFiles (ai-jail >= 2.0.0) forwards one --env-from-file per
+	// entry; ai-jail itself requires the file to be user-owned, mode 0600
+	// and outside the project.
+	EnvFromFiles []string `yaml:"env_from_files,omitempty"`
 }
 
 // PortMapping maps a container port to a host port. Host defaults to Internal
@@ -244,13 +293,16 @@ func (p PortMapping) DockerFlag() string {
 
 // IsZero reports whether no jail flag deviates from the ai-jail defaults.
 func (f JailFlags) IsZero() bool {
-	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Network == nil && f.Tailscale == nil &&
+	return f.Lockdown == nil && f.PrivateHome == nil && f.Docker == nil && f.Network == nil && f.AgentState == nil && f.Tailscale == nil &&
 		f.GPU == nil && f.Display == nil && f.Mise == nil && f.Worktree == nil &&
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.SaveConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
+		f.Toolchains == nil && f.KVM == nil && f.GitHub == nil && f.AWS == nil && f.Kube == nil && f.GCloud == nil && f.DockerConfig == nil &&
+		f.X11 == nil && f.HostSHM == nil && f.Audio == nil && f.TerminalPassthru == nil && f.MacOSHostIPC == nil && f.UpdateCheck == nil && f.AuditLog == nil &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
 		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.MaskExceptions) == 0 &&
-		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && f.StatusBarStyle == ""
+		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && len(f.ForwardPorts) == 0 &&
+		len(f.Secrets) == 0 && len(f.EnvFromFiles) == 0 && f.StatusBarStyle == ""
 }
 
 // Options holds the per-launch behavior toggles persisted in the local config.
@@ -338,7 +390,27 @@ type Options struct {
 	ContainerDependencies DependencySettings `yaml:"container_dependencies,omitempty"`
 	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
 	// current workstream instead of resuming or adopting one.
-	Fresh         bool              `yaml:"fresh,omitempty"`
+	Fresh bool `yaml:"fresh,omitempty"`
+	// MemoryProfile maps to `ai-memory run --profile <NAME>` (ai-memory
+	// >= 2.6.0): a named env-only launch profile from the server's config.
+	// Must precede the harness, so a jailed launch also needs
+	// MinPreHarnessAIJailVersion on the ai-jail side.
+	MemoryProfile string `yaml:"memory_profile,omitempty"`
+	// MemoryEnvFile maps to `ai-memory run --env-file <PATH>` (ai-memory
+	// >= 2.5.0): KEY=VALUE lines merged into the harness environment. The
+	// file is mounted read-only into the jail. `--env KEY=VALUE` is
+	// deliberately not exposed: ai-jail refuses a flag spelled like its own
+	// after the command word, so --env-file is the one form that works
+	// jailed and unjailed alike.
+	MemoryEnvFile string `yaml:"memory_env_file,omitempty"`
+	// MemoryJail maps to ai-memory's own jailing (ai-memory >= 2.5.2):
+	// "" leaves ai-memory in charge (its --yolo offer), "no" / "false" /
+	// "none" emits --no-jail (skip the offer), and any other non-empty value
+	// is the toggle list passed as --jail=LIST (bare smart defaults with
+	// "smart" or "true"). Only for launches the launcher itself neither
+	// jails nor containers — ai-memory ignores --jail inside ai-jail and a
+	// container image has no ai-jail to run.
+	MemoryJail    string            `yaml:"memory_jail,omitempty"`
 	NewWorkstream string            `yaml:"new_workstream,omitempty"`
 	Workstream    string            `yaml:"workstream,omitempty"`
 	Workspace     string            `yaml:"workspace,omitempty"`

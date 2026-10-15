@@ -75,17 +75,23 @@ func appendPermissionArgs(command []string, cfg LaunchConfig) []string {
 	return command
 }
 
-// jailToggle declares one tri-state ai-jail capability flag.
+// jailToggle declares one tri-state ai-jail capability flag. floor is the
+// first ai-jail that accepts it ("" when the flag exists across the whole
+// supported range): a toggle configured below its floor is refused in
+// pre-flight, and it emits nothing here regardless, so a bypassed or
+// previewed build can never hand ai-jail an unknown option.
 type jailToggle struct {
 	name  string
 	value *bool
+	floor string
 }
 
-// jailToggles lists the ai-jail v1.16 capability flags in their stable
-// emission order so the mapping stays declarative instead of a chain of ifs.
+// jailToggles lists the ai-jail capability flags in their stable emission
+// order so the mapping stays declarative instead of a chain of ifs.
 //
 // docker is absent on purpose: unlike every other capability here it is never
 // left to ai-jail's auto mode, so appendDockerDecision owns its emission.
+// agent_state is absent for the same reason (appendAgentStateDecision).
 func jailToggles(flags config.JailFlags) []jailToggle {
 	return []jailToggle{
 		{name: "lockdown", value: flags.Lockdown},
@@ -101,6 +107,26 @@ func jailToggles(flags config.JailFlags) []jailToggle {
 		{name: "status-bar", value: flags.StatusBar},
 		{name: "hide-config", value: flags.HideConfig},
 		{name: "save-config", value: flags.SaveConfig},
+		// The ai-jail 2.5.0 batch: toolchains is on by default upstream, kvm
+		// and the credential toggles are opt-in there. nil keeps ai-jail's
+		// own default in charge — the launcher only forwards a decision.
+		{name: "toolchains", value: flags.Toolchains, floor: config.MinTogglesAIJailVersion},
+		{name: "kvm", value: flags.KVM, floor: config.MinTogglesAIJailVersion},
+		{name: "github", value: flags.GitHub, floor: config.MinTogglesAIJailVersion},
+		{name: "aws", value: flags.AWS, floor: config.MinTogglesAIJailVersion},
+		{name: "kube", value: flags.Kube, floor: config.MinTogglesAIJailVersion},
+		{name: "gcloud", value: flags.GCloud, floor: config.MinTogglesAIJailVersion},
+		{name: "docker-config", value: flags.DockerConfig, floor: config.MinTogglesAIJailVersion},
+		// The remaining mirror. x11 and host-shm are 1.18 opt-ins and carry
+		// no floor; the 2.9-verified toggles and the 2.0.0 audit journal are
+		// floored at their arrival or verification version.
+		{name: "x11", value: flags.X11},
+		{name: "host-shm", value: flags.HostSHM},
+		{name: "audio", value: flags.Audio, floor: config.MinModernTogglesAIJailVersion},
+		{name: "terminal-passthrough", value: flags.TerminalPassthru, floor: config.MinModernTogglesAIJailVersion},
+		{name: "macos-host-ipc", value: flags.MacOSHostIPC, floor: config.MinModernTogglesAIJailVersion},
+		{name: "update-check", value: flags.UpdateCheck, floor: config.MinModernTogglesAIJailVersion},
+		{name: "audit-log", value: flags.AuditLog, floor: config.MinAuditLogAIJailVersion},
 	}
 }
 
@@ -115,22 +141,57 @@ func statusBarStyle(flags config.JailFlags) string {
 	return ""
 }
 
-// appendJailFlags maps the declarative jail options to the exact ai-jail
-// v1.16 CLI flags in a deterministic order: status bar style, toggles, list
-// flags, browser profile, claude dir, and the v1.15 exception lists. A
-// configured status bar style wins over the StatusBar toggle, so --no-status-bar
-// is never emitted together with --status-bar=STYLE.
-func appendJailFlags(command []string, flags config.JailFlags) []string {
+// appendJailFlags maps the declarative jail options to the exact ai-jail CLI
+// flags in a deterministic order: status bar style, toggles, list flags,
+// browser profile, claude dir, and the v1.15 exception lists. A configured
+// status bar style wins over the StatusBar toggle, so --no-status-bar
+// is never emitted together with --status-bar=STYLE. A toggle or list whose
+// flag arrived after the detected ai-jail (or when the version is unreadable)
+// emits nothing — pre-flight is what refuses those configurations, and the
+// silent skip keeps a TUI preview or a bypassed validation from handing
+// ai-jail an unknown option.
+func appendJailFlags(command []string, flags config.JailFlags, version string) []string {
+	command = appendJailStatusBar(command, flags)
+	command = appendConfiguredJailToggles(command, flags, version)
+	command = appendJailPathFlags(command, flags)
+	command = appendJailPortFlags(command, flags, version)
+	command = appendJailSecretAndEnvFlags(command, flags, version)
+	command = appendJailBrowser(command, flags)
+	command = appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+	return appendJailExceptionFlags(command, flags)
+}
+
+// appendJailStatusBar emits --status-bar=STYLE when a recognized style is set.
+// The style wins over the StatusBar toggle, which appendConfiguredJailToggles
+// then skips so the two forms are never emitted together.
+func appendJailStatusBar(command []string, flags config.JailFlags) []string {
 	style := statusBarStyle(flags)
 	if style != "" {
 		command = append(command, "--status-bar="+style)
 	}
+	return command
+}
+
+// appendConfiguredJailToggles emits each declarative toggle the detected
+// ai-jail accepts. A toggle below its floor emits nothing; pre-flight is what
+// refuses that configuration.
+func appendConfiguredJailToggles(command []string, flags config.JailFlags, version string) []string {
+	style := statusBarStyle(flags)
 	for _, toggle := range jailToggles(flags) {
 		if toggle.name == "status-bar" && style != "" {
 			continue
 		}
+		if toggle.floor != "" && !jailSupportsFlag(version, toggle.floor) {
+			continue
+		}
 		command = appendJailToggle(command, toggle)
 	}
+	return command
+}
+
+// appendJailPathFlags emits the path-list flags that exist across the whole
+// supported ai-jail range, in their stable order.
+func appendJailPathFlags(command []string, flags config.JailFlags) []string {
 	for _, path := range flags.OverlayMaps {
 		command = appendFlagValue(command, "--overlay-map", path)
 	}
@@ -140,16 +201,55 @@ func appendJailFlags(command []string, flags config.JailFlags) []string {
 	for _, path := range flags.DenyPaths {
 		command = appendFlagValue(command, "--deny-path", path)
 	}
+	return command
+}
+
+// appendJailPortFlags emits --allow-tcp-port across the supported range and
+// --forward-port only when the detected ai-jail accepts it.
+func appendJailPortFlags(command []string, flags config.JailFlags, version string) []string {
 	for _, port := range flags.AllowTCPPorts {
 		command = append(command, "--allow-tcp-port", strconv.Itoa(port))
 	}
+	if jailSupportsFlag(version, config.MinForwardPortAIJailVersion) {
+		for _, port := range flags.ForwardPorts {
+			command = append(command, "--forward-port", strconv.Itoa(port))
+		}
+	}
+	return command
+}
+
+// appendJailSecretAndEnvFlags emits --secret and --env-from-file only when
+// the detected ai-jail accepts them. Older jails get nothing here; pre-flight
+// refuses the configuration instead.
+func appendJailSecretAndEnvFlags(command []string, flags config.JailFlags, version string) []string {
+	if jailSupportsFlag(version, config.MinSecretAIJailVersion) {
+		for _, secret := range flags.Secrets {
+			command = appendFlagValue(command, "--secret", secret)
+		}
+	}
+	if jailSupportsFlag(version, config.MinEnvFromFileAIJailVersion) {
+		for _, path := range flags.EnvFromFiles {
+			command = appendFlagValue(command, "--env-from-file", path)
+		}
+	}
+	return command
+}
+
+// appendJailBrowser emits the browser mode. hard and soft select a profile;
+// off is the explicit negative form. Anything else leaves ai-jail's default.
+func appendJailBrowser(command []string, flags config.JailFlags) []string {
 	switch strings.ToLower(strings.TrimSpace(flags.Browser)) {
 	case "hard", "soft":
 		command = append(command, "--browser="+strings.ToLower(strings.TrimSpace(flags.Browser)))
 	case "off":
 		command = append(command, "--no-browser")
 	}
-	command = appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+	return command
+}
+
+// appendJailExceptionFlags emits the v1.15 exception lists after the other
+// path flags so the argv order stays stable.
+func appendJailExceptionFlags(command []string, flags config.JailFlags) []string {
 	for _, path := range flags.MaskExceptions {
 		command = appendFlagValue(command, "--mask-except", path)
 	}
@@ -198,6 +298,21 @@ func jailSupportsAllowHost(version string) bool {
 		return false
 	}
 	return compareVersions(version, config.MinAllowHostAIJailVersion) >= 0
+}
+
+func jailSupportsAgentState(version string) bool {
+	return jailSupportsFlag(version, config.MinAgentStateAIJailVersion)
+}
+
+// jailSupportsFlag reports whether the detected ai-jail is at least floor. An
+// unreadable version is never evidence a flag exists — the same rule the
+// allow-host and agent-state gates apply.
+func jailSupportsFlag(version, floor string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return compareVersions(version, floor) >= 0
 }
 
 // memoryServerEndpoint is the scheme and host ai-memory will call. An empty

@@ -224,6 +224,56 @@ func disableMemoryAutowire(cfg LaunchConfig) bool {
 	return cfg.UseMemory && !cfg.MemoryAutowire && MemoryDisablesAutowire(cfg.MemoryVersion)
 }
 
+// MemoryRequiresServer reports whether ai-memory knows the require-server
+// switch. The flag and env arrived in 2.6.0, the release that downgraded an
+// unreachable server to a degraded launch; an older CLI already fails closed,
+// and an unreadable probe is not evidence the variable would be honored.
+func MemoryRequiresServer(version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return compareVersions(version, config.MinRequireServerAIMemoryVersion) >= 0
+}
+
+// memoryRequiresServer is the launch decision: the launcher stays fail-closed
+// on 2.6.0+ unless the operator opted into the degraded mode. Unset counts as
+// fail-closed — that is the pre-2.6 behavior the launcher keeps.
+func memoryRequiresServer(cfg LaunchConfig) bool {
+	if cfg.MemoryRequireServer != nil && !*cfg.MemoryRequireServer {
+		return false
+	}
+	return MemoryRequiresServer(cfg.MemoryVersion)
+}
+
+// MemorySupportsEnvFile reports whether ai-memory accepts `run --env-file`
+// (2.5.0+). An unreadable probe is not evidence the flag parses.
+func MemorySupportsEnvFile(version string) bool {
+	return versionAtLeast(version, config.MinEnvFileAIMemoryVersion)
+}
+
+// MemorySupportsProfile reports whether ai-memory accepts `run --profile`
+// (2.6.0+).
+func MemorySupportsProfile(version string) bool {
+	return versionAtLeast(version, config.MinProfileAIMemoryVersion)
+}
+
+// MemorySupportsJail reports whether ai-memory accepts `run --jail` /
+// `--no-jail` (2.5.2+).
+func MemorySupportsJail(version string) bool {
+	return versionAtLeast(version, config.MinMemoryJailAIMemoryVersion)
+}
+
+// versionAtLeast is the shared dotted-version floor check with the
+// unreadable-version rule: an empty version never clears a floor.
+func versionAtLeast(version, floor string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return compareVersions(version, floor) >= 0
+}
+
 // AutowireOptIn reports whether value is the operator asking to keep
 // ai-memory's autowire. Accepted spellings match the usual env booleans.
 func AutowireOptIn(value string) bool {

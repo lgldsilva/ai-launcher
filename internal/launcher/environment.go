@@ -28,6 +28,7 @@ var ownedMemoryEnvKeys = []string{
 	"AI_MEMORY_AUTH_TOKEN",
 	"AI_MEMORY_NATIVE_BIN",
 	"AI_MEMORY_RUN_AUTOWIRE",
+	"AI_MEMORY_RUN_REQUIRE_SERVER",
 }
 
 // Environment returns the inherited environment with the configured ai-memory
@@ -88,6 +89,16 @@ func Environment(cfg LaunchConfig) []string {
 		env = upsertEnv(env, "AI_MEMORY_RUN_AUTOWIRE", "false")
 	case cfg.MemoryAutowire && MemoryDisablesAutowire(cfg.MemoryVersion):
 		env = upsertEnv(env, "AI_MEMORY_RUN_AUTOWIRE", "true")
+	}
+	// ai-memory 2.6.0 downgrades an unreachable server to a degraded launch
+	// (the harness starts, no lease or workstream context, hooks spool) where
+	// every earlier release failed. The launcher stays fail-closed by
+	// default — the pre-2.6 behavior — via the env form, which reaches every
+	// run shape including a session continue, and is simply ignored by an
+	// ai-memory too old to know it. memory_require_server: false adopts the
+	// degraded mode by exporting nothing.
+	if memoryRequiresServer(cfg) {
+		env = upsertEnv(env, "AI_MEMORY_RUN_REQUIRE_SERVER", "true")
 	}
 	return env
 }

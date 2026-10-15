@@ -23,6 +23,9 @@ cat >"$fake_bin/docker" <<'EOF'
 #!/bin/sh
 
 touch "$MUTATION_TEST_DOCKER_CALLED"
+if [ -n "${MUTATION_TEST_DOCKER_ARGS:-}" ]; then
+  printf '%s\n' "$@" >"$MUTATION_TEST_DOCKER_ARGS"
+fi
 exit 99
 EOF
 chmod 755 "$fake_bin/docker"
@@ -60,6 +63,7 @@ echo 'PASS: mutation wrapper skips diffs without mutation-eligible Go files'
 
 fixture_dir="$tmp_dir/eligible-repo"
 eligible_docker_called="$tmp_dir/eligible-docker-called"
+eligible_docker_args="$tmp_dir/eligible-docker-args"
 eligible_log_file="$tmp_dir/eligible-mutation.log"
 eligible_report_file="$tmp_dir/eligible-gremlins.json"
 mkdir -p "$fixture_dir/internal/config" "$fixture_dir/scripts"
@@ -69,6 +73,7 @@ chmod 755 "$fixture_dir/scripts/mutation.sh"
 git -C "$fixture_dir" init -q
 git -C "$fixture_dir" config user.email mutation-test@example.invalid
 git -C "$fixture_dir" config user.name mutation-test
+printf '%s\n' 'module example.com/eligible' '' 'go 1.26.9' >"$fixture_dir/go.mod"
 printf '%s\n' 'package config' 'func Value() int { return 1 }' >"$fixture_dir/internal/config/value.go"
 git -C "$fixture_dir" add internal/config/value.go
 git -C "$fixture_dir" -c core.hooksPath=/dev/null commit -qm base
@@ -80,6 +85,7 @@ git -C "$fixture_dir" -c core.hooksPath=/dev/null commit -qm change
 if (
   cd "$fixture_dir"
   MUTATION_TEST_DOCKER_CALLED="$eligible_docker_called" \
+    MUTATION_TEST_DOCKER_ARGS="$eligible_docker_args" \
     PATH="$fake_bin:$PATH" \
     MUTATION_BASE="$eligible_base" \
     MUTATION_OUTPUT="$eligible_report_file" \
@@ -92,6 +98,12 @@ fi
 if [ ! -e "$eligible_docker_called" ]; then
   echo "mutation wrapper did not invoke Docker for an eligible Go diff"
   sed -n '1,120p' "$eligible_log_file"
+  exit 1
+fi
+
+if ! grep -F 'GOTOOLCHAIN=go1.26.9' "$eligible_docker_args" >/dev/null; then
+  echo "mutation wrapper did not set GOTOOLCHAIN to the go.mod toolchain"
+  sed -n '1,200p' "$eligible_docker_args"
   exit 1
 fi
 

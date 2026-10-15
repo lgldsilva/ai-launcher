@@ -34,8 +34,9 @@ ai-jail does not exist — the launcher disables the sandbox with a warning and
 runs the rest.
 
 `ai-memory run` accepts a fixed harness list — `claude`, `codex`, `opencode`,
-`pi`, `crush`, `omp`, `kimi`, `grok`, `command-code`, `kiro` and `antigravity`,
-the last three with the aliases their own CLIs are spelled with (`cmd`,
+`pi`, `crush`, `omp`, `kimi`, `grok`, `command-code`, `kiro`, `antigravity`
+and `copilot` (3.0.0+),
+the last four with the aliases their own CLIs are spelled with (`cmd`,
 `kiro-cli`, `agy`) — and rejects anything else. A catalog
 agent outside that list either declares `memory.run_harness` to map onto one of
 them (as `oc` does onto `opencode`) or declares `supports_memory: false`;
@@ -48,6 +49,32 @@ When the managed ai-memory native binary exists
 `--upgrade` from the verified release assets), the launcher exports
 `AI_MEMORY_NATIVE_BIN` into the launched process so the memory wrapper uses it
 directly — nothing is downloaded inside the jail.
+
+Managed launches stay **fail-closed** when the ai-memory server is
+unreachable. ai-memory 2.6.0 changed its own default there to a degraded
+launch (the harness still starts, no workstream lease or context, hooks spool
+locally); the launcher keeps the older fail-closed behavior by exporting
+`AI_MEMORY_RUN_REQUIRE_SERVER=true` on 2.6.0+. Set `memory_require_server:
+false` in the global config to adopt the degraded mode — the run proceeds and
+`ai-memory recover` drains the spool when the server returns.
+
+Three `ai-memory run` options are exposed as local-config options:
+`memory_profile` (ai-memory ≥ 2.6.0, `run --profile <NAME>` env-only launch
+profiles), `memory_env_file` (≥ 2.5.0, `run --env-file <PATH>` with
+`KEY=VALUE` lines for the harness; the file is mounted read-only into the
+jail), and `memory_jail` (≥ 2.5.2) for launches the launcher itself neither
+jails nor containers: `no`/`false`/`none` emits `--no-jail` (skips the
+`--yolo` ai-jail offer), `smart`/`true` emits bare `--jail`, and any other
+value is the toggle list (`--jail=github,aws`). Inside the launcher's jail
+ai-memory ignores `--jail`, so `memory_jail` there only draws a warning.
+`--env KEY=VALUE` is deliberately not exposed: ai-jail refuses a flag spelled
+like its own after the command word, so `--env-file` is the one form that
+works jailed and unjailed alike. `--profile` and `--env-file` precede the
+harness, which through a jail additionally needs ai-jail ≥ 2.9.0 (the 1.x
+managed-harness parser bails on unknown pre-harness flags) — pre-flight
+refuses the combinations with dedicated codes instead. One-off wrapper flags
+such as `--force-unlock` can ride `extra_args`: ai-memory re-extracts its
+exact wrapper flags from the native arguments.
 
 ## Screenshots
 
@@ -800,8 +827,12 @@ synonym for unset, so both forms are always emitted:
 
 | `jail_flags` key | Type | ai-jail flag emitted |
 | --- | --- | --- |
-| `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `save_config` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
+| `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `save_config`, `x11`, `host_shm` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
+| `audio`, `terminal_passthrough`, `macos_host_ipc`, `update_check` | tri-state bool | ai-jail ≥ 2.9.0 only (the version they were verified against): `--flag` / `--no-flag` when set, nothing when unset. Refused below (`jail-toggles-require-ai-jail-2-9`) |
+| `audit_log` | tri-state bool | `--audit-log` / `--no-audit-log` on ai-jail ≥ 2.0.0 (the opt-in audit journal at `~/.local/share/ai-jail/history.jsonl`). Refused below 2.0 (`jail-toggles-require-ai-jail-2`) |
+| `toolchains`, `kvm`, `github`, `aws`, `kube`, `gcloud`, `docker_config` | tri-state bool | ai-jail ≥ 2.5.0 only: `--flag` / `--no-flag` when set, nothing when unset (ai-jail's own default stays in charge: `toolchains` on, the rest off). `github` shares the gh config read-only plus the keyring token flow — complementary to the `gh` permission. Refused below 2.5.0 (`jail-toggles-require-ai-jail-2-5`) |
 | `docker` | tri-state bool | `--docker` when `true`, `--no-docker` when `false`. **Unset is not auto**: with no `jail_flags.docker` and the Docker permission off, the launcher still emits `--no-docker` |
+| `agent_state` | tri-state bool | `--agent-state` / `--no-agent-state` on ai-jail ≥ 2.6.0 only. **Unset is not auto there**: 2.6.0 turned agent state on by default (harness credential dirs read-write, provider API keys copied from the host), so the launcher states the decision — unset follows the upstream default (on); `false` restores the pre-2.6 isolation. Refused below 2.6.0 (`agent-state-requires-ai-jail-2-6`). An explicit `lockdown` always emits `--no-agent-state` |
 | `status_bar_style` | string (`dark` / `light` / `pastel`) | `--status-bar=STYLE` (suppresses the boolean `status_bar` forms) |
 | `browser` | string (`hard` / `soft` / `off`) | `--browser=hard` / `--browser=soft` / `--no-browser` |
 | `claude_dir` | string | `--claude-dir <PATH>` |
@@ -812,7 +843,10 @@ synonym for unset, so both forms are always emitted:
 | `deny_path_exceptions` | list | `--deny-path-except <PATH>` per entry |
 | `hide_dotdirs` | list | `--hide-dotdir <NAME>` per entry |
 | `allow_tcp_ports` | list of int | refused: ai-jail rejects `--allow-tcp-port` |
-| `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0, with `network: true`, and with memory unless `memory_server_url` is https and that host is listed |
+| `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0, with `network: true`, and with memory unless `memory_server_url` is https and that host is listed. **On ai-jail >= 2.8 the list is not exact**: the selected harness's own default API host (e.g. `api.anthropic.com` for claude) is unioned into the filtered egress |
+| `forward_ports` | list of int | `--forward-port <PORT>` per entry on ai-jail >= 2.9.0, under filtered egress (`--no-network`). Refused below 2.9.0, with unrestricted network, for ports outside 1024-65535, and above 256 entries |
+| `secrets` | list of `KEY=host` | `--secret KEY=host` per entry on ai-jail >= 2.2.0: the child sees a placeholder and the filtered-egress proxy substitutes the real value only for requests to host. KEY must reach the sandbox env (`jail_env` passthrough or `env_from_files`) — ai-jail refuses a secret whose key it does not have. Refused below 2.2, without `allow_hosts` (`secrets-require-filtered-egress`), and for entries that are not `KEY=host` |
+| `env_from_files` | list of paths | `--env-from-file <PATH>` per entry on ai-jail >= 2.0.0; must be mode 0600 (checked in pre-flight), user-owned and outside the project (ai-jail's own rules). Refused below 2.0 and for paths that do not exist |
 
 ## Security
 
@@ -827,7 +861,7 @@ Layers of defense:
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
-  (`ai-jail` < 2.3.0, `ai-memory` < 2.5.0). It probes `--version` and reports
+  (`ai-jail` < 3.0.0, `ai-memory` < 3.1.0). It probes `--version` and reports
   an install that is older (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`) or newer than the validated range
   (`…-version-untested`). It also probes the launcher-managed ai-memory native

@@ -1020,6 +1020,468 @@ Feature: Launcher command contract
       --no-autowire
       """
 
+  # ai-jail 2.6.0 turned agent state on by default (harness credential dirs
+  # read-write, provider API keys copied from the host), so the same argv
+  # built a different sandbox across 2.5.x and 2.6.x. From 2.6.0 the launcher
+  # states the decision after the network decision; unset follows the
+  # upstream default, which is on.
+  Scenario: States the agent-state decision on ai-jail 2.6+
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.6.0"
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      claude
+      """
+
+  Scenario: Emits --no-agent-state when agent_state is false
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        agent_state: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --no-agent-state
+      claude
+      """
+
+  Scenario: Lockdown forces --no-agent-state
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.6.0"
+      jail_flags:
+        lockdown: true
+        agent_state: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --no-agent-state
+      --lockdown
+      claude
+      """
+
+  Scenario: Refuses a configured agent_state below ai-jail 2.6
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.5.9"
+      jail_flags:
+        agent_state: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      agent-state-requires-ai-jail-2-6
+      """
+
+  # The ai-jail 2.5.0 toggle batch. nil leaves ai-jail's own default in
+  # charge (toolchains on, kvm and the credential mounts off); a configured
+  # value forces its form, and only on a jail new enough to accept the flag.
+  Scenario: Emits the ai-jail 2.5 toggles when configured
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        toolchains: false
+        kvm: true
+        github: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --no-toolchains
+      --kvm
+      --github
+      claude
+      """
+
+  Scenario: Refuses a 2.5 toggle below ai-jail 2.5
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.4.9"
+      jail_flags:
+        kvm: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-toggles-require-ai-jail-2-5
+      """
+
+  # forward_ports (ai-jail 2.9.0) relays a host loopback port into the
+  # sandbox under filtered egress — the same mode allow_hosts selects.
+  Scenario: Emits forward ports on ai-jail 2.9
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        forward_ports: [8080, 3000]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --forward-port
+      8080
+      --forward-port
+      3000
+      claude
+      """
+
+  Scenario: Refuses forward ports with unrestricted network
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        forward_ports: [8080]
+        network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      forward-ports-conflict-with-network
+      """
+
+  Scenario: Refuses forward ports below ai-jail 2.9
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.8.1"
+      jail_flags:
+        forward_ports: [8080]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      forward-ports-require-ai-jail-2-9
+      """
+
+  # ai-memory's own run options: --profile and --env-file precede the
+  # harness, memory_jail is host-launch only (ai-memory ignores --jail inside
+  # ai-jail and a container image has no ai-jail to run).
+  Scenario: Emits the ai-memory run options before the harness on a host launch
+    Given a launch configuration
+      """
+      agent: claude
+      jail: false
+      memory: true
+      memory_version: "3.0.0"
+      memory_profile: ci
+      memory_env_file: /tmp/env
+      memory_jail: github,aws
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --profile
+      ci
+      --env-file
+      /tmp/env
+      --jail=github,aws
+      claude
+      --no-autowire
+      """
+
+  Scenario: Emits the ai-memory run options through a 2.9 jail with the env file mounted
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: true
+      jail_version: "2.9.0"
+      memory_version: "3.0.0"
+      memory_profile: ci
+      memory_env_file: /tmp/env
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --map
+      /tmp/env
+      ai-memory
+      run
+      --profile
+      ci
+      --env-file
+      /tmp/env
+      claude
+      --no-autowire
+      """
+
+  Scenario: Refuses memory_profile below ai-memory 2.6
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "2.5.9"
+      memory_profile: ci
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-profile-requires-ai-memory-2-6
+      """
+
+  Scenario: Refuses a pre-harness run option through an old jail
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: true
+      jail_version: "2.2.0"
+      memory_version: "3.0.0"
+      memory_profile: ci
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-run-flag-requires-ai-jail-2-9
+      """
+
+  Scenario: Refuses memory_jail below ai-memory 2.5.2
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "2.4.9"
+      memory_jail: github
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-jail-requires-ai-memory-2-5-2
+      """
+
+  Scenario: Warns when memory_jail meets the launcher jail
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: true
+      jail_version: "2.9.0"
+      memory_version: "3.0.0"
+      memory_jail: github
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-jail-with-launcher-jail
+      """
+
+  # ai-jail 2.6.2 made --lockdown always force --unshare-net: the same
+  # lockdown + network argv flipped from networked to offline. The sentinel
+  # issue proves preflight ran on the release before the flip.
+  Scenario: Warns when lockdown meets unrestricted network on ai-jail 2.6.2+
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        lockdown: true
+        network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      lockdown-forces-offline
+      """
+
+  Scenario: Lockdown keeps the network below the unshare flip
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: false
+      jail_version: "2.6.1"
+      jail_flags:
+        lockdown: true
+        network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-options-without-jail
+      """
+
+  # The remaining toggle mirror: x11/host_shm are 1.18 opt-ins (no floor);
+  # audio/terminal_passthrough/macos_host_ipc/update_check are floored at the
+  # verified 2.9; audit_log at 2.0. secrets ride filtered egress only.
+  Scenario: Emits the remaining ai-jail toggles when configured
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        x11: true
+        audio: true
+        audit_log: true
+        update_check: false
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --x11
+      --audio
+      --no-update-check
+      --audit-log
+      claude
+      """
+
+  Scenario: Emits secrets alongside filtered egress
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        allow_hosts: [github.com]
+        secrets: [GITHUB_TOKEN=github.com]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --secret
+      GITHUB_TOKEN=github.com
+      --allow-host
+      github.com
+      claude
+      """
+
+  Scenario: Refuses secrets without filtered egress
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        secrets: [GITHUB_TOKEN=github.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      secrets-require-filtered-egress
+      """
+
+  Scenario: Refuses a 2.9-verified toggle below its floor
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.8.1"
+      jail_flags:
+        audio: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-toggles-require-ai-jail-2-9
+      """
+
+  Scenario: Emits env files on ai-jail 2.0+
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        env_from_files: [/tmp/env]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --env-from-file
+      /tmp/env
+      claude
+      """
+
   # Through ai-jail 1.17.x --allow-tcp-port was lockdown-only and silently
   # ignored otherwise. From 1.18.0 it fails closed and aborts the launch, so
   # the launcher refuses first, with its own message.
@@ -1104,6 +1566,40 @@ Feature: Launcher command contract
       permission-without-jail
       """
 
+  # copilot / copilot-cli arrived in ai-memory 3.0.0; the sentinel permission
+  # proves preflight ran while the harness checks stay absent.
+  Scenario: Accepts copilot on ai-memory 3.0
+    Given a validation configuration
+      """
+      agent: copilot
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "3.0.0"
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """
+
+  Scenario: Refuses copilot below ai-memory 3.0
+    Given a validation configuration
+      """
+      agent: copilot
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "2.9.9"
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-harness-version
+      """
+
   # The unrelated permission issue is deliberate: an empty expectation would
   # also pass if preflight never ran, so the scenario asserts a known issue is
   # present while memory-harness-unsupported is absent.
@@ -1129,12 +1625,33 @@ Feature: Launcher command contract
       goos: linux
       jail: true
       memory: false
-      jail_version: "2.3.0"
+      jail_version: "3.0.0"
       """
     When launcher preflight is checked
     Then issue codes equal
       """
       jail-version-untested
+      """
+
+  # 2.9.0 is the newest ai-jail the argv was re-validated against; the
+  # network conflict is the sentinel that preflight actually ran (an empty
+  # expectation would also pass if it never did).
+  Scenario: Accepts ai-jail 2.9.0 inside the validated range
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.9.0"
+      jail_flags:
+        network: true
+        allow_hosts: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-conflicts-with-network
       """
 
   # 1.19.1 was inside the supported range until the floor moved to 1.20.1. On
