@@ -151,10 +151,32 @@ func statusBarStyle(flags config.JailFlags) string {
 // silent skip keeps a TUI preview or a bypassed validation from handing
 // ai-jail an unknown option.
 func appendJailFlags(command []string, flags config.JailFlags, version string) []string {
+	command = appendJailStatusBar(command, flags)
+	command = appendConfiguredJailToggles(command, flags, version)
+	command = appendJailPathFlags(command, flags)
+	command = appendJailPortFlags(command, flags, version)
+	command = appendJailSecretAndEnvFlags(command, flags, version)
+	command = appendJailBrowser(command, flags)
+	command = appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+	return appendJailExceptionFlags(command, flags)
+}
+
+// appendJailStatusBar emits --status-bar=STYLE when a recognized style is set.
+// The style wins over the StatusBar toggle, which appendConfiguredJailToggles
+// then skips so the two forms are never emitted together.
+func appendJailStatusBar(command []string, flags config.JailFlags) []string {
 	style := statusBarStyle(flags)
 	if style != "" {
 		command = append(command, "--status-bar="+style)
 	}
+	return command
+}
+
+// appendConfiguredJailToggles emits each declarative toggle the detected
+// ai-jail accepts. A toggle below its floor emits nothing; pre-flight is what
+// refuses that configuration.
+func appendConfiguredJailToggles(command []string, flags config.JailFlags, version string) []string {
+	style := statusBarStyle(flags)
 	for _, toggle := range jailToggles(flags) {
 		if toggle.name == "status-bar" && style != "" {
 			continue
@@ -164,6 +186,12 @@ func appendJailFlags(command []string, flags config.JailFlags, version string) [
 		}
 		command = appendJailToggle(command, toggle)
 	}
+	return command
+}
+
+// appendJailPathFlags emits the path-list flags that exist across the whole
+// supported ai-jail range, in their stable order.
+func appendJailPathFlags(command []string, flags config.JailFlags) []string {
 	for _, path := range flags.OverlayMaps {
 		command = appendFlagValue(command, "--overlay-map", path)
 	}
@@ -173,6 +201,12 @@ func appendJailFlags(command []string, flags config.JailFlags, version string) [
 	for _, path := range flags.DenyPaths {
 		command = appendFlagValue(command, "--deny-path", path)
 	}
+	return command
+}
+
+// appendJailPortFlags emits --allow-tcp-port across the supported range and
+// --forward-port only when the detected ai-jail accepts it.
+func appendJailPortFlags(command []string, flags config.JailFlags, version string) []string {
 	for _, port := range flags.AllowTCPPorts {
 		command = append(command, "--allow-tcp-port", strconv.Itoa(port))
 	}
@@ -181,6 +215,13 @@ func appendJailFlags(command []string, flags config.JailFlags, version string) [
 			command = append(command, "--forward-port", strconv.Itoa(port))
 		}
 	}
+	return command
+}
+
+// appendJailSecretAndEnvFlags emits --secret and --env-from-file only when
+// the detected ai-jail accepts them. Older jails get nothing here; pre-flight
+// refuses the configuration instead.
+func appendJailSecretAndEnvFlags(command []string, flags config.JailFlags, version string) []string {
 	if jailSupportsFlag(version, config.MinSecretAIJailVersion) {
 		for _, secret := range flags.Secrets {
 			command = appendFlagValue(command, "--secret", secret)
@@ -191,13 +232,24 @@ func appendJailFlags(command []string, flags config.JailFlags, version string) [
 			command = appendFlagValue(command, "--env-from-file", path)
 		}
 	}
+	return command
+}
+
+// appendJailBrowser emits the browser mode. hard and soft select a profile;
+// off is the explicit negative form. Anything else leaves ai-jail's default.
+func appendJailBrowser(command []string, flags config.JailFlags) []string {
 	switch strings.ToLower(strings.TrimSpace(flags.Browser)) {
 	case "hard", "soft":
 		command = append(command, "--browser="+strings.ToLower(strings.TrimSpace(flags.Browser)))
 	case "off":
 		command = append(command, "--no-browser")
 	}
-	command = appendFlagValue(command, "--claude-dir", flags.ClaudeDir)
+	return command
+}
+
+// appendJailExceptionFlags emits the v1.15 exception lists after the other
+// path flags so the argv order stays stable.
+func appendJailExceptionFlags(command []string, flags config.JailFlags) []string {
 	for _, path := range flags.MaskExceptions {
 		command = appendFlagValue(command, "--mask-except", path)
 	}

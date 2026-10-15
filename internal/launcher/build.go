@@ -321,24 +321,9 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 		return container.RunConfig{}, err
 	}
 	run.AgentCommands = agentDockerCommands(cfg)
-	run.UseMemory = cfg.UseMemory
 	run.Tmux = cfg.ContainerTmux.Enabled && run.Interactive
 	run.TmuxMounts = container.ResolveTmuxMounts(cfg.HomeDir, cfg.ContainerTmux, container.ExistsOnHost)
-	if cfg.UseMemory {
-		run.MemoryHarness = memoryRunHarness(cfg.Agent)
-		// The image's ai-memory is not the host binary. An argv flag would
-		// be an unknown option on a pre-2.3 image; the env var is ignored
-		// there and honored from 2.3 on.
-		if disableMemoryAutowire(cfg) {
-			run.Env = append(run.Env, "AI_MEMORY_RUN_AUTOWIRE=false")
-		}
-		// Same reasoning for require-server: an image's ai-memory below 2.6
-		// ignores the variable and already fails closed; 2.6+ honors it and
-		// the launch stays fail-closed unless the operator opted out.
-		if memoryRequiresServer(cfg) {
-			run.Env = append(run.Env, "AI_MEMORY_RUN_REQUIRE_SERVER=true")
-		}
-	}
+	run = applyContainerMemory(run, cfg)
 	run.GHConfig = permissionHomeMount(cfg, config.PermissionGitHub, ".config/gh")
 	run.SSHConfig = permissionHomeMount(cfg, config.PermissionSSH, ".ssh")
 	run.MountDockerSocket = cfg.Permissions[config.PermissionDocker]
@@ -373,18 +358,7 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 	// managed binary exists is I/O, which Build must stay free of. The caller
 	// (CLI/TUI) sets it on cfg.Docker when the binary exists, mirroring how
 	// Environment() stats it before exporting AI_MEMORY_NATIVE_BIN.
-	// The in-container executable depends on the install kind: agents installed
-	// in the image (release/script) run by their command name (the installer
-	// puts the binary on PATH); host-mounted agents (InstallHostBinary) run by
-	// their resolved host path, which is bind-mounted at the same location.
-	// Using the host path for an image-installed agent would point at a macOS
-	// binary that does not exist inside the linux container.
-	if selectionHasHostBinary(run.Selection) {
-		run.AgentExecutable = cfg.Executable
-		if cfg.UseMemory {
-			run.MemoryExecutable = cfg.Executable
-		}
-	}
+	run = applyHostBinaryExecutables(run, cfg)
 	if run.AgentExecutable == "" {
 		run.AgentExecutable = cfg.Agent.Command
 	}
@@ -401,6 +375,46 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 		return container.RunConfig{}, err
 	}
 	return run, nil
+}
+
+// applyContainerMemory records whether the in-container command is wrapped
+// with ai-memory, and the env vars that keep a rebuilt image fail-closed
+// without handing an older image an unknown argv flag.
+func applyContainerMemory(run container.RunConfig, cfg LaunchConfig) container.RunConfig {
+	run.UseMemory = cfg.UseMemory
+	if !cfg.UseMemory {
+		return run
+	}
+	run.MemoryHarness = memoryRunHarness(cfg.Agent)
+	// The image's ai-memory is not the host binary. An argv flag would
+	// be an unknown option on a pre-2.3 image; the env var is ignored
+	// there and honored from 2.3 on.
+	if disableMemoryAutowire(cfg) {
+		run.Env = append(run.Env, "AI_MEMORY_RUN_AUTOWIRE=false")
+	}
+	// Same reasoning for require-server: an image's ai-memory below 2.6
+	// ignores the variable and already fails closed; 2.6+ honors it and
+	// the launch stays fail-closed unless the operator opted out.
+	if memoryRequiresServer(cfg) {
+		run.Env = append(run.Env, "AI_MEMORY_RUN_REQUIRE_SERVER=true")
+	}
+	return run
+}
+
+// applyHostBinaryExecutables points image-installed agents at their command
+// name (the installer puts the binary on PATH) and host-mounted agents at the
+// resolved host path, which is bind-mounted at the same location. Using the
+// host path for an image-installed agent would point at a macOS binary that
+// does not exist inside the linux container.
+func applyHostBinaryExecutables(run container.RunConfig, cfg LaunchConfig) container.RunConfig {
+	if !selectionHasHostBinary(run.Selection) {
+		return run
+	}
+	run.AgentExecutable = cfg.Executable
+	if cfg.UseMemory {
+		run.MemoryExecutable = cfg.Executable
+	}
+	return run
 }
 
 // hostBinaryDirs returns the unique directories of host-mounted agents

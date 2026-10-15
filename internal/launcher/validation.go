@@ -766,48 +766,75 @@ func memoryRunFlagIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error
 		return nil
 	}
 	var issues []Issue
-	if profile := strings.TrimSpace(cfg.MemoryProfile); profile != "" {
-		if !MemorySupportsProfile(cfg.MemoryVersion) {
-			issues = append(issues, versionFloorIssue("memory-profile-requires-ai-memory-2-6", "memory_profile", cfg.MemoryVersion, config.MinProfileAIMemoryVersion))
-		} else if cfg.UseJail && !jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion) {
-			issues = append(issues, preHarnessJailIssue("memory_profile"))
+	issues = append(issues, memoryProfileIssues(cfg)...)
+	issues = append(issues, memoryEnvFileIssues(cfg, stat)...)
+	issues = append(issues, memoryJailIssues(cfg)...)
+	return issues
+}
+
+// memoryProfileIssues refuses memory_profile below its ai-memory floor, and
+// below the ai-jail that can forward a pre-harness flag.
+func memoryProfileIssues(cfg LaunchConfig) []Issue {
+	if strings.TrimSpace(cfg.MemoryProfile) == "" {
+		return nil
+	}
+	if !MemorySupportsProfile(cfg.MemoryVersion) {
+		return []Issue{versionFloorIssue("memory-profile-requires-ai-memory-2-6", "memory_profile", cfg.MemoryVersion, config.MinProfileAIMemoryVersion)}
+	}
+	if cfg.UseJail && !jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion) {
+		return []Issue{preHarnessJailIssue("memory_profile")}
+	}
+	return nil
+}
+
+// memoryEnvFileIssues refuses memory_env_file below its floors and when the
+// path does not exist.
+func memoryEnvFileIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error)) []Issue {
+	envFile := strings.TrimSpace(cfg.MemoryEnvFile)
+	if envFile == "" {
+		return nil
+	}
+	if !MemorySupportsEnvFile(cfg.MemoryVersion) {
+		return []Issue{versionFloorIssue("memory-env-file-requires-ai-memory-2-5", "memory_env_file", cfg.MemoryVersion, config.MinEnvFileAIMemoryVersion)}
+	}
+	var issues []Issue
+	if cfg.UseJail && !jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion) {
+		issues = append(issues, preHarnessJailIssue("memory_env_file"))
+	}
+	if stat != nil {
+		if _, err := stat(envFile); err != nil {
+			issues = append(issues, Issue{
+				Code:    "memory-env-file-not-found",
+				Message: fmt.Sprintf("memory_env_file %q does not exist; ai-memory reads it before spawning the harness", envFile),
+			})
 		}
 	}
-	if envFile := strings.TrimSpace(cfg.MemoryEnvFile); envFile != "" {
-		if !MemorySupportsEnvFile(cfg.MemoryVersion) {
-			issues = append(issues, versionFloorIssue("memory-env-file-requires-ai-memory-2-5", "memory_env_file", cfg.MemoryVersion, config.MinEnvFileAIMemoryVersion))
-		} else {
-			if cfg.UseJail && !jailSupportsFlag(cfg.JailVersion, config.MinPreHarnessAIJailVersion) {
-				issues = append(issues, preHarnessJailIssue("memory_env_file"))
-			}
-			if stat != nil {
-				if _, err := stat(envFile); err != nil {
-					issues = append(issues, Issue{
-						Code:    "memory-env-file-not-found",
-						Message: fmt.Sprintf("memory_env_file %q does not exist; ai-memory reads it before spawning the harness", envFile),
-					})
-				}
-			}
-		}
+	return issues
+}
+
+// memoryJailIssues refuses memory_jail below its ai-memory floor and warns
+// when the launcher's own jail or the container backend would ignore it.
+func memoryJailIssues(cfg LaunchConfig) []Issue {
+	if strings.TrimSpace(cfg.MemoryJail) == "" {
+		return nil
 	}
-	if declared := strings.TrimSpace(cfg.MemoryJail); declared != "" {
-		if !MemorySupportsJail(cfg.MemoryVersion) {
-			issues = append(issues, versionFloorIssue("memory-jail-requires-ai-memory-2-5-2", "memory_jail", cfg.MemoryVersion, config.MinMemoryJailAIMemoryVersion))
-		}
-		switch {
-		case cfg.UseJail:
-			issues = append(issues, Issue{
-				Code:    "memory-jail-with-launcher-jail",
-				Warning: true,
-				Message: "memory_jail is ignored here: this launch is already jailed by the launcher, and ai-memory skips --jail inside ai-jail; remove memory_jail to stop the reminder",
-			})
-		case cfg.UseDocker:
-			issues = append(issues, Issue{
-				Code:    "memory-jail-in-container",
-				Warning: true,
-				Message: "memory_jail cannot apply in the container backend: the image has no ai-jail, and ai-memory refuses to run unjailed when --jail is set; remove memory_jail for container launches",
-			})
-		}
+	var issues []Issue
+	if !MemorySupportsJail(cfg.MemoryVersion) {
+		issues = append(issues, versionFloorIssue("memory-jail-requires-ai-memory-2-5-2", "memory_jail", cfg.MemoryVersion, config.MinMemoryJailAIMemoryVersion))
+	}
+	switch {
+	case cfg.UseJail:
+		issues = append(issues, Issue{
+			Code:    "memory-jail-with-launcher-jail",
+			Warning: true,
+			Message: "memory_jail is ignored here: this launch is already jailed by the launcher, and ai-memory skips --jail inside ai-jail; remove memory_jail to stop the reminder",
+		})
+	case cfg.UseDocker:
+		issues = append(issues, Issue{
+			Code:    "memory-jail-in-container",
+			Warning: true,
+			Message: "memory_jail cannot apply in the container backend: the image has no ai-jail, and ai-memory refuses to run unjailed when --jail is set; remove memory_jail for container launches",
+		})
 	}
 	return issues
 }

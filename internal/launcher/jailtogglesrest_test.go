@@ -38,13 +38,28 @@ func TestRemainingTogglesFollowTheirFloors(t *testing.T) {
 		{"", config.JailFlags{TerminalPassthru: boolPtr(true)}},
 		{"1.20.1", config.JailFlags{AuditLog: boolPtr(true)}},
 	} {
-		for _, token := range buildAgentState(t, tc.version, tc.flags) {
-			for _, banned := range []string{"--audio", "--terminal-passthrough", "--no-terminal-passthrough", "--macos-host-ipc", "--update-check", "--audit-log"} {
-				if token == banned {
-					t.Fatalf("ai-jail %q: argv = %#v; %s must stay silent there", tc.version, buildAgentState(t, tc.version, tc.flags), banned)
-				}
-			}
+		assertModernTogglesSilent(t, tc.version, tc.flags)
+	}
+}
+
+// assertModernTogglesSilent fails when a floored toggle is emitted on a jail
+// that predates it. The argv is built once so the failure names that argv.
+func assertModernTogglesSilent(t *testing.T, version string, flags config.JailFlags) {
+	t.Helper()
+	argv := buildAgentState(t, version, flags)
+	for _, token := range argv {
+		if modernToggleToken(token) {
+			t.Fatalf("ai-jail %q: argv = %#v; %s must stay silent there", version, argv, token)
 		}
+	}
+}
+
+func modernToggleToken(token string) bool {
+	switch token {
+	case "--audio", "--terminal-passthrough", "--no-terminal-passthrough", "--macos-host-ipc", "--update-check", "--audit-log":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -105,6 +120,16 @@ func TestSecretsEmissionAndRefusals(t *testing.T) {
 	badForm.JailFlags.Secrets = []string{"just-a-key"}
 	if _, ok := issueByCode(jailVersionValidate(badForm), "secret-invalid"); !ok {
 		t.Fatal("preflight accepted a secret that is not KEY=host")
+	}
+	if _, ok := issueByCode(jailVersionValidate(cfg), "secret-invalid"); ok {
+		t.Fatal("preflight rejected KEY=host")
+	}
+	for _, entry := range []string{"=github.com", "TOKEN=", "TOKEN =github.com"} {
+		broken := cfg
+		broken.JailFlags.Secrets = []string{entry}
+		if _, ok := issueByCode(jailVersionValidate(broken), "secret-invalid"); !ok {
+			t.Fatalf("preflight accepted %q", entry)
+		}
 	}
 }
 

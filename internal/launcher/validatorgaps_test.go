@@ -398,6 +398,67 @@ func jailVersionValidate(cfg LaunchConfig) []Issue {
 	}.Validate(cfg)
 }
 
+// An unreadable probe is not "new enough". The refusal names the install as
+// unknown, and a readable one names the version that was actually seen, so
+// neither arm of that substitution can drift.
+func TestUnreadableUpstreamVersionsAreNamedUnknown(t *testing.T) {
+	agent := config.Agent{Command: "claude"}
+	for _, tc := range []struct {
+		code string
+		cfg  LaunchConfig
+		want string
+	}{
+		{
+			code: "agent-state-requires-ai-jail-2-6",
+			cfg:  LaunchConfig{Agent: agent, UseJail: true, JailFlags: config.JailFlags{AgentState: boolPtr(true)}},
+			want: "installed: unknown",
+		},
+		{
+			code: "agent-state-requires-ai-jail-2-6",
+			cfg:  LaunchConfig{Agent: agent, UseJail: true, JailVersion: "2.5.9", JailFlags: config.JailFlags{AgentState: boolPtr(true)}},
+			want: "installed: 2.5.9",
+		},
+		{
+			code: "jail-toggles-require-ai-jail-2",
+			cfg:  LaunchConfig{Agent: agent, UseJail: true, JailFlags: config.JailFlags{AuditLog: boolPtr(true)}},
+			want: "installed: unknown",
+		},
+		{
+			code: "secrets-require-ai-jail-2-2",
+			cfg:  LaunchConfig{Agent: agent, UseJail: true, JailFlags: config.JailFlags{Secrets: []string{"TOKEN=github.com"}}},
+			want: "installed: unknown",
+		},
+		{
+			code: "env-from-files-require-ai-jail-2",
+			cfg:  LaunchConfig{Agent: agent, UseJail: true, JailFlags: config.JailFlags{EnvFromFiles: []string{"/tmp/env"}}},
+			want: "installed: unknown",
+		},
+		{
+			code: "forward-ports-require-ai-jail-2-9",
+			cfg:  LaunchConfig{Agent: agent, UseJail: true, JailFlags: config.JailFlags{ForwardPorts: []int{8080}}},
+			want: "installed: unknown",
+		},
+		{
+			code: "memory-profile-requires-ai-memory-2-6",
+			cfg:  LaunchConfig{Agent: agent, UseMemory: true, MemoryProfile: "ci"},
+			want: "installed: unknown",
+		},
+		{
+			code: "memory-profile-requires-ai-memory-2-6",
+			cfg:  LaunchConfig{Agent: agent, UseMemory: true, MemoryVersion: "2.5.9", MemoryProfile: "ci"},
+			want: "installed: 2.5.9",
+		},
+	} {
+		issue, ok := issueByCode(jailVersionValidate(tc.cfg), tc.code)
+		if !ok {
+			t.Fatalf("missing %s for %q", tc.code, tc.want)
+		}
+		if !strings.Contains(issue.Message, tc.want) {
+			t.Fatalf("%s message = %q; want %q", tc.code, issue.Message, tc.want)
+		}
+	}
+}
+
 // Below the floor the launcher emits flags the installed ai-jail rejects with
 // "unknown option", raised inside the wrapper where it reads as the launcher
 // being broken. Pre-flight names the real problem instead.

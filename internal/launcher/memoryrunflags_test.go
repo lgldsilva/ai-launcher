@@ -56,36 +56,43 @@ func TestMemoryRunOptionsPrecedeTheHarness(t *testing.T) {
 // file (2.5.0) and ai-memory's own jail (2.5.2) parse there, the profile
 // (2.6.0) does not.
 func TestMemoryRunOptionsStaySilentBelowTheirFloors(t *testing.T) {
-	for _, tc := range []struct {
-		version string
-	}{
-		{"2.5.9"},
-		{"2.4.9"},
-		{""},
-	} {
-		argv := buildMemoryRun(t, hostMemoryLaunch(tc.version, func(cfg *LaunchConfig) {
-			cfg.MemoryProfile = "ci"
-			cfg.MemoryEnvFile = "/tmp/env"
-			cfg.MemoryJail = "github,aws"
-		}))
-		for _, token := range argv {
-			if token == "--profile" {
-				t.Fatalf("ai-memory %q: argv = %#v; --profile must stay silent below 2.6.0", tc.version, argv)
-			}
+	for _, version := range []string{"2.5.9", "2.4.9", ""} {
+		assertMemoryRunOptionsSilent(t, version)
+	}
+}
+
+// assertMemoryRunOptionsSilent checks one ai-memory version. 2.5.9 parses
+// env-file and memory_jail; the profile, and everything on older versions,
+// stays off the argv.
+func assertMemoryRunOptionsSilent(t *testing.T, version string) {
+	t.Helper()
+	argv := buildMemoryRun(t, hostMemoryLaunch(version, func(cfg *LaunchConfig) {
+		cfg.MemoryProfile = "ci"
+		cfg.MemoryEnvFile = "/tmp/env"
+		cfg.MemoryJail = "github,aws"
+	}))
+	if containsArg(argv, "--profile") {
+		t.Fatalf("ai-memory %q: argv = %#v; --profile must stay silent below 2.6.0", version, argv)
+	}
+	if version == "2.5.9" {
+		if !containsArg(argv, "--env-file") || !containsArg(argv, "--jail=github,aws") {
+			t.Fatalf("ai-memory 2.5.9: argv = %#v; env-file and memory_jail parse there and must emit on a host launch", argv)
 		}
-		if tc.version == "2.5.9" {
-			if !containsArg(argv, "--env-file") || !containsArg(argv, "--jail=github,aws") {
-				t.Fatalf("ai-memory 2.5.9: argv = %#v; env-file and memory_jail parse there and must emit on a host launch", argv)
-			}
-			continue
+		return
+	}
+	for _, token := range argv {
+		if memoryRunTokenBannedBelowFloor(token) {
+			t.Fatalf("ai-memory %q: argv = %#v; must stay silent (%s)", version, argv, token)
 		}
-		for _, token := range argv {
-			for _, banned := range []string{"--env-file", "--jail", "--no-jail"} {
-				if token == banned || strings.HasPrefix(token, "--jail=") {
-					t.Fatalf("ai-memory %q: argv = %#v; must stay silent (%s)", tc.version, argv, token)
-				}
-			}
-		}
+	}
+}
+
+func memoryRunTokenBannedBelowFloor(token string) bool {
+	switch token {
+	case "--env-file", "--jail", "--no-jail":
+		return true
+	default:
+		return strings.HasPrefix(token, "--jail=")
 	}
 }
 

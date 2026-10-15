@@ -154,6 +154,31 @@ func TestForwardPortIssuesMirrorUpstreamRefusals(t *testing.T) {
 	}
 }
 
+// 1024 and 65535 are legal, and exactly 256 relays is the cap, not one past it.
+func TestForwardPortBoundsAreInclusive(t *testing.T) {
+	cfg := func(ports []int) LaunchConfig {
+		return LaunchConfig{
+			Agent:       config.Agent{Command: "claude"},
+			UseJail:     true,
+			JailVersion: "2.9.0",
+			JailFlags:   config.JailFlags{ForwardPorts: ports},
+		}
+	}
+	if _, ok := issueByCode(jailVersionValidate(cfg([]int{1024, 65535})), "forward-port-invalid"); ok {
+		t.Fatal("preflight rejected the inclusive bounds 1024 and 65535")
+	}
+	exact := make([]int, forwardPortsMax)
+	for i := range exact {
+		exact[i] = 2000 + i
+	}
+	if _, ok := issueByCode(jailVersionValidate(cfg(exact)), "forward-ports-too-many"); ok {
+		t.Fatal("preflight rejected exactly 256 relays, which is ai-jail's cap")
+	}
+	if _, ok := issueByCode(jailVersionValidate(cfg([]int{65536})), "forward-port-invalid"); !ok {
+		t.Fatal("preflight accepted a port above 65535")
+	}
+}
+
 // expectTokens asserts the tokens of want (space-separated) appear in argv
 // consecutively, in order.
 func expectTokens(t *testing.T, argv []string, want string) {
