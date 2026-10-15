@@ -61,7 +61,11 @@ Mutation testing is a real gate and runs in the pinned
 it does not install a mutator on the host, and it mounts the checkout with the
 host UID/GID so the report remains writable. It also creates hermetic command
 stubs for catalog discovery, so host-installed agent CLIs do not change the
-result.
+result. The image ships the Go that built Gremlins and sets `GOTOOLCHAIN=local`,
+which refuses a module whose `go` line is newer. The wrapper passes
+`GOTOOLCHAIN=go<version>` from `go.mod` so that binary downloads exactly that
+toolchain (checksum-checked by the `go` command) before Gremlins runs. The
+image digest and the efficacy/coverage minimums stay the pins.
 
 The default command compares the checkout with `origin/main`, enforces 70%
 test efficacy and 90% mutator coverage when mutation-eligible Go files changed,

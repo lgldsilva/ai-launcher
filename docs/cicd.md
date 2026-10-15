@@ -41,7 +41,10 @@ the gate fails. If the PR changes no mutation-eligible Go files, the wrapper
 records a successful `SKIP` and does not require Docker because there are no
 mutants to execute. The mutator itself is pinned by image digest in the
 Makefile; Docker remains an explicit prerequisite whenever mutation is
-applicable.
+applicable. The image's Go is older than `go.mod` and pinned to
+`GOTOOLCHAIN=local`, so the wrapper sets `GOTOOLCHAIN` to the `go` line and
+lets that binary fetch the matching toolchain. Thresholds stay 70% efficacy
+and 90% mutator coverage.
 
 ### Behavioral container tests (opt-in, local)
 

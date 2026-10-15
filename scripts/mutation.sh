@@ -42,6 +42,21 @@ if [ -z "$mutation_scope" ]; then
   exit 0
 fi
 
+# The pinned gremlins image is FROM golang:1.25 and bakes GOTOOLCHAIN=local,
+# so its go refuses a module whose go line is newer (the image runs 1.25.5;
+# go.mod requires 1.26.9) before it can download modules or gather coverage.
+# Naming the toolchain after the go line makes that binary fetch exactly the
+# version the module asks for. The go command checks the download against the
+# checksum database, and the image digest stays the pin for gremlins itself.
+# auto covers a tree with no go line and still overrides the image's local pin.
+mutation_toolchain=auto
+if [ -f go.mod ]; then
+  go_line=$(sed -n 's/^go \([0-9][0-9.]*\).*/\1/p' go.mod | head -n 1)
+  if [ -n "$go_line" ]; then
+    mutation_toolchain="go${go_line}"
+  fi
+fi
+
 # Gremlins reports the thresholds but does not fail the run when they are
 # missed (verified empirically: 89.00% mcover with a 90 minimum exits 0), so
 # this script captures the summary and enforces the minimums itself.
@@ -65,6 +80,7 @@ run_mutation() {
     -e MUTATION_EFFICACY_MIN="$mutation_efficacy_min" \
     -e MUTATION_COVERAGE_MIN="$mutation_coverage_min" \
     -e MUTATION_OUTPUT="/app/$mutation_output" \
+    -e GOTOOLCHAIN="$mutation_toolchain" \
     -v "$(pwd):/app" \
     "$@" \
     -w /app \
