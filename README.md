@@ -67,6 +67,24 @@ jails nor containers: `no`/`false`/`none` emits `--no-jail` (skips the
 `--yolo` ai-jail offer), `smart`/`true` emits bare `--jail`, and any other
 value is the toggle list (`--jail=github,aws`). Inside the launcher's jail
 ai-memory ignores `--jail`, so `memory_jail` there only draws a warning.
+A `memory_jail` launch on ai-memory ≥ 3.0.1 forwards the server route into the
+jail's private home but refuses to promote a root bearer that only lives in
+ai-memory's `config.toml` or `[auth].bearer_token_file`: it stops and asks for
+a least-privilege `AI_MEMORY_AUTH_TOKEN`. The launcher already exports the
+global `memory_auth_token` under that name, so set it there (or export the
+variable) with a scoped token before using `memory_jail` against an
+authenticated server.
+
+ai-memory ≥ 3.1.0 also hands a harness switch (a workstream moving from one
+harness to another) a private history dossier through
+`AI_MEMORY_PREVIOUS_SESSION_HISTORY`. `ai-memory run` writes it under the
+temporary directory it shares with the harness, so a jailed launch needs
+nothing extra for the file itself. Reading the *previous* harness's native
+session store is another matter: the jail only mounts the selected harness's
+own state, so inside the jail the dossier can be unavailable, and ai-memory
+prints a notice and continues with the portable workstream packet. The
+launcher does not mount the other harness's directory to change that, since
+that would widen the sandbox for every launch.
 `--env KEY=VALUE` is deliberately not exposed: ai-jail refuses a flag spelled
 like its own after the command word, so `--env-file` is the one form that
 works jailed and unjailed alike. `--profile` and `--env-file` precede the
@@ -862,7 +880,7 @@ Layers of defense:
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
-  (`ai-jail` < 3.0.0, `ai-memory` < 3.1.0). It probes `--version` and reports
+  (`ai-jail` < 3.0.0, `ai-memory` < 3.3.0). It probes `--version` and reports
   an install that is older (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`) or newer than the validated range
   (`…-version-untested`). It also probes the launcher-managed ai-memory native

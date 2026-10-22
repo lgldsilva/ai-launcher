@@ -241,7 +241,7 @@ const (
 // off the argv and makes --lockdown force --unshare-net even with --network,
 // and 2.5.0 refuses a flag spelled like ai-jail's own after the
 // command word, which is why ai-memory's pre-harness --env KEY=VALUE cannot
-// ride through the jail while --env-file can. ai-memory 1.35.0 through 3.0.0
+// ride through the jail while --env-file can. ai-memory 1.35.0 through 3.2.1
 // kept the `run` grammar this launcher emits (--workspace, --project,
 // --workstream, --new, --executable, harness, --fresh); the additions are
 // wrapper flags re-extracted from native args (--yolo's own ai-jail offer in
@@ -250,10 +250,13 @@ const (
 // ai-jail). 2.6.0 also downgrades an unreachable server to a degraded launch
 // instead of failing, and 3.0.0 adds the copilot/copilot-cli harnesses while
 // removing the 1.x token commands and OPENCODE_ZEN_BASE_URL, none of which
-// this launcher uses.
+// this launcher uses. ai-jail 2.10 through 2.11.2 and ai-memory 3.0.1 through
+// 3.2.1 added no flag this launcher emits (2.11.0's --allow-private-host is
+// opt-in through jail_flags); ai-memory 3.1.0 only changes what `run` hands the
+// harness on a switch (AI_MEMORY_PREVIOUS_SESSION_HISTORY).
 const (
 	UntestedAIJailVersion   = "3.0.0"
-	UntestedAIMemoryVersion = "3.1.0"
+	UntestedAIMemoryVersion = "3.3.0"
 )
 
 // MinAllowHostAIJailVersion is the first ai-jail that accepts --allow-host.

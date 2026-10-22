@@ -28,6 +28,26 @@ list counts as allowed. Below 2.11.0 it is refused in pre-flight
 upstream: it rides the command line, and ai-jail ignores `allow_private_hosts`
 in a project `.ai-jail`. Existing configs are unaffected.
 
+### Changed — the validated upstream range now includes ai-jail 2.11 and ai-memory 3.2
+
+`UntestedAIMemoryVersion` moves from `3.1.0` to `3.3.0`; `UntestedAIJailVersion`
+stays `3.0.0`, which already covers 2.10 and 2.11. Re-validated live against
+ai-jail 2.11.2 and ai-memory 3.2.1 built from their release tags: the composed
+argv through the full `ai-jail` → `ai-memory run` chain (parsed by both, for
+`claude` and the `agy` alias), a real launch under `--allow-host` plus
+`--allow-private-host`, and `--doctor`. The releases in between (ai-jail 2.10.x,
+2.11.0-2.11.2; ai-memory 3.0.1, 3.1.x, 3.2.0) were read from their changelogs
+and kept every token this launcher emits. Two behaviors inside the range are
+documented rather than changed: ai-memory 3.1.0's cross-harness history dossier
+(`AI_MEMORY_PREVIOUS_SESSION_HISTORY`) can be unavailable inside the jail, where
+ai-memory falls back to the portable packet; and ai-memory 3.0.1 refuses
+`memory_jail` with a root bearer that only lives in its `config.toml` or
+`bearer_token_file`, asking for a least-privilege `AI_MEMORY_AUTH_TOKEN` (the
+launcher exports `memory_auth_token` under that name).
+
+**What you need to do:** nothing. `ai-launcher --doctor` stops calling
+ai-memory 3.1 through 3.2 untested.
+
 ### Added — the rest of the ai-jail jail_flags mirror (x11, host_shm, audio, audit_log, secrets, env_from_files)
 
 `jail_flags` now mirrors the remaining ai-jail launch capabilities: `x11` and
