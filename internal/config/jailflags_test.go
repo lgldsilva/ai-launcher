@@ -151,6 +151,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		"deny_paths":           func(f *JailFlags) { f.DenyPaths = []string{"/proc/kcore"} },
 		"allow_tcp_ports":      func(f *JailFlags) { f.AllowTCPPorts = []int{8080} },
 		"allow_hosts":          func(f *JailFlags) { f.AllowHosts = []string{"api.anthropic.com"} },
+		"allow_private_hosts":  func(f *JailFlags) { f.AllowPrivateHosts = []string{"git.internal.example"} },
 		"mask_exceptions":      func(f *JailFlags) { f.MaskExceptions = []string{"/srv/shared"} },
 		"deny_path_exceptions": func(f *JailFlags) { f.DenyPathExceptions = []string{"/var/cache"} },
 		"hide_dotdirs":         func(f *JailFlags) { f.HideDotdirs = []string{".aws"} },

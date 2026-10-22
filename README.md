@@ -67,6 +67,24 @@ jails nor containers: `no`/`false`/`none` emits `--no-jail` (skips the
 `--yolo` ai-jail offer), `smart`/`true` emits bare `--jail`, and any other
 value is the toggle list (`--jail=github,aws`). Inside the launcher's jail
 ai-memory ignores `--jail`, so `memory_jail` there only draws a warning.
+A `memory_jail` launch on ai-memory ≥ 3.0.1 forwards the server route into the
+jail's private home but refuses to promote a root bearer that only lives in
+ai-memory's `config.toml` or `[auth].bearer_token_file`: it stops and asks for
+a least-privilege `AI_MEMORY_AUTH_TOKEN`. The launcher already exports the
+global `memory_auth_token` under that name, so set it there (or export the
+variable) with a scoped token before using `memory_jail` against an
+authenticated server.
+
+ai-memory ≥ 3.1.0 also hands a harness switch (a workstream moving from one
+harness to another) a private history dossier through
+`AI_MEMORY_PREVIOUS_SESSION_HISTORY`. `ai-memory run` writes it under the
+temporary directory it shares with the harness, so a jailed launch needs
+nothing extra for the file itself. Reading the *previous* harness's native
+session store is another matter: the jail only mounts the selected harness's
+own state, so inside the jail the dossier can be unavailable, and ai-memory
+prints a notice and continues with the portable workstream packet. The
+launcher does not mount the other harness's directory to change that, since
+that would widen the sandbox for every launch.
 `--env KEY=VALUE` is deliberately not exposed: ai-jail refuses a flag spelled
 like its own after the command word, so `--env-file` is the one form that
 works jailed and unjailed alike. `--profile` and `--env-file` precede the
@@ -844,6 +862,7 @@ synonym for unset, so both forms are always emitted:
 | `hide_dotdirs` | list | `--hide-dotdir <NAME>` per entry |
 | `allow_tcp_ports` | list of int | refused: ai-jail rejects `--allow-tcp-port` |
 | `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0, with `network: true`, and with memory unless `memory_server_url` is https and that host is listed. **On ai-jail >= 2.8 the list is not exact**: the selected harness's own default API host (e.g. `api.anthropic.com` for claude) is unioned into the filtered egress |
+| `allow_private_hosts` | list of hostnames | `--allow-private-host <HOST>` per entry on ai-jail >= 2.11.0, after the `--allow-host` entries. Like `allow_hosts`, but the named host (and its subdomains) may also resolve to RFC1918, ULA or carrier-grade NAT addresses — a self-hosted GitLab, an internal registry. Loopback, link-local, multicast and cloud-metadata addresses stay denied. Filtered egress on its own (`--no-network` instead of `--network`); refused below 2.11.0 and with `network: true`. Trusted-only: the launcher passes it on the command line, and ai-jail ignores entries in a project `.ai-jail` |
 | `forward_ports` | list of int | `--forward-port <PORT>` per entry on ai-jail >= 2.9.0, under filtered egress (`--no-network`). Refused below 2.9.0, with unrestricted network, for ports outside 1024-65535, and above 256 entries |
 | `secrets` | list of `KEY=host` | `--secret KEY=host` per entry on ai-jail >= 2.2.0: the child sees a placeholder and the filtered-egress proxy substitutes the real value only for requests to host. KEY must reach the sandbox env (`jail_env` passthrough or `env_from_files`) — ai-jail refuses a secret whose key it does not have. Refused below 2.2, without `allow_hosts` (`secrets-require-filtered-egress`), and for entries that are not `KEY=host` |
 | `env_from_files` | list of paths | `--env-from-file <PATH>` per entry on ai-jail >= 2.0.0; must be mode 0600 (checked in pre-flight), user-owned and outside the project (ai-jail's own rules). Refused below 2.0 and for paths that do not exist |
@@ -861,7 +880,7 @@ Layers of defense:
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
-  (`ai-jail` < 3.0.0, `ai-memory` < 3.1.0). It probes `--version` and reports
+  (`ai-jail` < 3.0.0, `ai-memory` < 3.3.0). It probes `--version` and reports
   an install that is older (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`) or newer than the validated range
   (`…-version-untested`). It also probes the launcher-managed ai-memory native
