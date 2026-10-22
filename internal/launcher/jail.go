@@ -262,30 +262,46 @@ func appendJailExceptionFlags(command []string, flags config.JailFlags) []string
 	return command
 }
 
-// appendAllowHosts emits one --allow-host per validated hostname when the
-// detected ai-jail is new enough to accept the flag. A bad host or an older
+// appendAllowHosts emits one --allow-host per validated hostname, then one
+// --allow-private-host per validated private-network hostname, each only when
+// the detected ai-jail is new enough to accept its flag. A bad host or an older
 // jail emits nothing here; pre-flight already refuses those launches.
 func appendAllowHosts(command []string, cfg LaunchConfig) []string {
-	if !filteredEgress(cfg) {
+	if explicitNetworkOn(cfg) {
 		return command
 	}
-	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
-	if err != nil {
-		return command
+	if jailSupportsAllowHost(cfg.JailVersion) {
+		hosts, _ := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
+		for _, host := range hosts {
+			command = append(command, "--allow-host", host)
+		}
 	}
-	for _, host := range hosts {
-		command = append(command, "--allow-host", host)
+	if jailSupportsFlag(cfg.JailVersion, config.MinAllowPrivateHostAIJailVersion) {
+		hosts, _ := config.NormalizeAllowHosts(cfg.JailFlags.AllowPrivateHosts)
+		for _, host := range hosts {
+			command = append(command, "--allow-private-host", host)
+		}
 	}
 	return command
 }
 
-// filteredEgress is allow_hosts replacing unrestricted network.
+// filteredEgress is allow_hosts or allow_private_hosts replacing unrestricted
+// network: either list is filtered egress on its own.
 func filteredEgress(cfg LaunchConfig) bool {
-	if explicitNetworkOn(cfg) || !jailSupportsAllowHost(cfg.JailVersion) {
+	if explicitNetworkOn(cfg) {
 		return false
 	}
-	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
-	return err == nil && len(hosts) > 0
+	if jailSupportsAllowHost(cfg.JailVersion) {
+		hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
+		if err == nil && len(hosts) > 0 {
+			return true
+		}
+	}
+	if jailSupportsFlag(cfg.JailVersion, config.MinAllowPrivateHostAIJailVersion) {
+		hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowPrivateHosts)
+		return err == nil && len(hosts) > 0
+	}
+	return false
 }
 
 func explicitNetworkOn(cfg LaunchConfig) bool {

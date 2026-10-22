@@ -1208,6 +1208,93 @@ Feature: Launcher command contract
       forward-ports-require-ai-jail-2-9
       """
 
+  # allow_private_hosts (ai-jail 2.11.0) is --allow-host for a self-hosted
+  # service on a private network; either list alone selects filtered egress.
+  Scenario: Emits private allow hosts after the public ones on ai-jail 2.11
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.11.0"
+      jail_flags:
+        allow_hosts: [api.anthropic.com]
+        allow_private_hosts: [git.internal.example]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --allow-host
+      api.anthropic.com
+      --allow-private-host
+      git.internal.example
+      claude
+      """
+
+  Scenario: Private allow hosts alone select filtered egress
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.11.2"
+      permissions:
+        jail: true
+        network: true
+      jail_flags:
+        allow_private_hosts: [git.internal.example]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --allow-private-host
+      git.internal.example
+      claude
+      """
+
+  Scenario: Refuses private allow hosts below ai-jail 2.11
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.10.0"
+      jail_flags:
+        allow_private_hosts: [git.internal.example]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-private-host-requires-ai-jail-2-11
+      """
+
+  Scenario: Refuses private allow hosts combined with unrestricted network
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.11.0"
+      jail_flags:
+        allow_private_hosts: [git.internal.example]
+        network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-conflicts-with-network
+      """
+
   # ai-memory's own run options: --profile and --env-file precede the
   # harness, memory_jail is host-launch only (ai-memory ignores --jail inside
   # ai-jail and a container image has no ai-jail to run).

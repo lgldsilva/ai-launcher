@@ -540,7 +540,11 @@ on is a distinct state from leaving unset, so neither form is ever suppressed:
 `browser` (`hard`/`soft`/`off`), `claude_dir`, `overlay_maps`, `mask`, `mask_exceptions`,
 `deny_paths`, `deny_path_exceptions`, `hide_dotdirs`, `allow_tcp_ports`,
 `allow_hosts` (ai-jail >= 2.0, one `--allow-host` per entry, and the launch
-emits `--no-network` instead of `--network`), and
+emits `--no-network` instead of `--network`), `allow_private_hosts`
+(`MinAllowPrivateHostAIJailVersion`, ai-jail >= 2.11.0, one
+`--allow-private-host` per entry after the `--allow-host` ones; filtered egress
+on its own, so either list alone selects `--no-network`;
+`allow-private-host-requires-ai-jail-2-11`), and
 `status_bar_style` (`dark`/`light`/`pastel`, emitted as `--status-bar=STYLE`;
 when set it suppresses both boolean `--status-bar` forms). `hide_config` and
 `save_config` only forward ai-jail's toggles; the launcher never flips them on
@@ -572,7 +576,7 @@ The rest of the mirror completes with the same floor discipline: `x11` and
 version they were verified against — arrival releases not pinned), `audit_log`
 (`MinAuditLogAIJailVersion`, 2.0.0), `secrets` (`MinSecretAIJailVersion`,
 2.2.0, `--secret KEY=host` values substituted by the filtered-egress proxy
-and therefore refused without `allow_hosts`) and `env_from_files`
+and therefore refused without `allow_hosts` or `allow_private_hosts`) and `env_from_files`
 (`MinEnvFromFileAIJailVersion`, 2.0.0, existence checked in pre-flight;
 ai-jail itself enforces user-owned/0600/outside-the-project). One issue per
 floor batch (`jail-toggles-require-ai-jail-2`, `…-2-5`, `…-2-9`) names the

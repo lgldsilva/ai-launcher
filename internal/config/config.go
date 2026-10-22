@@ -261,6 +261,11 @@ const (
 // allow list below this instead of emitting it.
 const MinAllowHostAIJailVersion = "2.0.0"
 
+// MinAllowPrivateHostAIJailVersion is the first ai-jail with
+// --allow-private-host: --allow-host whose named host may also resolve to
+// RFC1918, ULA or carrier-grade NAT addresses. Older releases reject the flag.
+const MinAllowPrivateHostAIJailVersion = "2.11.0"
+
 // MinAgentStateAIJailVersion is the first ai-jail with --agent-state, and the
 // release that turned agent state on by default (harness credential dirs
 // read-write, provider API keys copied from the host). Below it the flag is an

@@ -13,6 +13,21 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — jail_flags.allow_private_hosts (ai-jail 2.11.0)
+
+`jail_flags.allow_private_hosts` forwards one `--allow-private-host` per entry
+(ai-jail >= 2.11.0), after the `--allow-host` entries. It is `allow_hosts` for a
+self-hosted service on a private network: the named host and its subdomains may
+also resolve to RFC1918, ULA or carrier-grade NAT addresses, while loopback,
+link-local, multicast and cloud-metadata addresses stay denied. Either list
+alone is filtered egress (`--no-network` replaces `--network`), `secrets`
+accepts hosts from both, and a memory server host covered only by the private
+list counts as allowed. Below 2.11.0 it is refused in pre-flight
+(`allow-private-host-requires-ai-jail-2-11`), as is a non-hostname
+(`allow-private-host-invalid`) and `network: true`. The grant is trusted-only
+upstream: it rides the command line, and ai-jail ignores `allow_private_hosts`
+in a project `.ai-jail`. Existing configs are unaffected.
+
 ### Added — the rest of the ai-jail jail_flags mirror (x11, host_shm, audio, audit_log, secrets, env_from_files)
 
 `jail_flags` now mirrors the remaining ai-jail launch capabilities: `x11` and

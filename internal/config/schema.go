@@ -200,6 +200,14 @@ type JailFlags struct {
 	// It replaces unrestricted --network for that launch. Empty entries are
 	// dropped; a non-hostname is refused in pre-flight.
 	AllowHosts []string `yaml:"allow_hosts,omitempty"`
+	// AllowPrivateHosts (ai-jail >= 2.11.0) is --allow-host for a self-hosted
+	// service on a private network: the named host and its subdomains may also
+	// resolve to RFC1918, ULA or carrier-grade NAT addresses. Loopback,
+	// link-local, multicast and cloud-metadata addresses stay denied. It is
+	// filtered egress on its own, so it replaces unrestricted --network just
+	// like allow_hosts; the launcher passes it on the CLI, which ai-jail
+	// trusts (a project .ai-jail cannot add entries).
+	AllowPrivateHosts []string `yaml:"allow_private_hosts,omitempty"`
 	// v1.15 exception lists: each entry punches a hole in a mask / deny-path
 	// rule or hides a dot-directory by name.
 	MaskExceptions     []string `yaml:"mask_exceptions,omitempty"`
@@ -300,7 +308,7 @@ func (f JailFlags) IsZero() bool {
 		f.Toolchains == nil && f.KVM == nil && f.GitHub == nil && f.AWS == nil && f.Kube == nil && f.GCloud == nil && f.DockerConfig == nil &&
 		f.X11 == nil && f.HostSHM == nil && f.Audio == nil && f.TerminalPassthru == nil && f.MacOSHostIPC == nil && f.UpdateCheck == nil && f.AuditLog == nil &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
-		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.MaskExceptions) == 0 &&
+		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.AllowPrivateHosts) == 0 && len(f.MaskExceptions) == 0 &&
 		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && len(f.ForwardPorts) == 0 &&
 		len(f.Secrets) == 0 && len(f.EnvFromFiles) == 0 && f.StatusBarStyle == ""
 }
