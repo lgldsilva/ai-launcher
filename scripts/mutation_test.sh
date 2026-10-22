@@ -73,7 +73,7 @@ chmod 755 "$fixture_dir/scripts/mutation.sh"
 git -C "$fixture_dir" init -q
 git -C "$fixture_dir" config user.email mutation-test@example.invalid
 git -C "$fixture_dir" config user.name mutation-test
-printf '%s\n' 'module example.com/eligible' '' 'go 1.26.9' >"$fixture_dir/go.mod"
+printf '%s\n' 'module example.com/eligible' '' 'go 1.26.10' >"$fixture_dir/go.mod"
 printf '%s\n' 'package config' 'func Value() int { return 1 }' >"$fixture_dir/internal/config/value.go"
 git -C "$fixture_dir" add internal/config/value.go
 git -C "$fixture_dir" -c core.hooksPath=/dev/null commit -qm base
@@ -101,7 +101,7 @@ if [ ! -e "$eligible_docker_called" ]; then
   exit 1
 fi
 
-if ! grep -F 'GOTOOLCHAIN=go1.26.9' "$eligible_docker_args" >/dev/null; then
+if ! grep -F 'GOTOOLCHAIN=go1.26.10' "$eligible_docker_args" >/dev/null; then
   echo "mutation wrapper did not set GOTOOLCHAIN to the go.mod toolchain"
   sed -n '1,200p' "$eligible_docker_args"
   exit 1
