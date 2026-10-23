@@ -1796,6 +1796,27 @@ Feature: Launcher command contract
       permission-without-jail
       """
 
+  # The catalog command is "kimi"; "kimi-cli" is the binary the installer also
+  # ships, and ai-memory accepts it as an alias of kimi (since the 1.25 floor).
+  # Pre-flight has to agree or PATH resolving kimi-cli refuses a harness the
+  # installed ai-memory would have taken.
+  Scenario: Accepts the kimi-cli alias of the Kimi harness
+    Given a validation configuration
+      """
+      agent: kimi-cli
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "1.25.0"
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """
+
   Scenario: Remaps a wrapper command to the ai-memory harness name
     Given a launch configuration
       """

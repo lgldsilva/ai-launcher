@@ -99,17 +99,20 @@ const DefaultMemoryServerURL = ""
 //
 // Aliases count: clap accepts them exactly like the canonical name, and the
 // catalog reaches ai-memory through Agent.Command, which spells Kiro
-// "kiro-cli" and Antigravity "agy". Listing only the canonical "kiro" or
-// "antigravity" would make pre-flight refuse a harness the installed ai-memory
+// "kiro-cli" and Antigravity "agy", and which becomes "kimi-cli" when that
+// binary is the one on PATH. Listing only the canonical "kiro", "antigravity"
+// or "kimi" would make pre-flight refuse a harness the installed ai-memory
 // accepts. A catalog entry that sets Memory.RunHarness papers over the gap for
 // itself, but nothing forces it to, and an operator naming the agent directly
 // gets the refusal with no override in sight. The names below were verified
-// against ai-memory 3.0.0 (RunHarnessChoice). A claude* wildcard that upstream
-// also accepts is intentionally absent: pre-flight stays a closed list, and a
-// per-account wrapper uses run_harness: claude.
+// against ai-memory 3.0.0 (RunHarnessChoice). kimi-cli is the same Kimi choice
+// as "kimi" (present since the 1.25 floor); kimi-code stays with the names
+// gated at 2.3. A claude* wildcard that upstream also accepts is intentionally
+// absent: pre-flight stays a closed list, and a per-account wrapper uses
+// run_harness: claude.
 var memoryRunHarnesses = []string{
 	"claude", "claude-code", "codex", "opencode", "open-code", "opencode2", "opencode-v2", "open-code2",
-	"pi", "crush", "omp", "oh-my-pi", "kimi", kimiCodeID,
+	"pi", "crush", "omp", "oh-my-pi", "kimi", "kimi-cli", kimiCodeID,
 	"command-code", "commandcode", "cmdc", "cmd",
 	"kiro", "kiro-cli",
 	"grok", "grok-build",

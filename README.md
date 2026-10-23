@@ -35,9 +35,8 @@ runs the rest.
 
 `ai-memory run` accepts a fixed harness list — `claude`, `codex`, `opencode`,
 `pi`, `crush`, `omp`, `kimi`, `grok`, `command-code`, `kiro`, `antigravity`
-and `copilot` (3.0.0+),
-the last four with the aliases their own CLIs are spelled with (`cmd`,
-`kiro-cli`, `agy`) — and rejects anything else. A catalog
+and `copilot` (3.0.0+), plus the aliases those CLIs are spelled with
+(`kimi-cli`, `cmd`, `kiro-cli`, `agy`) — and rejects anything else. A catalog
 agent outside that list either declares `memory.run_harness` to map onto one of
 them (as `oc` does onto `opencode`) or declares `supports_memory: false`;
 pre-flight fails with `memory-harness-unsupported` rather than letting the
@@ -564,7 +563,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 
 | Flag | Effect |
 | --- | --- |
-| `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, …) |
+| `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, kimi-cli, …) |
 | `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; all independent of each other) |
 | `--display` / `--pictures` / `--tailscale` / `--systemd-user` / `--mise` / `--worktree` | Optional jail passthroughs, all off by default; each one **forces** its capability on (platform support varies — `display` and `systemd-user` are Linux-only) |
 | `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and exits |
