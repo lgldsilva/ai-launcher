@@ -113,12 +113,13 @@ type containerResourceRow struct {
 type advancedOptionKind string
 
 const (
-	advancedNewWorkstream advancedOptionKind = "new-workstream-name"
-	advancedWorkstream    advancedOptionKind = "workstream"
-	advancedWorkspace     advancedOptionKind = "workspace"
-	advancedProject       advancedOptionKind = "project"
-	advancedExtraArgs     advancedOptionKind = "extra-args"
-	advancedAllowHosts    advancedOptionKind = "allow-hosts"
+	advancedNewWorkstream     advancedOptionKind = "new-workstream-name"
+	advancedWorkstream        advancedOptionKind = "workstream"
+	advancedWorkspace         advancedOptionKind = "workspace"
+	advancedProject           advancedOptionKind = "project"
+	advancedExtraArgs         advancedOptionKind = "extra-args"
+	advancedAllowHosts        advancedOptionKind = "allow-hosts"
+	advancedAllowPrivateHosts advancedOptionKind = "allow-private-hosts"
 )
 
 type advancedOptionRow struct {
@@ -712,6 +713,12 @@ func (m *Model) advancedOptionRows() []advancedOptionRow {
 			kind:  advancedAllowHosts,
 			value: strings.Join(m.launch.JailFlags.AllowHosts, ", "),
 			hint:  "ai-jail >= 2.0; https memory host must be listed, plain HTTP gets 405",
+		})
+		rows = append(rows, advancedOptionRow{
+			name:  "Allow private hosts",
+			kind:  advancedAllowPrivateHosts,
+			value: strings.Join(m.launch.JailFlags.AllowPrivateHosts, ", "),
+			hint:  "ai-jail >= 2.11; RFC1918, ULA or CGNAT hostnames; loopback stays denied",
 		})
 	}
 	return rows

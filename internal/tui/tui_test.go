@@ -996,6 +996,128 @@ func TestModelEditsAllowHostsWhenTheJailIsOn(t *testing.T) {
 	}
 }
 
+func TestModelEditsAllowPrivateHostsWhenTheJailIsOn(t *testing.T) {
+	stubWindows(t, false)
+	launch := launcher.LaunchConfig{
+		Agent:   config.Agent{Command: "claude"},
+		UseJail: true,
+		JailFlags: config.JailFlags{
+			AllowHosts:        []string{"github.com"},
+			AllowPrivateHosts: []string{"git.internal.example"},
+		},
+	}
+	model := NewModel(config.DefaultGlobal(), launch)
+	model.section = 3
+	if !strings.Contains(model.View(), "Allow private hosts: git.internal.example") {
+		t.Fatalf("options view missing the loaded private hosts:\n%s", model.View())
+	}
+	if !strings.Contains(model.View(), "ai-jail >= 2.11") {
+		t.Fatalf("options view missing the private-host hint:\n%s", model.View())
+	}
+	off := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}})
+	for _, row := range off.advancedOptionRows() {
+		if row.kind == advancedAllowPrivateHosts {
+			t.Fatal("allow-private-hosts row is present while the jail is off")
+		}
+	}
+	index := -1
+	for i, row := range model.advancedOptionRows() {
+		if row.kind == advancedAllowPrivateHosts {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatal("allow-private-hosts row missing while the jail is on")
+	}
+
+	replace := func(t *testing.T, value string) {
+		t.Helper()
+		model.cursor = len(model.optionRows()) + index
+		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+		if !model.textInputActive {
+			t.Fatal("allow-private-hosts row did not open the editor")
+		}
+		for range len([]rune(model.textInputValue)) {
+			model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyBackspace})
+		}
+		if value != "" {
+			model = applyKey(t, model, runeKey(value))
+		}
+		model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+		if model.textInputActive {
+			t.Fatalf("allow-private-hosts editor stayed open: %q", model.status)
+		}
+	}
+	replace(t, "registry.internal.example git.lab.example")
+	want := []string{"registry.internal.example", "git.lab.example"}
+	if !reflect.DeepEqual(model.launch.JailFlags.AllowPrivateHosts, want) {
+		t.Fatalf("allow private hosts = %#v; want %#v", model.launch.JailFlags.AllowPrivateHosts, want)
+	}
+	if !reflect.DeepEqual(model.launch.JailFlags.AllowHosts, []string{"github.com"}) {
+		t.Fatalf("allow hosts = %#v; editing private hosts must leave them alone", model.launch.JailFlags.AllowHosts)
+	}
+	if !strings.Contains(model.status, "Allow private hosts updated") {
+		t.Fatalf("status = %q", model.status)
+	}
+	if !strings.Contains(model.View(), "Allow private hosts: registry.internal.example, git.lab.example") {
+		t.Fatalf("options view missing the edited private hosts:\n%s", model.View())
+	}
+
+	model.cursor = len(model.optionRows()) + index
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model.textInputValue = "https://git.internal.example"
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.textInputActive || !strings.Contains(model.status, "Invalid allow private hosts") {
+		t.Fatalf("invalid private host did not stay editable: active=%t status=%q", model.textInputActive, model.status)
+	}
+	if !reflect.DeepEqual(model.launch.JailFlags.AllowPrivateHosts, want) {
+		t.Fatalf("invalid edit changed private hosts: %#v", model.launch.JailFlags.AllowPrivateHosts)
+	}
+	model = applyKey(t, model, tea.KeyMsg{Type: tea.KeyEscape})
+
+	var saved launcher.LaunchConfig
+	model.hooks.SaveProfile = func(_ string, updated launcher.LaunchConfig) error {
+		saved = updated
+		return nil
+	}
+	model.saveProfileAs("private-net")
+	if !reflect.DeepEqual(saved.JailFlags.AllowPrivateHosts, want) {
+		t.Fatalf("saved launch private hosts = %#v; want %#v", saved.JailFlags.AllowPrivateHosts, want)
+	}
+	profile, ok := model.profiles["private-net"]
+	if !ok || profile.Options == nil || !reflect.DeepEqual(profile.Options.JailFlags.AllowPrivateHosts, want) {
+		t.Fatalf("profile private hosts = %#v; want %#v", profile.Options, want)
+	}
+	model.launch.JailFlags.AllowPrivateHosts = nil
+	model.loadProfile("private-net")
+	if !reflect.DeepEqual(model.launch.JailFlags.AllowPrivateHosts, want) {
+		t.Fatalf("loaded private hosts = %#v; want %#v", model.launch.JailFlags.AllowPrivateHosts, want)
+	}
+	if !strings.Contains(model.View(), "Allow private hosts: registry.internal.example, git.lab.example") {
+		t.Fatalf("options view missing the reloaded private hosts:\n%s", model.View())
+	}
+
+	replace(t, "")
+	if model.launch.JailFlags.AllowPrivateHosts != nil {
+		t.Fatalf("clearing the field = %#v; want nil", model.launch.JailFlags.AllowPrivateHosts)
+	}
+}
+
+func TestAllowPrivateHostsRowIsHiddenOnWindows(t *testing.T) {
+	stubWindows(t, true)
+	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{
+		Agent:     config.Agent{Command: "claude"},
+		UseJail:   true,
+		JailFlags: config.JailFlags{AllowPrivateHosts: []string{"git.internal.example"}},
+	})
+	for _, row := range model.advancedOptionRows() {
+		if row.kind == advancedAllowPrivateHosts {
+			t.Fatal("allow-private-hosts row is present on Windows")
+		}
+	}
+}
+
 func TestModelSavesProfileWithCtrlP(t *testing.T) {
 	model := NewModel(config.DefaultGlobal(), launcher.LaunchConfig{Agent: config.Agent{Command: "claude"}, Permissions: map[string]bool{}})
 	var savedName string
