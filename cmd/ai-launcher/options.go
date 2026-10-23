@@ -69,7 +69,7 @@ type cliOptions struct {
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
-	flags.StringVar(&o.agent, "agent", "", "agent command (claude, codex, opencode, ...)")
+	flags.StringVar(&o.agent, "agent", "", "agent command (claude, codex, opencode, kimi, kimi-cli, ...)")
 	flags.BoolVar(&o.ssh, config.PermissionSSH, false, "enable SSH permission")
 	flags.BoolVar(&o.gh, config.PermissionGitHub, false, "optional: map ~/.config/gh into the jail (for host gh auth; not required)")
 	flags.BoolVar(&o.docker, config.PermissionDocker, false, "enable Docker permission")

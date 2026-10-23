@@ -231,6 +231,14 @@ func (m *Model) commitTextInput() {
 				return
 			}
 			m.launch.JailFlags.AllowHosts = hosts
+		case advancedAllowPrivateHosts:
+			hosts, err := config.ParseAllowHostList(value)
+			if err != nil {
+				m.textInputActive = true
+				m.status = "Invalid allow private hosts: " + err.Error()
+				return
+			}
+			m.launch.JailFlags.AllowPrivateHosts = hosts
 		default:
 			break
 		}
