@@ -13,12 +13,6 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added — upstream watch list in design-decisions
-
-`docs/design-decisions.md` records the next upstream surfaces to absorb when
-they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
-(#18), and any new `ai-memory run` harness tokens. No code change.
-
 ### Added — first-class force_unlock (ai-memory 2.6.0)
 
 `options.force_unlock` / `--force-unlock` forward `ai-memory run --force-unlock`
@@ -28,6 +22,12 @@ harness (and on `--continue`). Below 2.6.0 pre-flight refuses
 (`memory-force-unlock-requires-ai-memory-2-6`). An unsaved local config that
 sets it requires the matching CLI flag, like `yolo`. `--true-yolo` stays on
 `extra_args` only.
+
+### Added — upstream watch list in design-decisions
+
+`docs/design-decisions.md` records the next upstream surfaces to absorb when
+they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
+(#18), and any new `ai-memory run` harness tokens. No code change.
 
 ### Changed — revalidated against ai-jail 2.12.0 and ai-memory 3.2.6
 
