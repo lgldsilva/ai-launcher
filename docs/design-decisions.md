@@ -649,6 +649,18 @@ exists to prevent.
   A live upstream integration test remains the only way to close the question
   fully; until then the boundary records the risk explicitly.
 
+## Upstream watch list
+
+These are known upstream surfaces the launcher deliberately does **not**
+absorb yet. Revisit when the named release ships or when an operator asks for
+the capability; each item is one PR on its own (one concern).
+
+| Watch | Trigger | Launcher response |
+| --- | --- | --- |
+| ai-jail `--publish-port` | Contributor PR / release after the design note in ai-jail 2.12.0 (#195) | Mirror as `jail_flags.publish_ports` the same way as `forward_ports` (list, floor, refuse with unrestricted network) |
+| ai-memory scope auth (#18) | Live server that can prove whether `workspace`/`project` forwarded by the launcher are authorized | Add an integration test under a build tag; keep the trust gate either way |
+| New `ai-memory run` harnesses | Changelog entry adding a harness token (IBM Bob / CodeBuddy today are hooks/MCP clients only, not `run` harnesses) | Extend `memoryRunHarnesses` and any `MemoryHarnessMinVersion` floor in the same commit as the Gherkin update |
+
 ## Mistakes to avoid
 
 - [ ] Do not reimplement ai-jail/ai-memory functionality — absorb upstream and update the Gherkin contract.

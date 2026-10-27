@@ -21,6 +21,12 @@ example `CLAUDE.md` or `AGENTS.md`) or `--print` to preview without writing;
 `--no-skills` and `--compact` forward when set. Combining it with
 `--install`/`--upgrade` is refused.
 
+### Added — upstream watch list in design-decisions
+
+`docs/design-decisions.md` records the next upstream surfaces to absorb when
+they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
+(#18), and any new `ai-memory run` harness tokens. No code change.
+
 ### Changed — revalidated against ai-jail 2.12.0 and ai-memory 3.2.6
 
 `UntestedAIJailVersion` stays `3.0.0` and `UntestedAIMemoryVersion` stays
