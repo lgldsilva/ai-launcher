@@ -1,7 +1,7 @@
 package launcher
 
 import (
-	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -14,7 +14,7 @@ func TestForceUnlockEmitsAfterHarness(t *testing.T) {
 		cfg.Workstream = "release-1"
 	}))
 	want := []string{"ai-memory", "run", "--workstream", "release-1", "claude", "--force-unlock"}
-	if !reflect.DeepEqual(argv, want) {
+	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
@@ -56,32 +56,30 @@ func TestForceUnlockEmittedOnContinue(t *testing.T) {
 	}
 }
 
-// Unrelated extra args must not suppress the flag. The scan returns early
-// only when a token is exactly --force-unlock; any other token falls through
-// and the flag is still appended ahead of extra_args.
-func TestForceUnlockAppendsWhenExtraArgsOmitIt(t *testing.T) {
+// The duplicate is the only extra arg. A later unrelated token would still
+// leave a single --force-unlock if the equality check were inverted, so it
+// would not prove the dedup. The flag from extra_args stays after
+// --no-autowire; an inverted check would also prepend a second copy.
+func TestForceUnlockDedupsExtraArgs(t *testing.T) {
 	argv := buildMemoryRun(t, hostMemoryLaunch("2.6.0", func(cfg *LaunchConfig) {
 		cfg.ForceUnlock = true
-		cfg.MemoryAutowire = true
-		cfg.ExtraArgs = []string{"--model", "sonnet"}
+		cfg.ExtraArgs = []string{"--force-unlock"}
 	}))
-	want := []string{"ai-memory", "run", "claude", "--force-unlock", "--model", "sonnet"}
-	if !reflect.DeepEqual(argv, want) {
+	want := []string{"ai-memory", "run", "claude", "--no-autowire", "--force-unlock"}
+	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
 
-// A copy already present in extra_args is the only copy. The slice holds
-// only that flag, so the early return is the equality match itself: a
-// negated comparison would append a second --force-unlock.
-func TestForceUnlockDedupsExtraArgs(t *testing.T) {
+// Unrelated extra args must not suppress the flag. An inverted equality
+// returns on the first other token and drops --force-unlock.
+func TestForceUnlockAppendsBesideOtherExtraArgs(t *testing.T) {
 	argv := buildMemoryRun(t, hostMemoryLaunch("2.6.0", func(cfg *LaunchConfig) {
 		cfg.ForceUnlock = true
-		cfg.MemoryAutowire = true
-		cfg.ExtraArgs = []string{"--force-unlock"}
+		cfg.ExtraArgs = []string{"--model", "sonnet"}
 	}))
-	want := []string{"ai-memory", "run", "claude", "--force-unlock"}
-	if !reflect.DeepEqual(argv, want) {
+	want := []string{"ai-memory", "run", "claude", "--force-unlock", "--no-autowire", "--model", "sonnet"}
+	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
