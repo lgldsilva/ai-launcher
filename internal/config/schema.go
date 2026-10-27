@@ -238,7 +238,8 @@ type JailFlags struct {
 	// The remaining ai-jail toggle mirror. X11 and HostSHM are 1.18 opt-ins
 	// (no floor); Audio, TerminalPassthrough, MacOSHostIPC and UpdateCheck
 	// are floored at the version they were verified on
-	// (MinModernTogglesAIJailVersion); AuditLog is the 2.0.0 opt-in audit
+	// (MinModernTogglesAIJailVersion); MacOSChromium arrived in 2.12.0
+	// (MinMacOSChromiumAIJailVersion); AuditLog is the 2.0.0 opt-in audit
 	// journal. nil leaves each in ai-jail's auto mode, which is off for
 	// every one of them.
 	X11              *bool `yaml:"x11,omitempty"`
@@ -247,7 +248,12 @@ type JailFlags struct {
 	TerminalPassthru *bool `yaml:"terminal_passthrough,omitempty"`
 	MacOSHostIPC     *bool `yaml:"macos_host_ipc,omitempty"`
 	UpdateCheck      *bool `yaml:"update_check,omitempty"`
-	AuditLog         *bool `yaml:"audit_log,omitempty"`
+	// MacOSChromium (ai-jail >= 2.12.0) grants Chromium's own Mach
+	// rendezvous registration on macOS so headless Chromium and Playwright
+	// can start inside the jail. Off by default upstream; dropped under
+	// lockdown; trusted-only (a project .ai-jail cannot enable it).
+	MacOSChromium *bool `yaml:"macos_chromium,omitempty"`
+	AuditLog      *bool `yaml:"audit_log,omitempty"`
 	// Secrets (ai-jail >= 2.2.0) forwards one --secret KEY=host per entry:
 	// the child sees a placeholder and the filtered-egress proxy substitutes
 	// the real value only for requests to host. Requires allow_hosts.
@@ -306,7 +312,7 @@ func (f JailFlags) IsZero() bool {
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.SaveConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
 		f.Toolchains == nil && f.KVM == nil && f.GitHub == nil && f.AWS == nil && f.Kube == nil && f.GCloud == nil && f.DockerConfig == nil &&
-		f.X11 == nil && f.HostSHM == nil && f.Audio == nil && f.TerminalPassthru == nil && f.MacOSHostIPC == nil && f.UpdateCheck == nil && f.AuditLog == nil &&
+		f.X11 == nil && f.HostSHM == nil && f.Audio == nil && f.TerminalPassthru == nil && f.MacOSHostIPC == nil && f.UpdateCheck == nil && f.MacOSChromium == nil && f.AuditLog == nil &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
 		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.AllowPrivateHosts) == 0 && len(f.MaskExceptions) == 0 &&
 		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && len(f.ForwardPorts) == 0 &&

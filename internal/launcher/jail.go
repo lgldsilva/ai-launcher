@@ -126,6 +126,7 @@ func jailToggles(flags config.JailFlags) []jailToggle {
 		{name: "terminal-passthrough", value: flags.TerminalPassthru, floor: config.MinModernTogglesAIJailVersion},
 		{name: "macos-host-ipc", value: flags.MacOSHostIPC, floor: config.MinModernTogglesAIJailVersion},
 		{name: "update-check", value: flags.UpdateCheck, floor: config.MinModernTogglesAIJailVersion},
+		{name: "macos-chromium", value: flags.MacOSChromium, floor: config.MinMacOSChromiumAIJailVersion},
 		{name: "audit-log", value: flags.AuditLog, floor: config.MinAuditLogAIJailVersion},
 	}
 }

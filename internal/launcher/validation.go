@@ -613,6 +613,8 @@ func toggleFloorCode(floor string) string {
 		return "jail-toggles-require-ai-jail-2-5"
 	case config.MinModernTogglesAIJailVersion:
 		return "jail-toggles-require-ai-jail-2-9"
+	case config.MinMacOSChromiumAIJailVersion:
+		return "jail-toggles-require-ai-jail-2-12"
 	}
 	return "jail-toggles-require-newer-ai-jail"
 }
