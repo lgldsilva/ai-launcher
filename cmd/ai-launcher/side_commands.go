@@ -64,6 +64,28 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, out,
 	return false, nil
 }
 
+// runTimedMemoryCommand runs an already-resolved ai-memory with the launcher's
+// memory environment, bounded by workstreamSearchTimeout. Read-only side
+// commands share it so a hung server cannot wedge the terminal and the env
+// wiring lives in one place. memoryPath is LookPath of the fixed tool name;
+// args are launcher-owned flags plus the operator's own values.
+func runTimedMemoryCommand(global config.Global, home, memoryPath string, args []string, out, errOut io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
+	defer cancel()
+	// #nosec G204 G702 -- memoryPath is the LookPath result for a fixed tool name;
+	// every argument is a launcher-controlled flag or the operator's own query.
+	command := exec.CommandContext(ctx, memoryPath, args...)
+	command.Env = launcher.Environment(launcher.LaunchConfig{
+		UseMemory:       true,
+		HomeDir:         home,
+		MemoryServerURL: global.MemoryServerURL,
+		MemoryAuthToken: global.MemoryAuthToken,
+	})
+	command.Stdout = out
+	command.Stderr = errOut
+	return command.Run()
+}
+
 // searchWorkstream forwards a query to `ai-memory workstream-search`.
 //
 // The launcher already creates workstreams (`--new`) and resumes them
@@ -100,21 +122,7 @@ func searchWorkstream(opts *cliOptions, global config.Global, home string, out, 
 		args = append(args, "--json")
 	}
 	args = append(args, opts.workstreamSearch)
-
-	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
-	defer cancel()
-	// #nosec G204 G702 -- memoryPath is the LookPath result for a fixed tool name;
-	// every argument is a launcher-controlled flag or the operator's own query.
-	command := exec.CommandContext(ctx, memoryPath, args...)
-	command.Env = launcher.Environment(launcher.LaunchConfig{
-		UseMemory:       true,
-		HomeDir:         home,
-		MemoryServerURL: global.MemoryServerURL,
-		MemoryAuthToken: global.MemoryAuthToken,
-	})
-	command.Stdout = out
-	command.Stderr = errOut
-	if err := command.Run(); err != nil {
+	if err := runTimedMemoryCommand(global, home, memoryPath, args, out, errOut); err != nil {
 		return fmt.Errorf("workstream-search: %w", err)
 	}
 	return nil
@@ -173,20 +181,7 @@ func installMemoryInstructions(opts *cliOptions, global config.Global, home stri
 	if opts.instructionsCompact {
 		args = append(args, "--compact")
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
-	defer cancel()
-	// #nosec G204 G702 -- memoryPath is LookPath of a fixed tool name; args are launcher-owned.
-	command := exec.CommandContext(ctx, memoryPath, args...)
-	command.Env = launcher.Environment(launcher.LaunchConfig{
-		UseMemory:       true,
-		HomeDir:         home,
-		MemoryServerURL: global.MemoryServerURL,
-		MemoryAuthToken: global.MemoryAuthToken,
-	})
-	command.Stdout = out
-	command.Stderr = errOut
-	if err := command.Run(); err != nil {
+	if err := runTimedMemoryCommand(global, home, memoryPath, args, out, errOut); err != nil {
 		return fmt.Errorf("install-instructions: %w", err)
 	}
 	return nil
