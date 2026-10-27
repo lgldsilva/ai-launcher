@@ -48,8 +48,14 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, in i
 	if opts.installSystemDeps && !opts.install && !opts.upgrade {
 		return true, fmt.Errorf("--install-system-deps requires --install or --upgrade")
 	}
+	if err := installInstructionsConflict(opts); err != nil {
+		return true, err
+	}
 	if opts.install || opts.upgrade {
 		return true, launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, opts.installSystemDeps, out, errOut)
+	}
+	if opts.installInstructions {
+		return true, installMemoryInstructions(opts, global, home, out, errOut)
 	}
 	if opts.listProfiles {
 		listProfiles(global, out)
@@ -293,5 +299,48 @@ func resumeWorkstream(opts *cliOptions, global config.Global, home string, in io
 		name:  "resume",
 		args:  args,
 		stdin: in,
+	}, out, errOut)
+}
+
+// installInstructionsConflict refuses folding the markdown writer into the
+// binary installer. Those commands answer different questions, and the mix
+// is checked before either one runs.
+func installInstructionsConflict(opts *cliOptions) error {
+	if opts.installInstructions && (opts.install || opts.upgrade) {
+		return fmt.Errorf("--install-instructions cannot combine with --install/--upgrade; run it on its own")
+	}
+	return nil
+}
+
+// installMemoryInstructions forwards to `ai-memory install-instructions`.
+//
+// It is deliberately a separate flag from --install: that command provisions
+// binaries globally, while install-instructions mutates a markdown file in the
+// current checkout. Folding the two would surprise anyone who only asked for
+// binaries. The target file must be named with --target (or --print for a
+// no-write preview) so the operator answers "which file may it touch" before
+// anything is written.
+func installMemoryInstructions(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
+	target := strings.TrimSpace(opts.instructionsTarget)
+	if target == "" && !opts.instructionsPrint {
+		return fmt.Errorf("--install-instructions needs --target <file> (for example CLAUDE.md or AGENTS.md), or --print to preview without writing")
+	}
+	args := []string{"install-instructions"}
+	if opts.instructionsPrint {
+		args = append(args, "--print")
+	}
+	if target != "" {
+		args = append(args, "--target", target)
+	}
+	if opts.instructionsNoSkills {
+		args = append(args, "--no-skills")
+	}
+	if opts.instructionsCompact {
+		args = append(args, "--compact")
+	}
+	return runMemorySideCommand(global, home, memorySideSpec{
+		name:    "install-instructions",
+		args:    args,
+		timeout: workstreamSearchTimeout,
 	}, out, errOut)
 }

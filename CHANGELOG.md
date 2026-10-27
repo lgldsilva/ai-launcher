@@ -23,6 +23,14 @@ configured server URL and auth token, and are mutually exclusive with each
 other and with `--workstream-search`. They are not `--continue` (that stays
 `ai-memory run` without a harness).
 
+### Added — --install-instructions (separate from --install)
+
+`--install-instructions` forwards to `ai-memory install-instructions` and is
+never part of `--install` / `--upgrade`. It requires `--target <file>` (for
+example `CLAUDE.md` or `AGENTS.md`) or `--print` to preview without writing;
+`--no-skills` and `--compact` forward when set. Combining it with
+`--install`/`--upgrade` is refused.
+
 ### Added — upstream watch list in design-decisions
 
 `docs/design-decisions.md` records the next upstream surfaces to absorb when
