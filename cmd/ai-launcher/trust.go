@@ -37,6 +37,7 @@ func localTrustFrom(catalogue catalog.Catalog, flagAgent string, raw config.Loca
 		trust.docker = raw.Options.Docker || hasContainerResources(raw.Options)
 		trust.dockerReason = dockerBackendReason(raw.Options)
 		trust.yolo = raw.Options.Yolo
+		trust.forceUnlock = raw.Options.ForceUnlock
 		trust.extraArgs = append([]string(nil), raw.Options.ExtraArgs...)
 		trust.jailFlags = raw.Options.JailFlags
 		trust.paramValues = raw.Options.ParamValues
@@ -97,6 +98,7 @@ type localTrust struct {
 	mounts              []config.Mount
 	rawPermissions      map[string]bool           // permissions from file (profile may overwrite)
 	yolo                bool                      // file value when profile does not own options
+	forceUnlock         bool                      // file value when profile does not own options
 	extraArgs           []string                  // file value when profile does not own options
 	jailFlags           config.JailFlags          // file value when profile does not own options
 	paramValues         map[string]string         // file value when profile does not own options
@@ -270,14 +272,18 @@ func enforceJailFlagsConsent(flags *flag.FlagSet, trust localTrust) error {
 }
 
 // enforceHarnessOptionConsent refuses an unsaved local config that decides how
-// the harness process itself runs: yolo, extra_args (F6) and param_values.
-// Each takes the CLI flag that repeats the same choice as its opt-in.
+// the harness process itself runs: yolo, force_unlock, extra_args (F6) and
+// param_values. Each takes the CLI flag that repeats the same choice as its
+// opt-in.
 func enforceHarnessOptionConsent(flags *flag.FlagSet, trust localTrust) error {
 	if !trust.optionsRaw {
 		return nil
 	}
 	if trust.yolo && !flagsWasSet(flags, "yolo") {
 		return errors.New("local config sets options.yolo: true; run with --yolo or save the selection to accept")
+	}
+	if trust.forceUnlock && !flagsWasSet(flags, "force-unlock") {
+		return errors.New("local config sets options.force_unlock: true; run with --force-unlock or save the selection to accept")
 	}
 	if len(trust.extraArgs) > 0 && !flagsWasSet(flags, "extra-args") && !flagsWasSet(flags, "args") {
 		return errors.New("local config lists options.extra_args without --args/--extra-args; pass the flag to accept")

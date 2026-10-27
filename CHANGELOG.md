@@ -31,6 +31,16 @@ example `CLAUDE.md` or `AGENTS.md`) or `--print` to preview without writing;
 `--no-skills` and `--compact` forward when set. Combining it with
 `--install`/`--upgrade` is refused.
 
+### Added — first-class force_unlock (ai-memory 2.6.0)
+
+`options.force_unlock` / `--force-unlock` forward `ai-memory run --force-unlock`
+(ai-memory >= 2.6.0): expire the selected workstream's active lease so a new
+launch can take over after a dead launcher left it behind. Emitted after the
+harness (and on `--continue`). Below 2.6.0 pre-flight refuses
+(`memory-force-unlock-requires-ai-memory-2-6`). An unsaved local config that
+sets it requires the matching CLI flag, like `yolo`. `--true-yolo` stays on
+`extra_args` only.
+
 ### Added — upstream watch list in design-decisions
 
 `docs/design-decisions.md` records the next upstream surfaces to absorb when
@@ -148,9 +158,10 @@ silently lose its state mounts — and pre-flight refuses the combination
 (`memory-profile-requires-ai-memory-2-6`, `memory-env-file-requires-ai-memory-2-5`,
 `memory-jail-requires-ai-memory-2-5-2`). `--env KEY=VALUE` is deliberately
 not exposed (ai-jail refuses a flag spelled like its own after the command
-word); `--force-unlock` and friends keep riding `extra_args`, which ai-memory
-re-extracts. `copilot` / `copilot-cli` join the harness list, gated on
-ai-memory 3.0.0 by the existing `memory-harness-version` check.
+word); `--true-yolo` and other rare wrapper flags keep riding `extra_args`,
+which ai-memory re-extracts (`--force-unlock` is first-class). `copilot` /
+`copilot-cli` join the harness list, gated on ai-memory 3.0.0 by the existing
+`memory-harness-version` check.
 
 **What you need to do:** nothing — every option is opt-in.
 

@@ -600,6 +600,44 @@ Feature: Launcher command contract
       --fresh
       """
 
+  Scenario: Emits --force-unlock as an ai-memory run wrapper flag
+    Given a launch configuration
+      """
+      agent: claude
+      jail: false
+      memory: true
+      memory_version: "2.6.0"
+      memory_autowire: true
+      force_unlock: true
+      workstream: release-1
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      release-1
+      claude
+      --force-unlock
+      """
+
+  Scenario: Refuses force_unlock below ai-memory 2.6
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "2.5.9"
+      force_unlock: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-force-unlock-requires-ai-memory-2-6
+      """
+
   Scenario: Rejects --fresh together with --continue
     Given a validation configuration
       """

@@ -380,6 +380,26 @@ func TestLocalConfigYoloRequiresFlag(t *testing.T) {
 	}
 }
 
+// force_unlock from local config is refused unless --force-unlock.
+func TestLocalConfigForceUnlockRequiresFlag(t *testing.T) {
+	globalPath, localPath, _ := writeTestConfigs(t,
+		"agent: custom-cli\noptions:\n  jail: true\n  memory: false\n  force_unlock: true\n")
+	_, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath, "--dry-run")
+	if err == nil {
+		t.Fatal("run() = nil; force_unlock:true must be refused without --force-unlock")
+	}
+	if !strings.Contains(err.Error(), "force_unlock") || !strings.Contains(err.Error(), "--force-unlock") {
+		t.Errorf("error = %v; want refusal naming force_unlock and --force-unlock", err)
+	}
+	// Consent only: the file may set force_unlock with memory off; accepting
+	// the flag must not leave the trust gate blocking the dry-run.
+	stubToolsOnPath(t, "sh-like")
+	if _, _, err := runCapture(t, "--config", globalPath, "--local-config", localPath,
+		"--no-jail", "--no-memory", "--force-unlock", "--agent", "sh-like", "--dry-run"); err != nil {
+		t.Fatalf("run() error = %v; --force-unlock must accept file force_unlock setting", err)
+	}
+}
+
 // extra_args from local config is refused unless --args/--extra-args.
 func TestLocalConfigExtraArgsRequiresFlag(t *testing.T) {
 	globalPath, localPath, _ := writeTestConfigs(t,

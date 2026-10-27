@@ -149,6 +149,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		Mounts:                         inputs.mounts,
 		Yolo:                           inputs.local.Options.Yolo,
 		Fresh:                          inputs.local.Options.Fresh,
+		ForceUnlock:                    inputs.local.Options.ForceUnlock,
 		ExtraArgs:                      inputs.local.Options.ExtraArgs,
 		ParamValues:                    inputs.local.Options.ParamValues,
 	}
