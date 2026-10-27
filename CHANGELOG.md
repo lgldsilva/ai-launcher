@@ -23,6 +23,12 @@ configured server URL and auth token, and are mutually exclusive with each
 other and with `--workstream-search`. They are not `--continue` (that stays
 `ai-memory run` without a harness).
 
+### Added — upstream watch list in design-decisions
+
+`docs/design-decisions.md` records the next upstream surfaces to absorb when
+they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
+(#18), and any new `ai-memory run` harness tokens. No code change.
+
 ### Changed — revalidated against ai-jail 2.12.0 and ai-memory 3.2.6
 
 `UntestedAIJailVersion` stays `3.0.0` and `UntestedAIMemoryVersion` stays
