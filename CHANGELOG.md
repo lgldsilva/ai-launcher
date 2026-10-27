@@ -19,6 +19,22 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
 (#18), and any new `ai-memory run` harness tokens. No code change.
 
+### Changed — revalidated against ai-jail 2.12.0 and ai-memory 3.2.6
+
+`UntestedAIJailVersion` stays `3.0.0` and `UntestedAIMemoryVersion` stays
+`3.3.0`. Live dry-run of the composed `ai-jail` → `ai-memory run` chain (parsed
+by both), `--allow-host` / `--allow-private-host`, and `--doctor` were re-run
+against ai-jail 2.12.0 and ai-memory 3.2.6 (latest published release assets;
+ai-memory's changelog lists 3.2.7 without matching GitHub assets yet).
+ai-jail 2.12.0's only new launch flag is `--macos-chromium` (added in #101);
+`--publish-port` remains design-only upstream. ai-memory 3.2.2–3.2.6 keep the
+`run` grammar this launcher emits. Stale ceiling numbers in
+`docs/design-decisions.md` (`2.3.0` / `2.5.0`) are corrected to match
+`config.go`.
+
+**What you need to do:** nothing. `ai-launcher --doctor` already treats both
+installs as inside the validated range.
+
 ### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
 
 `jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`
