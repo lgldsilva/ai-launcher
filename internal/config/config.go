@@ -325,6 +325,11 @@ const MinSecretAIJailVersion = "2.2.0"
 // repository's own 1.18.0 notes name both as opt-ins of that release.
 const MinModernTogglesAIJailVersion = "2.9.0"
 
+// MinMacOSChromiumAIJailVersion is the first ai-jail with --macos-chromium:
+// the narrow Seatbelt opt-in that lets headless Chromium (and Playwright)
+// register its MachPortRendezvousServer. Older releases reject the flag.
+const MinMacOSChromiumAIJailVersion = "2.12.0"
+
 // MinEnvFileAIMemoryVersion is the first ai-memory whose `run` accepts
 // --env-file (KEY=VALUE lines for the spawned harness, read before the
 // harness name).

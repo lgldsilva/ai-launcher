@@ -13,6 +13,16 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
+
+`jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`
+(ai-jail >= 2.12.0). It is the narrow Seatbelt opt-in that lets headless
+Chromium and Playwright register their MachPortRendezvousServer inside the
+jail; off by default upstream, dropped under lockdown, and trusted-only there
+(a project `.ai-jail` cannot enable it). Below 2.12.0 it is refused in
+pre-flight (`jail-toggles-require-ai-jail-2-12`). Unset configs build the same
+argv as before.
+
 ### Added — jail_flags.allow_private_hosts (ai-jail 2.11.0)
 
 `jail_flags.allow_private_hosts` forwards one `--allow-private-host` per entry
