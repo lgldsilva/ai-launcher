@@ -13,6 +13,12 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — upstream watch list in design-decisions
+
+`docs/design-decisions.md` records the next upstream surfaces to absorb when
+they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
+(#18), and any new `ai-memory run` harness tokens. No code change.
+
 ### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
 
 `jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`
