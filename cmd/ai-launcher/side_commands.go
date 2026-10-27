@@ -15,6 +15,10 @@ import (
 	"github.com/lgldsilva/ai-launcher/internal/launcher"
 )
 
+// memoryResultLimitFlag is ai-memory's --limit on the ledger side commands
+// (workstream-search, workstreams, and resume).
+const memoryResultLimitFlag = "--limit"
+
 // userHome returns the operator's home directory, or "" when it cannot be
 // determined.
 func userHome() string {
@@ -128,7 +132,7 @@ func searchWorkstream(opts *cliOptions, global config.Global, home string, out, 
 	}
 	args := []string{"workstream-search", "--workstream-id", workstreamID}
 	if opts.searchLimit > 0 {
-		args = append(args, "--limit", strconv.Itoa(opts.searchLimit))
+		args = append(args, memoryResultLimitFlag, strconv.Itoa(opts.searchLimit))
 	}
 	if opts.searchJSON {
 		args = append(args, "--json")
@@ -193,7 +197,7 @@ func listMemoryWorkstreams(opts *cliOptions, global config.Global, home string, 
 		args = append(args, "--project", project)
 	}
 	if opts.searchLimit > 0 {
-		args = append(args, "--limit", strconv.Itoa(opts.searchLimit))
+		args = append(args, memoryResultLimitFlag, strconv.Itoa(opts.searchLimit))
 	}
 	if opts.searchJSON {
 		args = append(args, "--json")
@@ -235,7 +239,7 @@ func resumeWorkstream(opts *cliOptions, global config.Global, home string, in io
 		args = append(args, "--all")
 	}
 	if opts.searchLimit > 0 {
-		args = append(args, "--limit", strconv.Itoa(opts.searchLimit))
+		args = append(args, memoryResultLimitFlag, strconv.Itoa(opts.searchLimit))
 	}
 	if search := strings.TrimSpace(opts.resumeSearch); search != "" {
 		args = append(args, "--search", search)
