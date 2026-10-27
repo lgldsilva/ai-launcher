@@ -1008,6 +1008,37 @@ func TestSupportsMemoryRunHarnessAcceptsAIMemory24Aliases(t *testing.T) {
 	}
 }
 
+// kimi-cli is clap's alias of the Kimi harness (the same RunHarnessChoice as
+// "kimi"), accepted since the 1.25 floor. The catalog command is "kimi"; when
+// PATH resolves the kimi-cli binary, that spelling is the token after
+// `ai-memory run`, so it has to be on the list at kimi's floor — not with the
+// names gated at 2.3, which is where kimi-code sits.
+func TestKimiCLIAliasSharesTheKimiHarnessFloor(t *testing.T) {
+	if !SupportsMemoryRunHarness("kimi-cli") {
+		t.Fatal("SupportsMemoryRunHarness(kimi-cli) = false; it is an alias of kimi")
+	}
+	if got, want := MemoryHarnessMinVersion("kimi-cli"), MemoryHarnessMinVersion("kimi"); got != want {
+		t.Fatalf("MemoryHarnessMinVersion(kimi-cli) = %q; want %q, the same floor as kimi", got, want)
+	}
+	if got := MemoryHarnessMinVersion("kimi-code"); got != MinNoAutowireAIMemoryVersion {
+		t.Fatalf("MemoryHarnessMinVersion(kimi-code) = %q; want %s", got, MinNoAutowireAIMemoryVersion)
+	}
+	kimi, ok := agentByCommand(DefaultGlobal().Agents, "kimi")
+	if !ok {
+		t.Fatal("default catalog has no kimi agent")
+	}
+	found := false
+	for _, alias := range kimi.Aliases {
+		if alias == "kimi-cli" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("kimi aliases = %#v; want kimi-cli so a resolved binary stays on the harness list", kimi.Aliases)
+	}
+}
+
 // The MRU cap is a literal contract: the list must hold exactly 32 entries,
 // newest first, with the oldest evicted beyond that.
 func TestTouchRecentAgentCapsAtExactly32Entries(t *testing.T) {

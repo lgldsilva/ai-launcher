@@ -200,6 +200,14 @@ type JailFlags struct {
 	// It replaces unrestricted --network for that launch. Empty entries are
 	// dropped; a non-hostname is refused in pre-flight.
 	AllowHosts []string `yaml:"allow_hosts,omitempty"`
+	// AllowPrivateHosts (ai-jail >= 2.11.0) is --allow-host for a self-hosted
+	// service on a private network: the named host and its subdomains may also
+	// resolve to RFC1918, ULA or carrier-grade NAT addresses. Loopback,
+	// link-local, multicast and cloud-metadata addresses stay denied. It is
+	// filtered egress on its own, so it replaces unrestricted --network just
+	// like allow_hosts; the launcher passes it on the CLI, which ai-jail
+	// trusts (a project .ai-jail cannot add entries).
+	AllowPrivateHosts []string `yaml:"allow_private_hosts,omitempty"`
 	// v1.15 exception lists: each entry punches a hole in a mask / deny-path
 	// rule or hides a dot-directory by name.
 	MaskExceptions     []string `yaml:"mask_exceptions,omitempty"`
@@ -230,7 +238,8 @@ type JailFlags struct {
 	// The remaining ai-jail toggle mirror. X11 and HostSHM are 1.18 opt-ins
 	// (no floor); Audio, TerminalPassthrough, MacOSHostIPC and UpdateCheck
 	// are floored at the version they were verified on
-	// (MinModernTogglesAIJailVersion); AuditLog is the 2.0.0 opt-in audit
+	// (MinModernTogglesAIJailVersion); MacOSChromium arrived in 2.12.0
+	// (MinMacOSChromiumAIJailVersion); AuditLog is the 2.0.0 opt-in audit
 	// journal. nil leaves each in ai-jail's auto mode, which is off for
 	// every one of them.
 	X11              *bool `yaml:"x11,omitempty"`
@@ -239,7 +248,12 @@ type JailFlags struct {
 	TerminalPassthru *bool `yaml:"terminal_passthrough,omitempty"`
 	MacOSHostIPC     *bool `yaml:"macos_host_ipc,omitempty"`
 	UpdateCheck      *bool `yaml:"update_check,omitempty"`
-	AuditLog         *bool `yaml:"audit_log,omitempty"`
+	// MacOSChromium (ai-jail >= 2.12.0) grants Chromium's own Mach
+	// rendezvous registration on macOS so headless Chromium and Playwright
+	// can start inside the jail. Off by default upstream; dropped under
+	// lockdown; trusted-only (a project .ai-jail cannot enable it).
+	MacOSChromium *bool `yaml:"macos_chromium,omitempty"`
+	AuditLog      *bool `yaml:"audit_log,omitempty"`
 	// Secrets (ai-jail >= 2.2.0) forwards one --secret KEY=host per entry:
 	// the child sees a placeholder and the filtered-egress proxy substitutes
 	// the real value only for requests to host. Requires allow_hosts.
@@ -298,9 +312,9 @@ func (f JailFlags) IsZero() bool {
 		f.Landlock == nil && f.Seccomp == nil && f.Rlimits == nil &&
 		f.StatusBar == nil && f.HideConfig == nil && f.SaveConfig == nil && f.Browser == "" && f.ClaudeDir == "" &&
 		f.Toolchains == nil && f.KVM == nil && f.GitHub == nil && f.AWS == nil && f.Kube == nil && f.GCloud == nil && f.DockerConfig == nil &&
-		f.X11 == nil && f.HostSHM == nil && f.Audio == nil && f.TerminalPassthru == nil && f.MacOSHostIPC == nil && f.UpdateCheck == nil && f.AuditLog == nil &&
+		f.X11 == nil && f.HostSHM == nil && f.Audio == nil && f.TerminalPassthru == nil && f.MacOSHostIPC == nil && f.UpdateCheck == nil && f.MacOSChromium == nil && f.AuditLog == nil &&
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
-		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.MaskExceptions) == 0 &&
+		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.AllowPrivateHosts) == 0 && len(f.MaskExceptions) == 0 &&
 		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && len(f.ForwardPorts) == 0 &&
 		len(f.Secrets) == 0 && len(f.EnvFromFiles) == 0 && f.StatusBarStyle == ""
 }
@@ -391,6 +405,12 @@ type Options struct {
 	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
 	// current workstream instead of resuming or adopting one.
 	Fresh bool `yaml:"fresh,omitempty"`
+	// ForceUnlock maps to `ai-memory run --force-unlock` (ai-memory >= 2.6.0):
+	// expire the selected workstream's active lease so a new launch can take
+	// over after a dead launcher left it behind. Same operator only; does not
+	// kill a native process. Trusted like yolo: an unsaved local config that
+	// sets it requires the matching CLI flag.
+	ForceUnlock bool `yaml:"force_unlock,omitempty"`
 	// MemoryProfile maps to `ai-memory run --profile <NAME>` (ai-memory
 	// >= 2.6.0): a named env-only launch profile from the server's config.
 	// Must precede the harness, so a jailed launch also needs

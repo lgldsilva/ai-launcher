@@ -144,7 +144,11 @@ type LaunchConfig struct {
 	Yolo            bool
 	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
 	// current workstream instead of resuming or adopting one.
-	Fresh       bool
+	Fresh bool
+	// ForceUnlock maps to `ai-memory run --force-unlock` (ai-memory >= 2.6.0):
+	// expire the selected workstream's active lease. Emitted after the
+	// harness for the same managed-harness parser reason as --fresh.
+	ForceUnlock bool
 	ExtraArgs   []string
 	ParamValues map[string]string
 }
@@ -199,6 +203,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		if cfg.Fresh {
 			command = append(command, "--fresh")
 		}
+		command = appendForceUnlock(command, cfg)
 		// --no-autowire stays after the harness for the same reason --fresh
 		// does: ai-jail's managed-harness parser bails on any other dash token
 		// before the harness name. ai-memory pulls the flag back out of the
@@ -366,9 +371,12 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 		return container.RunConfig{}, fmt.Errorf("agent %q declares yolo support but has no yolo_flag for the docker backend", cfg.Agent.Command)
 	}
 	// Native args compose exactly like the jail path: declared params first,
-	// then the yolo flag, then extra args. Without params/yolo the docker
-	// backend silently dropped --param model=... and --yolo (C3).
+	// then force-unlock / yolo, then extra args. Without params/yolo the docker
+	// backend silently dropped --param model=... and --yolo (C3). Wrapper
+	// flags such as --force-unlock are re-extracted by ai-memory from the
+	// native argv after the harness.
 	run.AgentArgs = appendDeclaredParams(run.AgentArgs, cfg)
+	run.AgentArgs = appendForceUnlock(run.AgentArgs, cfg)
 	run.AgentArgs = appendYoloFlag(run.AgentArgs, cfg)
 	run.AgentArgs = append(run.AgentArgs, cfg.ExtraArgs...)
 	if err := run.Selection.Validate(); err != nil {

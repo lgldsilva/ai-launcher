@@ -44,7 +44,7 @@ fi
 
 # The pinned gremlins image is FROM golang:1.25 and bakes GOTOOLCHAIN=local,
 # so its go refuses a module whose go line is newer (the image runs 1.25.5;
-# go.mod requires 1.26.9) before it can download modules or gather coverage.
+# go.mod requires 1.26.10) before it can download modules or gather coverage.
 # Naming the toolchain after the go line makes that binary fetch exactly the
 # version the module asks for. The go command checks the download against the
 # checksum database, and the image digest stays the pin for gremlins itself.

@@ -99,17 +99,20 @@ const DefaultMemoryServerURL = ""
 //
 // Aliases count: clap accepts them exactly like the canonical name, and the
 // catalog reaches ai-memory through Agent.Command, which spells Kiro
-// "kiro-cli" and Antigravity "agy". Listing only the canonical "kiro" or
-// "antigravity" would make pre-flight refuse a harness the installed ai-memory
+// "kiro-cli" and Antigravity "agy", and which becomes "kimi-cli" when that
+// binary is the one on PATH. Listing only the canonical "kiro", "antigravity"
+// or "kimi" would make pre-flight refuse a harness the installed ai-memory
 // accepts. A catalog entry that sets Memory.RunHarness papers over the gap for
 // itself, but nothing forces it to, and an operator naming the agent directly
 // gets the refusal with no override in sight. The names below were verified
-// against ai-memory 3.0.0 (RunHarnessChoice). A claude* wildcard that upstream
-// also accepts is intentionally absent: pre-flight stays a closed list, and a
-// per-account wrapper uses run_harness: claude.
+// against ai-memory 3.0.0 (RunHarnessChoice). kimi-cli is the same Kimi choice
+// as "kimi" (present since the 1.25 floor); kimi-code stays with the names
+// gated at 2.3. A claude* wildcard that upstream also accepts is intentionally
+// absent: pre-flight stays a closed list, and a per-account wrapper uses
+// run_harness: claude.
 var memoryRunHarnesses = []string{
 	"claude", "claude-code", "codex", "opencode", "open-code", "opencode2", "opencode-v2", "open-code2",
-	"pi", "crush", "omp", "oh-my-pi", "kimi", kimiCodeID,
+	"pi", "crush", "omp", "oh-my-pi", "kimi", "kimi-cli", kimiCodeID,
 	"command-code", "commandcode", "cmdc", "cmd",
 	"kiro", "kiro-cli",
 	"grok", "grok-build",
@@ -241,7 +244,7 @@ const (
 // off the argv and makes --lockdown force --unshare-net even with --network,
 // and 2.5.0 refuses a flag spelled like ai-jail's own after the
 // command word, which is why ai-memory's pre-harness --env KEY=VALUE cannot
-// ride through the jail while --env-file can. ai-memory 1.35.0 through 3.0.0
+// ride through the jail while --env-file can. ai-memory 1.35.0 through 3.2.1
 // kept the `run` grammar this launcher emits (--workspace, --project,
 // --workstream, --new, --executable, harness, --fresh); the additions are
 // wrapper flags re-extracted from native args (--yolo's own ai-jail offer in
@@ -250,16 +253,29 @@ const (
 // ai-jail). 2.6.0 also downgrades an unreachable server to a degraded launch
 // instead of failing, and 3.0.0 adds the copilot/copilot-cli harnesses while
 // removing the 1.x token commands and OPENCODE_ZEN_BASE_URL, none of which
-// this launcher uses.
+// this launcher uses. ai-jail 2.10 through 2.11.2 and ai-memory 3.0.1 through
+// 3.2.1 added no flag this launcher emits (2.11.0's --allow-private-host is
+// opt-in through jail_flags); ai-memory 3.1.0 only changes what `run` hands the
+// harness on a switch (AI_MEMORY_PREVIOUS_SESSION_HISTORY). ai-jail 2.12.0
+// adds --macos-chromium (new opt-in, added in #101); ai-memory
+// 3.2.2 through 3.2.6 keep the same `run` grammar (latest published
+// Linux/macOS/Windows assets at revalidation time — a 3.2.7 changelog entry
+// had no matching release assets yet). Live dry-run of the composed chain and
+// --doctor were re-run against ai-jail 2.12.0 and ai-memory 3.2.6.
 const (
 	UntestedAIJailVersion   = "3.0.0"
-	UntestedAIMemoryVersion = "3.1.0"
+	UntestedAIMemoryVersion = "3.3.0"
 )
 
 // MinAllowHostAIJailVersion is the first ai-jail that accepts --allow-host.
 // Older releases reject the flag outright, so the launcher refuses a configured
 // allow list below this instead of emitting it.
 const MinAllowHostAIJailVersion = "2.0.0"
+
+// MinAllowPrivateHostAIJailVersion is the first ai-jail with
+// --allow-private-host: --allow-host whose named host may also resolve to
+// RFC1918, ULA or carrier-grade NAT addresses. Older releases reject the flag.
+const MinAllowPrivateHostAIJailVersion = "2.11.0"
 
 // MinAgentStateAIJailVersion is the first ai-jail with --agent-state, and the
 // release that turned agent state on by default (harness credential dirs
@@ -314,6 +330,11 @@ const MinSecretAIJailVersion = "2.2.0"
 // repository's own 1.18.0 notes name both as opt-ins of that release.
 const MinModernTogglesAIJailVersion = "2.9.0"
 
+// MinMacOSChromiumAIJailVersion is the first ai-jail with --macos-chromium:
+// the narrow Seatbelt opt-in that lets headless Chromium (and Playwright)
+// register its MachPortRendezvousServer. Older releases reject the flag.
+const MinMacOSChromiumAIJailVersion = "2.12.0"
+
 // MinEnvFileAIMemoryVersion is the first ai-memory whose `run` accepts
 // --env-file (KEY=VALUE lines for the spawned harness, read before the
 // harness name).
@@ -349,6 +370,12 @@ const MinNoAutowireAIMemoryVersion = "2.3.0"
 // unreachable server to a degraded launch. Below it the CLI already fails
 // closed, so the launcher exports nothing there.
 const MinRequireServerAIMemoryVersion = "2.6.0"
+
+// MinForceUnlockAIMemoryVersion is the first ai-memory whose `run` accepts
+// --force-unlock (expire the selected workstream's active lease). Same
+// release as require-server; kept as its own constant so the floor stays
+// named in refusals.
+const MinForceUnlockAIMemoryVersion = "2.6.0"
 
 // Shared catalog names and platform identifiers. Keeping these values in the
 // config package avoids slightly different spellings in the CLI, catalog and

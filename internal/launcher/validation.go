@@ -427,9 +427,11 @@ func dockerIssues(cfg LaunchConfig, lookPath func(string) (string, error)) []Iss
 // launcher does not control, and an operator who clears jail_flags and keeps
 // failing needs to know where else to look.
 // allowHostIssues refuses an allow list the installed ai-jail cannot apply,
-// and a list that contradicts an explicit unrestricted network.
+// and a list that contradicts an explicit unrestricted network. It covers both
+// lists that select filtered egress: allow_hosts (ai-jail 2.0) and
+// allow_private_hosts (ai-jail 2.11).
 func allowHostIssues(cfg LaunchConfig) []Issue {
-	if len(cfg.JailFlags.AllowHosts) == 0 {
+	if len(cfg.JailFlags.AllowHosts) == 0 && len(cfg.JailFlags.AllowPrivateHosts) == 0 {
 		return nil
 	}
 	hosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowHosts)
@@ -439,7 +441,14 @@ func allowHostIssues(cfg LaunchConfig) []Issue {
 			Message: err.Error(),
 		}}
 	}
-	if len(hosts) == 0 {
+	privateHosts, err := config.NormalizeAllowHosts(cfg.JailFlags.AllowPrivateHosts)
+	if err != nil {
+		return []Issue{{
+			Code:    "allow-private-host-invalid",
+			Message: strings.Replace(err.Error(), "allow host", "allow private host", 1),
+		}}
+	}
+	if len(hosts) == 0 && len(privateHosts) == 0 {
 		return nil
 	}
 	if !cfg.UseJail {
@@ -449,7 +458,7 @@ func allowHostIssues(cfg LaunchConfig) []Issue {
 		if cfg.UseDocker {
 			return []Issue{{
 				Code:    "allow-host-without-jail",
-				Message: "jail_flags.allow_hosts has no effect on the container backend; the container keeps its own network",
+				Message: "jail_flags.allow_hosts and allow_private_hosts have no effect on the container backend; the container keeps its own network",
 				Warning: true,
 			}}
 		}
@@ -458,24 +467,36 @@ func allowHostIssues(cfg LaunchConfig) []Issue {
 	if explicitNetworkOn(cfg) {
 		return []Issue{{
 			Code: "allow-host-conflicts-with-network",
-			Message: "jail_flags.allow_hosts is filtered egress and cannot be combined with jail_flags.network: true; " +
-				"ai-jail rejects --allow-host together with --network",
+			Message: "jail_flags.allow_hosts and allow_private_hosts are filtered egress and cannot be combined with jail_flags.network: true; " +
+				"ai-jail rejects --allow-host and --allow-private-host together with --network",
 		}}
 	}
 	version := strings.TrimSpace(cfg.JailVersion)
-	if !jailSupportsAllowHost(version) {
-		seen := version
-		if seen == "" {
-			seen = "unknown"
-		}
-		return []Issue{{
+	seen := version
+	if seen == "" {
+		seen = "unknown"
+	}
+	var issues []Issue
+	if len(hosts) > 0 && !jailSupportsAllowHost(version) {
+		issues = append(issues, Issue{
 			Code: "allow-host-requires-ai-jail-2",
 			Message: fmt.Sprintf(
 				"jail_flags.allow_hosts needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove allow_hosts",
 				config.MinAllowHostAIJailVersion, seen),
-		}}
+		})
 	}
-	return allowHostMemoryIssues(cfg, hosts)
+	if len(privateHosts) > 0 && !jailSupportsFlag(version, config.MinAllowPrivateHostAIJailVersion) {
+		issues = append(issues, Issue{
+			Code: "allow-private-host-requires-ai-jail-2-11",
+			Message: fmt.Sprintf(
+				"jail_flags.allow_private_hosts needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove allow_private_hosts",
+				config.MinAllowPrivateHostAIJailVersion, seen),
+		})
+	}
+	if len(issues) > 0 {
+		return issues
+	}
+	return allowHostMemoryIssues(cfg, append(append([]string(nil), hosts...), privateHosts...))
 }
 
 // allowHostMemoryIssues refuses filtered egress that cannot reach ai-memory.
@@ -496,7 +517,7 @@ func allowHostMemoryIssues(cfg LaunchConfig, hosts []string) []Issue {
 		return []Issue{{
 			Code: "allow-host-memory-needs-https",
 			Message: "jail_flags.allow_hosts installs a CONNECT-only proxy that answers plain HTTP with 405, " +
-				"so ai-memory cannot reach " + called + "; set memory_server_url to an https origin and add that host to allow_hosts, or drop allow_hosts",
+				"so ai-memory cannot reach " + called + "; set memory_server_url to an https origin and add that host to allow_hosts, or drop the allow lists",
 		}}
 	}
 	if !allowHostCovers(hosts, host) {
@@ -592,6 +613,8 @@ func toggleFloorCode(floor string) string {
 		return "jail-toggles-require-ai-jail-2-5"
 	case config.MinModernTogglesAIJailVersion:
 		return "jail-toggles-require-ai-jail-2-9"
+	case config.MinMacOSChromiumAIJailVersion:
+		return "jail-toggles-require-ai-jail-2-12"
 	}
 	return "jail-toggles-require-newer-ai-jail"
 }
@@ -619,7 +642,7 @@ func secretsIssues(cfg LaunchConfig) []Issue {
 	if !filteredEgress(cfg) {
 		return []Issue{{
 			Code:    "secrets-require-filtered-egress",
-			Message: "jail_flags.secrets substitutes values in the filtered-egress proxy, so it needs jail_flags.allow_hosts; add the host to the list or remove secrets",
+			Message: "jail_flags.secrets substitutes values in the filtered-egress proxy, so it needs jail_flags.allow_hosts or allow_private_hosts; add the host to a list or remove secrets",
 		}}
 	}
 	var invalid []string
@@ -769,7 +792,21 @@ func memoryRunFlagIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error
 	issues = append(issues, memoryProfileIssues(cfg)...)
 	issues = append(issues, memoryEnvFileIssues(cfg, stat)...)
 	issues = append(issues, memoryJailIssues(cfg)...)
+	issues = append(issues, forceUnlockIssues(cfg)...)
 	return issues
+}
+
+// forceUnlockIssues refuses force_unlock below its ai-memory floor. The flag
+// rides after the harness, so no ai-jail pre-harness floor applies. Without
+// memory the flag is inert (Build emits nothing), so there is nothing to refuse.
+func forceUnlockIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseMemory || !cfg.ForceUnlock {
+		return nil
+	}
+	if MemorySupportsForceUnlock(cfg.MemoryVersion) {
+		return nil
+	}
+	return []Issue{versionFloorIssue("memory-force-unlock-requires-ai-memory-2-6", "force_unlock", cfg.MemoryVersion, config.MinForceUnlockAIMemoryVersion)}
 }
 
 // memoryProfileIssues refuses memory_profile below its ai-memory floor, and

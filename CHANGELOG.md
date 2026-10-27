@@ -13,6 +13,101 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — --resume and --workstreams side commands
+
+`--resume` forwards to `ai-memory resume` (interactive picker; optional
+`--search`, `--all`, `--limit`, and launch `--yolo` / `--fresh`). `--workstreams`
+forwards to `ai-memory workstreams` (optional `--workspace`, `--project`,
+`--limit`, `--json`). Both are un-jailed like `--workstream-search`, carry the
+configured server URL and auth token, and are mutually exclusive with each
+other and with `--workstream-search`. They are not `--continue` (that stays
+`ai-memory run` without a harness).
+
+### Added — --install-instructions (separate from --install)
+
+`--install-instructions` forwards to `ai-memory install-instructions` and is
+never part of `--install` / `--upgrade`. It requires `--target <file>` (for
+example `CLAUDE.md` or `AGENTS.md`) or `--print` to preview without writing;
+`--no-skills` and `--compact` forward when set. Combining it with
+`--install`/`--upgrade` is refused.
+
+### Added — first-class force_unlock (ai-memory 2.6.0)
+
+`options.force_unlock` / `--force-unlock` forward `ai-memory run --force-unlock`
+(ai-memory >= 2.6.0): expire the selected workstream's active lease so a new
+launch can take over after a dead launcher left it behind. Emitted after the
+harness (and on `--continue`). Below 2.6.0 pre-flight refuses
+(`memory-force-unlock-requires-ai-memory-2-6`). An unsaved local config that
+sets it requires the matching CLI flag, like `yolo`. `--true-yolo` stays on
+`extra_args` only.
+
+### Added — upstream watch list in design-decisions
+
+`docs/design-decisions.md` records the next upstream surfaces to absorb when
+they ship: ai-jail `--publish-port` (#195), a live test for memory scope auth
+(#18), and any new `ai-memory run` harness tokens. No code change.
+
+### Changed — revalidated against ai-jail 2.12.0 and ai-memory 3.2.6
+
+`UntestedAIJailVersion` stays `3.0.0` and `UntestedAIMemoryVersion` stays
+`3.3.0`. Live dry-run of the composed `ai-jail` → `ai-memory run` chain (parsed
+by both), `--allow-host` / `--allow-private-host`, and `--doctor` were re-run
+against ai-jail 2.12.0 and ai-memory 3.2.6 (latest published release assets;
+ai-memory's changelog lists 3.2.7 without matching GitHub assets yet).
+ai-jail 2.12.0's only new launch flag is `--macos-chromium` (added in #101);
+`--publish-port` remains design-only upstream. ai-memory 3.2.2–3.2.6 keep the
+`run` grammar this launcher emits. Stale ceiling numbers in
+`docs/design-decisions.md` (`2.3.0` / `2.5.0`) are corrected to match
+`config.go`.
+
+**What you need to do:** nothing. `ai-launcher --doctor` already treats both
+installs as inside the validated range.
+
+### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
+
+`jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`
+(ai-jail >= 2.12.0). It is the narrow Seatbelt opt-in that lets headless
+Chromium and Playwright register their MachPortRendezvousServer inside the
+jail; off by default upstream, dropped under lockdown, and trusted-only there
+(a project `.ai-jail` cannot enable it). Below 2.12.0 it is refused in
+pre-flight (`jail-toggles-require-ai-jail-2-12`). Unset configs build the same
+argv as before.
+
+### Added — jail_flags.allow_private_hosts (ai-jail 2.11.0)
+
+`jail_flags.allow_private_hosts` forwards one `--allow-private-host` per entry
+(ai-jail >= 2.11.0), after the `--allow-host` entries. It is `allow_hosts` for a
+self-hosted service on a private network: the named host and its subdomains may
+also resolve to RFC1918, ULA or carrier-grade NAT addresses, while loopback,
+link-local, multicast and cloud-metadata addresses stay denied. Either list
+alone is filtered egress (`--no-network` replaces `--network`), `secrets`
+accepts hosts from both, and a memory server host covered only by the private
+list counts as allowed. Below 2.11.0 it is refused in pre-flight
+(`allow-private-host-requires-ai-jail-2-11`), as is a non-hostname
+(`allow-private-host-invalid`) and `network: true`. The grant is trusted-only
+upstream: it rides the command line, and ai-jail ignores `allow_private_hosts`
+in a project `.ai-jail`. Existing configs are unaffected.
+
+### Changed — the validated upstream range now includes ai-jail 2.11 and ai-memory 3.2
+
+`UntestedAIMemoryVersion` moves from `3.1.0` to `3.3.0`; `UntestedAIJailVersion`
+stays `3.0.0`, which already covers 2.10 and 2.11. Re-validated live against
+ai-jail 2.11.2 and ai-memory 3.2.1 built from their release tags: the composed
+argv through the full `ai-jail` → `ai-memory run` chain (parsed by both, for
+`claude` and the `agy` alias), a real launch under `--allow-host` plus
+`--allow-private-host`, and `--doctor`. The releases in between (ai-jail 2.10.x,
+2.11.0-2.11.2; ai-memory 3.0.1, 3.1.x, 3.2.0) were read from their changelogs
+and kept every token this launcher emits. Two behaviors inside the range are
+documented rather than changed: ai-memory 3.1.0's cross-harness history dossier
+(`AI_MEMORY_PREVIOUS_SESSION_HISTORY`) can be unavailable inside the jail, where
+ai-memory falls back to the portable packet; and ai-memory 3.0.1 refuses
+`memory_jail` with a root bearer that only lives in its `config.toml` or
+`bearer_token_file`, asking for a least-privilege `AI_MEMORY_AUTH_TOKEN` (the
+launcher exports `memory_auth_token` under that name).
+
+**What you need to do:** nothing. `ai-launcher --doctor` stops calling
+ai-memory 3.1 through 3.2 untested.
+
 ### Added — the rest of the ai-jail jail_flags mirror (x11, host_shm, audio, audit_log, secrets, env_from_files)
 
 `jail_flags` now mirrors the remaining ai-jail launch capabilities: `x11` and
@@ -63,9 +158,10 @@ silently lose its state mounts — and pre-flight refuses the combination
 (`memory-profile-requires-ai-memory-2-6`, `memory-env-file-requires-ai-memory-2-5`,
 `memory-jail-requires-ai-memory-2-5-2`). `--env KEY=VALUE` is deliberately
 not exposed (ai-jail refuses a flag spelled like its own after the command
-word); `--force-unlock` and friends keep riding `extra_args`, which ai-memory
-re-extracts. `copilot` / `copilot-cli` join the harness list, gated on
-ai-memory 3.0.0 by the existing `memory-harness-version` check.
+word); `--true-yolo` and other rare wrapper flags keep riding `extra_args`,
+which ai-memory re-extracts (`--force-unlock` is first-class). `copilot` /
+`copilot-cli` join the harness list, gated on ai-memory 3.0.0 by the existing
+`memory-harness-version` check.
 
 **What you need to do:** nothing — every option is opt-in.
 

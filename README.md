@@ -35,9 +35,8 @@ runs the rest.
 
 `ai-memory run` accepts a fixed harness list — `claude`, `codex`, `opencode`,
 `pi`, `crush`, `omp`, `kimi`, `grok`, `command-code`, `kiro`, `antigravity`
-and `copilot` (3.0.0+),
-the last four with the aliases their own CLIs are spelled with (`cmd`,
-`kiro-cli`, `agy`) — and rejects anything else. A catalog
+and `copilot` (3.0.0+), plus the aliases those CLIs are spelled with
+(`kimi-cli`, `cmd`, `kiro-cli`, `agy`) — and rejects anything else. A catalog
 agent outside that list either declares `memory.run_harness` to map onto one of
 them (as `oc` does onto `opencode`) or declares `supports_memory: false`;
 pre-flight fails with `memory-harness-unsupported` rather than letting the
@@ -67,14 +66,33 @@ jails nor containers: `no`/`false`/`none` emits `--no-jail` (skips the
 `--yolo` ai-jail offer), `smart`/`true` emits bare `--jail`, and any other
 value is the toggle list (`--jail=github,aws`). Inside the launcher's jail
 ai-memory ignores `--jail`, so `memory_jail` there only draws a warning.
+A `memory_jail` launch on ai-memory ≥ 3.0.1 forwards the server route into the
+jail's private home but refuses to promote a root bearer that only lives in
+ai-memory's `config.toml` or `[auth].bearer_token_file`: it stops and asks for
+a least-privilege `AI_MEMORY_AUTH_TOKEN`. The launcher already exports the
+global `memory_auth_token` under that name, so set it there (or export the
+variable) with a scoped token before using `memory_jail` against an
+authenticated server.
+
+ai-memory ≥ 3.1.0 also hands a harness switch (a workstream moving from one
+harness to another) a private history dossier through
+`AI_MEMORY_PREVIOUS_SESSION_HISTORY`. `ai-memory run` writes it under the
+temporary directory it shares with the harness, so a jailed launch needs
+nothing extra for the file itself. Reading the *previous* harness's native
+session store is another matter: the jail only mounts the selected harness's
+own state, so inside the jail the dossier can be unavailable, and ai-memory
+prints a notice and continues with the portable workstream packet. The
+launcher does not mount the other harness's directory to change that, since
+that would widen the sandbox for every launch.
 `--env KEY=VALUE` is deliberately not exposed: ai-jail refuses a flag spelled
 like its own after the command word, so `--env-file` is the one form that
 works jailed and unjailed alike. `--profile` and `--env-file` precede the
 harness, which through a jail additionally needs ai-jail ≥ 2.9.0 (the 1.x
 managed-harness parser bails on unknown pre-harness flags) — pre-flight
-refuses the combinations with dedicated codes instead. One-off wrapper flags
-such as `--force-unlock` can ride `extra_args`: ai-memory re-extracts its
-exact wrapper flags from the native arguments.
+refuses the combinations with dedicated codes instead. `--force-unlock` is a
+first-class option (`options.force_unlock` / the CLI flag). Other one-off
+wrapper flags such as `--true-yolo` can ride `extra_args`: ai-memory
+re-extracts its exact wrapper flags from the native arguments.
 
 ## Screenshots
 
@@ -546,7 +564,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 
 | Flag | Effect |
 | --- | --- |
-| `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, …) |
+| `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, kimi-cli, …) |
 | `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; all independent of each other) |
 | `--display` / `--pictures` / `--tailscale` / `--systemd-user` / `--mise` / `--worktree` | Optional jail passthroughs, all off by default; each one **forces** its capability on (platform support varies — `display` and `systemd-user` are Linux-only) |
 | `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and exits |
@@ -557,8 +575,11 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
 | `--workstream-search <query>` | Queries the ai-memory ledger and exits; `--limit N` and `--json` refine it |
 | `--workstream-id <id>` | Which workstream `--workstream-search` reads. Defaults to `$AI_MEMORY_WORKSTREAM_ID`, which ai-memory sets inside the agents it manages — so an agent launched from here needs no id, and a bare shell does. It is an **id**, not the name `--workstream` takes; upstream maps neither to the other |
+| `--workstreams` | Lists managed workstreams for this checkout (`ai-memory workstreams`) and exits; `--workspace` / `--project` / `--limit` / `--json` refine it |
+| `--resume` | Interactively picks a managed workstream (`ai-memory resume`) then launches; `--search`, `--all`, `--limit`, `--yolo`, and `--fresh` forward. Not `--continue` |
 | `--continue` | Continues the last ai-memory session of this checkout |
 | `--fresh` | Starts a new ai-memory session in the current workstream instead of resuming one (mutually exclusive with `--continue`) |
+| `--force-unlock` | Expires the selected ai-memory workstream lease so a new launch can take over after a dead launcher left it behind (ai-memory ≥ 2.6.0; same operator only) |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
@@ -570,6 +591,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--compose-update=prompt\|keep\|replace` | Handles a changed generated Compose file: review interactively, preserve it, or replace it |
 | `--dry-run` | Runs pre-flight validation, prints the generated command, and exits without executing. Warnings go to stderr and still exit 0; a fatal issue reports the problem, still prints the argv, and exits non-zero |
 | `--version` | Prints the binary version and exits |
+| `--install-instructions` | Writes the ai-memory routing snippet into a checkout file via `ai-memory install-instructions`. Requires `--target <file>` (or `--print` to preview); never combined with `--install`/`--upgrade`. Optional `--no-skills` / `--compact` |
 | `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
 
 ### Permissions: CLI + config (what gets mounted)
@@ -792,6 +814,7 @@ refuses, naming the explicit opt-in:
 | Mount a sensitive tree (`/etc`, `/usr`, another user's home, a container socket…) | Refused. Pass `--mount <path>` to accept it |
 | Enable a `permission` (ssh, gh, docker, gpu…) | Refused. Pass the matching flag (`--ssh`, `--gh`, `--docker`…) to accept it |
 | Set `options.yolo: true` | CLI: refused; pass `--yolo`. Bare TUI: shown as the `--yolo` option for review before `r` |
+| Set `options.force_unlock: true` | Refused. Pass `--force-unlock` to accept it |
 | List `options.extra_args` | Refused. Pass `--args "<args>"` to accept it |
 | Set `options.param_values` (model selection, catalog flags) | Refused. Pass `--param name=value` to accept it |
 | Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: run `--save` (it lists the flags it accepts) or select a profile |
@@ -829,6 +852,7 @@ synonym for unset, so both forms are always emitted:
 | --- | --- | --- |
 | `lockdown`, `private_home`, `tailscale`, `gpu`, `display`, `mise`, `worktree`, `landlock`, `seccomp`, `rlimits`, `status_bar`, `hide_config`, `save_config`, `x11`, `host_shm` | tri-state bool | `--flag` when `true`, `--no-flag` when `false`, nothing when unset |
 | `audio`, `terminal_passthrough`, `macos_host_ipc`, `update_check` | tri-state bool | ai-jail ≥ 2.9.0 only (the version they were verified against): `--flag` / `--no-flag` when set, nothing when unset. Refused below (`jail-toggles-require-ai-jail-2-9`) |
+| `macos_chromium` | tri-state bool | ai-jail ≥ 2.12.0 only: `--macos-chromium` / `--no-macos-chromium` when set. Narrow Seatbelt opt-in so headless Chromium and Playwright can register their Mach rendezvous on macOS; off by default upstream and dropped under lockdown. Refused below (`jail-toggles-require-ai-jail-2-12`) |
 | `audit_log` | tri-state bool | `--audit-log` / `--no-audit-log` on ai-jail ≥ 2.0.0 (the opt-in audit journal at `~/.local/share/ai-jail/history.jsonl`). Refused below 2.0 (`jail-toggles-require-ai-jail-2`) |
 | `toolchains`, `kvm`, `github`, `aws`, `kube`, `gcloud`, `docker_config` | tri-state bool | ai-jail ≥ 2.5.0 only: `--flag` / `--no-flag` when set, nothing when unset (ai-jail's own default stays in charge: `toolchains` on, the rest off). `github` shares the gh config read-only plus the keyring token flow — complementary to the `gh` permission. Refused below 2.5.0 (`jail-toggles-require-ai-jail-2-5`) |
 | `docker` | tri-state bool | `--docker` when `true`, `--no-docker` when `false`. **Unset is not auto**: with no `jail_flags.docker` and the Docker permission off, the launcher still emits `--no-docker` |
@@ -844,6 +868,7 @@ synonym for unset, so both forms are always emitted:
 | `hide_dotdirs` | list | `--hide-dotdir <NAME>` per entry |
 | `allow_tcp_ports` | list of int | refused: ai-jail rejects `--allow-tcp-port` |
 | `allow_hosts` | list of hostnames | `--allow-host <HOST>` per entry on ai-jail >= 2.0, and `--no-network` instead of `--network`. Refused below 2.0, with `network: true`, and with memory unless `memory_server_url` is https and that host is listed. **On ai-jail >= 2.8 the list is not exact**: the selected harness's own default API host (e.g. `api.anthropic.com` for claude) is unioned into the filtered egress |
+| `allow_private_hosts` | list of hostnames | `--allow-private-host <HOST>` per entry on ai-jail >= 2.11.0, after the `--allow-host` entries. Like `allow_hosts`, but the named host (and its subdomains) may also resolve to RFC1918, ULA or carrier-grade NAT addresses — a self-hosted GitLab, an internal registry. Loopback, link-local, multicast and cloud-metadata addresses stay denied. Filtered egress on its own (`--no-network` instead of `--network`); refused below 2.11.0 and with `network: true`. Trusted-only: the launcher passes it on the command line, and ai-jail ignores entries in a project `.ai-jail` |
 | `forward_ports` | list of int | `--forward-port <PORT>` per entry on ai-jail >= 2.9.0, under filtered egress (`--no-network`). Refused below 2.9.0, with unrestricted network, for ports outside 1024-65535, and above 256 entries |
 | `secrets` | list of `KEY=host` | `--secret KEY=host` per entry on ai-jail >= 2.2.0: the child sees a placeholder and the filtered-egress proxy substitutes the real value only for requests to host. KEY must reach the sandbox env (`jail_env` passthrough or `env_from_files`) — ai-jail refuses a secret whose key it does not have. Refused below 2.2, without `allow_hosts` (`secrets-require-filtered-egress`), and for entries that are not `KEY=host` |
 | `env_from_files` | list of paths | `--env-from-file <PATH>` per entry on ai-jail >= 2.0.0; must be mode 0600 (checked in pre-flight), user-owned and outside the project (ai-jail's own rules). Refused below 2.0 and for paths that do not exist |
@@ -861,7 +886,7 @@ Layers of defense:
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
-  (`ai-jail` < 3.0.0, `ai-memory` < 3.1.0). It probes `--version` and reports
+  (`ai-jail` < 3.0.0, `ai-memory` < 3.3.0). It probes `--version` and reports
   an install that is older (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`) or newer than the validated range
   (`…-version-untested`). It also probes the launcher-managed ai-memory native

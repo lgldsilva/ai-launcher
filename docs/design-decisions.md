@@ -46,8 +46,8 @@ workstream/workspace/project scope. The contract asserts what ai-launcher
 renames a flag installs cleanly and CI stays green. That gap is closed by
 version pinning, not by the contract alone — `config.MinAIJailVersion`
 (`1.20.1`) and `config.MinAIMemoryVersion` (`1.25.0`) declare the supported
-floor in exactly one place, with `UntestedAIJailVersion` (`2.3.0`) and
-`UntestedAIMemoryVersion` (`2.5.0`) closing the range at the top, and
+floor in exactly one place, with `UntestedAIJailVersion` (`3.0.0`) and
+`UntestedAIMemoryVersion` (`3.3.0`) closing the range at the top, and
 `ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version` (5s
 timeout), reporting `…-version-too-old` below the floor and
 `…-version-untested` at or above the ceiling. Above the ceiling it reports and
@@ -622,13 +622,12 @@ exists to prevent.
   and the preflight checks ownership rather than just PATH. It does not
   install `ai-jail-bin` or `ai-memory-bin`. macOS does not need it; the
   sandbox is `sandbox-exec`.
-- **`ai-memory install-instructions` in the install flow.** `--install`
+- **`ai-memory install-instructions` stays out of `--install`.** `--install`
   provisions binaries globally; `install-instructions` writes a routing block
-  into `CLAUDE.md` / `AGENTS.md` **in the current checkout**. Folding a
-  file-mutating step into a binary installer would be a surprise, so it stays
-  out until it gets its own flag and its own answer to "which file may it
-  touch". Nothing is blocked meanwhile — running the upstream command by hand
-  does the same thing.
+  into a checkout markdown file. Folding a file-mutating step into a binary
+  installer would be a surprise, so the launcher exposes it as its own
+  `--install-instructions` flag that requires `--target <file>` (or `--print`
+  to preview) and refuses to combine with `--install` / `--upgrade`.
 - **Two upstream questions we handle at the trust boundary.** Both need a live
   upstream runtime for a definitive answer, so the launcher treats them as
   policy decisions rather than pretending they are closed:
@@ -649,6 +648,18 @@ exists to prevent.
   ensures the operator explicitly agrees with the scope the launcher forwards.
   A live upstream integration test remains the only way to close the question
   fully; until then the boundary records the risk explicitly.
+
+## Upstream watch list
+
+These are known upstream surfaces the launcher deliberately does **not**
+absorb yet. Revisit when the named release ships or when an operator asks for
+the capability; each item is one PR on its own (one concern).
+
+| Watch | Trigger | Launcher response |
+| --- | --- | --- |
+| ai-jail `--publish-port` | Contributor PR / release after the design note in ai-jail 2.12.0 (#195) | Mirror as `jail_flags.publish_ports` the same way as `forward_ports` (list, floor, refuse with unrestricted network) |
+| ai-memory scope auth (#18) | Live server that can prove whether `workspace`/`project` forwarded by the launcher are authorized | Add an integration test under a build tag; keep the trust gate either way |
+| New `ai-memory run` harnesses | Changelog entry adding a harness token (IBM Bob / CodeBuddy today are hooks/MCP clients only, not `run` harnesses) | Extend `memoryRunHarnesses` and any `MemoryHarnessMinVersion` floor in the same commit as the Gherkin update |
 
 ## Mistakes to avoid
 

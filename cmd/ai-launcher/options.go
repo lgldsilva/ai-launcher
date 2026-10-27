@@ -58,7 +58,12 @@ type cliOptions struct {
 	containerNetwork                                  string
 	composeUpdate                                     string
 	yolo, noYolo                                      bool
-	fresh                                             bool
+	fresh, forceUnlock                                bool
+	resume, resumeAll, listWorkstreams                bool
+	resumeSearch                                      string
+	installInstructions, instructionsPrint            bool
+	instructionsNoSkills, instructionsCompact         bool
+	instructionsTarget                                string
 	dryRun, save, install, upgrade, installSystemDeps bool
 	listProfiles                                      bool
 	continueSession                                   bool
@@ -69,7 +74,7 @@ type cliOptions struct {
 }
 
 func (o *cliOptions) register(flags *flag.FlagSet) {
-	flags.StringVar(&o.agent, "agent", "", "agent command (claude, codex, opencode, ...)")
+	flags.StringVar(&o.agent, "agent", "", "agent command (claude, codex, opencode, kimi, kimi-cli, ...)")
 	flags.BoolVar(&o.ssh, config.PermissionSSH, false, "enable SSH permission")
 	flags.BoolVar(&o.gh, config.PermissionGitHub, false, "optional: map ~/.config/gh into the jail (for host gh auth; not required)")
 	flags.BoolVar(&o.docker, config.PermissionDocker, false, "enable Docker permission")
@@ -104,6 +109,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
 	flags.BoolVar(&o.yolo, "yolo", false, "pass the dangerous-mode flag to the agent")
 	flags.BoolVar(&o.fresh, "fresh", false, "start a new ai-memory session in the current workstream instead of resuming one")
+	flags.BoolVar(&o.forceUnlock, "force-unlock", false, "expire the selected ai-memory workstream lease so a new launch can take over (ai-memory >= 2.6)")
 	flags.BoolVar(&o.noYolo, "no-yolo", false, "do not pass the dangerous-mode flag to the agent")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "print the generated command")
 	flags.BoolVar(&o.save, "save", false, "save local configuration and exit")
@@ -111,6 +117,11 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.install, "install", false, "install missing configured tools from GitHub releases and update stale ones")
 	flags.BoolVar(&o.upgrade, "upgrade", false, "force reinstall of configured tools from the latest GitHub release")
 	flags.BoolVar(&o.installSystemDeps, "install-system-deps", false, "on Linux, install the bubblewrap package with sudo when ai-jail needs bwrap")
+	flags.BoolVar(&o.installInstructions, "install-instructions", false, "write the ai-memory routing snippet into a checkout markdown file (never part of --install)")
+	flags.StringVar(&o.instructionsTarget, "target", "", "markdown file for --install-instructions (required unless --print)")
+	flags.BoolVar(&o.instructionsPrint, "print", false, "with --install-instructions, print the snippet instead of writing a file")
+	flags.BoolVar(&o.instructionsNoSkills, "no-skills", false, "with --install-instructions, skip managed Agent Skills")
+	flags.BoolVar(&o.instructionsCompact, "compact", false, "with --install-instructions, write the compact routing snippet")
 	flags.StringVar(&o.newWorkstream, "new", "", "start a new ai-memory workstream with this name")
 	flags.StringVar(&o.workstream, "workstream", "", "resume an existing ai-memory workstream by name")
 	flags.StringVar(&o.workspace, "workspace", "", "ai-memory workspace name (forwarded to ai-memory run)")
@@ -138,8 +149,12 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
 	flags.StringVar(&o.workstreamSearch, "workstream-search", "", "search the ai-memory workstream ledger for this query and exit")
 	flags.StringVar(&o.workstreamID, "workstream-id", "", "workstream to search with --workstream-search (defaults to $AI_MEMORY_WORKSTREAM_ID)")
-	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search (ai-memory's own default when unset)")
-	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search results as JSON")
+	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search / --workstreams / --resume (ai-memory's own default when unset)")
+	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search or --workstreams results as JSON")
+	flags.BoolVar(&o.resume, "resume", false, "interactively pick an ai-memory workstream (ai-memory resume) and exit after that launch")
+	flags.StringVar(&o.resumeSearch, "search", "", "initial workstream-name filter for --resume")
+	flags.BoolVar(&o.resumeAll, "all", false, "with --resume, list workstreams from every linked checkout")
+	flags.BoolVar(&o.listWorkstreams, "workstreams", false, "list ai-memory managed workstreams for this checkout and exit")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
 	flags.BoolVar(&o.doctor, "doctor", false, "report the installed upstream tool versions against the supported floor and exit")
 }
@@ -310,6 +325,7 @@ func (o *cliOptions) applyOptionFlags(flags *flag.FlagSet, local *config.Local) 
 		{"memory", func() { local.Options.Memory = o.memory }},
 		{"no-memory", func() { local.Options.Memory = !o.noMemory }},
 		{"fresh", func() { local.Options.Fresh = o.fresh }},
+		{"force-unlock", func() { local.Options.ForceUnlock = o.forceUnlock }},
 		{"yolo", func() { local.Options.Yolo = o.yolo }},
 		{"no-yolo", func() { local.Options.Yolo = !o.noYolo }},
 		{"new", func() { local.Options.NewWorkstream = o.newWorkstream }},

@@ -264,6 +264,12 @@ func MemorySupportsJail(version string) bool {
 	return versionAtLeast(version, config.MinMemoryJailAIMemoryVersion)
 }
 
+// MemorySupportsForceUnlock reports whether ai-memory accepts
+// `run --force-unlock` (2.6.0+).
+func MemorySupportsForceUnlock(version string) bool {
+	return versionAtLeast(version, config.MinForceUnlockAIMemoryVersion)
+}
+
 // versionAtLeast is the shared dotted-version floor check with the
 // unreadable-version rule: an empty version never clears a floor.
 func versionAtLeast(version, floor string) bool {

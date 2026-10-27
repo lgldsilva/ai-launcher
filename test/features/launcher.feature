@@ -600,6 +600,44 @@ Feature: Launcher command contract
       --fresh
       """
 
+  Scenario: Emits --force-unlock as an ai-memory run wrapper flag
+    Given a launch configuration
+      """
+      agent: claude
+      jail: false
+      memory: true
+      memory_version: "2.6.0"
+      memory_autowire: true
+      force_unlock: true
+      workstream: release-1
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-memory
+      run
+      --workstream
+      release-1
+      claude
+      --force-unlock
+      """
+
+  Scenario: Refuses force_unlock below ai-memory 2.6
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "2.5.9"
+      force_unlock: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-force-unlock-requires-ai-memory-2-6
+      """
+
   Scenario: Rejects --fresh together with --continue
     Given a validation configuration
       """
@@ -1208,6 +1246,93 @@ Feature: Launcher command contract
       forward-ports-require-ai-jail-2-9
       """
 
+  # allow_private_hosts (ai-jail 2.11.0) is --allow-host for a self-hosted
+  # service on a private network; either list alone selects filtered egress.
+  Scenario: Emits private allow hosts after the public ones on ai-jail 2.11
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.11.0"
+      jail_flags:
+        allow_hosts: [api.anthropic.com]
+        allow_private_hosts: [git.internal.example]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --allow-host
+      api.anthropic.com
+      --allow-private-host
+      git.internal.example
+      claude
+      """
+
+  Scenario: Private allow hosts alone select filtered egress
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.11.2"
+      permissions:
+        jail: true
+        network: true
+      jail_flags:
+        allow_private_hosts: [git.internal.example]
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --allow-private-host
+      git.internal.example
+      claude
+      """
+
+  Scenario: Refuses private allow hosts below ai-jail 2.11
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.10.0"
+      jail_flags:
+        allow_private_hosts: [git.internal.example]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-private-host-requires-ai-jail-2-11
+      """
+
+  Scenario: Refuses private allow hosts combined with unrestricted network
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.11.0"
+      jail_flags:
+        allow_private_hosts: [git.internal.example]
+        network: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-conflicts-with-network
+      """
+
   # ai-memory's own run options: --profile and --env-file precede the
   # harness, memory_jail is host-launch only (ai-memory ignores --jail inside
   # ai-jail and a container image has no ai-jail to run).
@@ -1373,7 +1498,8 @@ Feature: Launcher command contract
 
   # The remaining toggle mirror: x11/host_shm are 1.18 opt-ins (no floor);
   # audio/terminal_passthrough/macos_host_ipc/update_check are floored at the
-  # verified 2.9; audit_log at 2.0. secrets ride filtered egress only.
+  # verified 2.9; macos_chromium at 2.12; audit_log at 2.0. secrets ride
+  # filtered egress only.
   Scenario: Emits the remaining ai-jail toggles when configured
     Given a launch configuration
       """
@@ -1399,6 +1525,44 @@ Feature: Launcher command contract
       --no-update-check
       --audit-log
       claude
+      """
+
+  Scenario: Emits macos-chromium on ai-jail 2.12
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.12.0"
+      jail_flags:
+        macos_chromium: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --macos-chromium
+      claude
+      """
+
+  Scenario: Refuses macos_chromium below ai-jail 2.12
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.11.2"
+      jail_flags:
+        macos_chromium: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-toggles-require-ai-jail-2-12
       """
 
   Scenario: Emits secrets alongside filtered egress
@@ -1700,6 +1864,27 @@ Feature: Launcher command contract
       goos: linux
       jail: false
       memory: true
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """
+
+  # The catalog command is "kimi"; "kimi-cli" is the binary the installer also
+  # ships, and ai-memory accepts it as an alias of kimi (since the 1.25 floor).
+  # Pre-flight has to agree or PATH resolving kimi-cli refuses a harness the
+  # installed ai-memory would have taken.
+  Scenario: Accepts the kimi-cli alias of the Kimi harness
+    Given a validation configuration
+      """
+      agent: kimi-cli
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "1.25.0"
       permissions:
         gh: true
       """

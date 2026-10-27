@@ -101,6 +101,7 @@ func profileFromLaunch(launch launcher.LaunchConfig) config.Profile {
 			Memory:                         launch.UseMemory,
 			Yolo:                           launch.Yolo,
 			Fresh:                          launch.Fresh,
+			ForceUnlock:                    launch.ForceUnlock,
 			NewWorkstream:                  launch.NewWorkstream,
 			Workstream:                     launch.Workstream,
 			Workspace:                      launch.Workspace,

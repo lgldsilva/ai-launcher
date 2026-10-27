@@ -26,7 +26,24 @@ func buildContinue(cfg LaunchConfig) ([]string, error) {
 	command = append(command, memoryCommand(cfg, resolve), "run")
 	command = appendMemoryScope(command, cfg)
 	command = appendWorkstreamSelection(command, cfg)
+	command = appendForceUnlock(command, cfg)
 	return appendYoloFlag(command, cfg), nil
+}
+
+// appendForceUnlock emits ai-memory's --force-unlock when the operator asked
+// for it and the installed CLI accepts the flag. A copy already present in
+// extra_args is never duplicated. Below the floor emission stays silent —
+// pre-flight refuses the configuration.
+func appendForceUnlock(command []string, cfg LaunchConfig) []string {
+	if !cfg.UseMemory || !cfg.ForceUnlock || !MemorySupportsForceUnlock(cfg.MemoryVersion) {
+		return command
+	}
+	for _, arg := range cfg.ExtraArgs {
+		if arg == "--force-unlock" {
+			return command
+		}
+	}
+	return append(command, "--force-unlock")
 }
 
 // appendWorkstreamSelection emits the workstream flags in ai-memory's own

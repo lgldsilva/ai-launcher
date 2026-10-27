@@ -343,3 +343,122 @@ func mustBuild(t *testing.T, cfg LaunchConfig) []string {
 	}
 	return argv
 }
+
+func TestBuildEmitsAllowPrivateHostAsFilteredEgress(t *testing.T) {
+	cases := []struct {
+		name    string
+		version string
+		flags   config.JailFlags
+		want    []string
+	}{
+		{
+			"private list alone",
+			config.MinAllowPrivateHostAIJailVersion,
+			config.JailFlags{AllowPrivateHosts: []string{" git.internal.example "}},
+			[]string{"ai-jail", "--no-docker", "--no-network", "--agent-state", "--allow-private-host", "git.internal.example", "claude"},
+		},
+		{
+			"both lists, public first",
+			config.MinAllowPrivateHostAIJailVersion,
+			config.JailFlags{AllowHosts: []string{"github.com"}, AllowPrivateHosts: []string{"git.internal.example"}},
+			[]string{"ai-jail", "--no-docker", "--no-network", "--agent-state", "--allow-host", "github.com", "--allow-private-host", "git.internal.example", "claude"},
+		},
+		{
+			"below the floor leaves the network alone",
+			"2.10.0",
+			config.JailFlags{AllowPrivateHosts: []string{"git.internal.example"}},
+			[]string{"ai-jail", "--no-docker", "--network", "--agent-state", "claude"},
+		},
+		{
+			"below the floor still emits the public list",
+			"2.10.0",
+			config.JailFlags{AllowHosts: []string{"github.com"}, AllowPrivateHosts: []string{"git.internal.example"}},
+			[]string{"ai-jail", "--no-docker", "--no-network", "--agent-state", "--allow-host", "github.com", "claude"},
+		},
+		{
+			"explicit network wins",
+			config.MinAllowPrivateHostAIJailVersion,
+			config.JailFlags{Network: boolPtr(true), AllowPrivateHosts: []string{"git.internal.example"}},
+			[]string{"ai-jail", "--no-docker", "--network", "--agent-state", "claude"},
+		},
+		{
+			"not a hostname",
+			config.MinAllowPrivateHostAIJailVersion,
+			config.JailFlags{AllowPrivateHosts: []string{"http://git.internal.example"}},
+			[]string{"ai-jail", "--no-docker", "--network", "--agent-state", "claude"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Build(LaunchConfig{
+				Agent:       config.Agent{Command: "claude"},
+				UseJail:     true,
+				JailVersion: tc.version,
+				Permissions: map[string]bool{config.PermissionNetwork: true},
+				JailFlags:   tc.flags,
+			})
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("Build() = %#v, %v; want %#v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAllowPrivateHostIssues(t *testing.T) {
+	private := []string{"git.internal.example"}
+	cases := []struct {
+		name string
+		cfg  LaunchConfig
+		code string
+	}{
+		{"not a hostname", LaunchConfig{UseJail: true, JailFlags: config.JailFlags{AllowPrivateHosts: []string{"git.internal.example:8443"}}}, "allow-private-host-invalid"},
+		{"blank entries", LaunchConfig{UseJail: true, JailFlags: config.JailFlags{AllowPrivateHosts: []string{" "}}}, ""},
+		{"exact 2.11.0 floor", LaunchConfig{UseJail: true, JailVersion: config.MinAllowPrivateHostAIJailVersion, JailFlags: config.JailFlags{AllowPrivateHosts: private}}, ""},
+		{"unknown version", LaunchConfig{UseJail: true, JailFlags: config.JailFlags{AllowPrivateHosts: private}}, "allow-private-host-requires-ai-jail-2-11"},
+		{"2.10", LaunchConfig{UseJail: true, JailVersion: "2.10.0", JailFlags: config.JailFlags{AllowPrivateHosts: private}}, "allow-private-host-requires-ai-jail-2-11"},
+		{"explicit network", LaunchConfig{UseJail: true, JailVersion: "2.11.0", JailFlags: config.JailFlags{Network: boolPtr(true), AllowPrivateHosts: private}}, "allow-host-conflicts-with-network"},
+		{"container backend", LaunchConfig{UseDocker: true, JailFlags: config.JailFlags{AllowPrivateHosts: private}}, "allow-host-without-jail"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := allowHostIssues(tc.cfg)
+			if tc.code == "" {
+				if len(issues) != 0 {
+					t.Fatalf("issues = %#v; want none", issues)
+				}
+				return
+			}
+			if _, ok := issueByCode(issues, tc.code); !ok {
+				t.Fatalf("issues = %#v; want %s", issues, tc.code)
+			}
+		})
+	}
+}
+
+func TestAllowPrivateHostCoversTheMemoryServer(t *testing.T) {
+	cfg := LaunchConfig{
+		Agent:           config.Agent{Command: "claude"},
+		UseJail:         true,
+		UseMemory:       true,
+		JailVersion:     "2.11.0",
+		MemoryServerURL: "https://memory.internal.example",
+		JailFlags:       config.JailFlags{AllowPrivateHosts: []string{"internal.example"}},
+	}
+	assertAllowHostMemoryIssue(t, linuxValidator().Validate(cfg), true, "")
+	cfg.JailFlags.AllowPrivateHosts = []string{"other.example"}
+	assertAllowHostMemoryIssue(t, linuxValidator().Validate(cfg), false, "allow-host-omits-memory-server")
+}
+
+func TestSecretsAcceptPrivateHostFilteredEgress(t *testing.T) {
+	cfg := LaunchConfig{
+		UseJail:     true,
+		JailVersion: "2.11.0",
+		JailFlags: config.JailFlags{
+			AllowPrivateHosts: []string{"git.internal.example"},
+			Secrets:           []string{"TOKEN=git.internal.example"},
+		},
+	}
+	if issues := secretsIssues(cfg); len(issues) != 0 {
+		t.Fatalf("issues = %#v; private-host egress must satisfy secrets", issues)
+	}
+}
