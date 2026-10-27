@@ -143,6 +143,7 @@ func generateContainerArtifacts(local config.Local, agent config.Agent, global c
 		ContainerTmux:                  local.Options.ContainerTmux,
 		UseMemory:                      local.Options.Memory,
 		Fresh:                          local.Options.Fresh,
+		ForceUnlock:                    local.Options.ForceUnlock,
 		NewWorkstream:                  local.Options.NewWorkstream,
 		Workstream:                     local.Options.Workstream,
 		ProjectDir:                     projectDir,

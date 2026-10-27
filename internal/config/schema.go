@@ -399,6 +399,12 @@ type Options struct {
 	// Fresh maps to `ai-memory run --fresh`: start a new native session in the
 	// current workstream instead of resuming or adopting one.
 	Fresh bool `yaml:"fresh,omitempty"`
+	// ForceUnlock maps to `ai-memory run --force-unlock` (ai-memory >= 2.6.0):
+	// expire the selected workstream's active lease so a new launch can take
+	// over after a dead launcher left it behind. Same operator only; does not
+	// kill a native process. Trusted like yolo: an unsaved local config that
+	// sets it requires the matching CLI flag.
+	ForceUnlock bool `yaml:"force_unlock,omitempty"`
 	// MemoryProfile maps to `ai-memory run --profile <NAME>` (ai-memory
 	// >= 2.6.0): a named env-only launch profile from the server's config.
 	// Must precede the harness, so a jailed launch also needs

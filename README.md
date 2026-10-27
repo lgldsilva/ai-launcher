@@ -89,9 +89,10 @@ like its own after the command word, so `--env-file` is the one form that
 works jailed and unjailed alike. `--profile` and `--env-file` precede the
 harness, which through a jail additionally needs ai-jail ≥ 2.9.0 (the 1.x
 managed-harness parser bails on unknown pre-harness flags) — pre-flight
-refuses the combinations with dedicated codes instead. One-off wrapper flags
-such as `--force-unlock` can ride `extra_args`: ai-memory re-extracts its
-exact wrapper flags from the native arguments.
+refuses the combinations with dedicated codes instead. `--force-unlock` is a
+first-class option (`options.force_unlock` / the CLI flag). Other one-off
+wrapper flags such as `--true-yolo` can ride `extra_args`: ai-memory
+re-extracts its exact wrapper flags from the native arguments.
 
 ## Screenshots
 
@@ -576,6 +577,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--workstream-id <id>` | Which workstream `--workstream-search` reads. Defaults to `$AI_MEMORY_WORKSTREAM_ID`, which ai-memory sets inside the agents it manages — so an agent launched from here needs no id, and a bare shell does. It is an **id**, not the name `--workstream` takes; upstream maps neither to the other |
 | `--continue` | Continues the last ai-memory session of this checkout |
 | `--fresh` | Starts a new ai-memory session in the current workstream instead of resuming one (mutually exclusive with `--continue`) |
+| `--force-unlock` | Expires the selected ai-memory workstream lease so a new launch can take over after a dead launcher left it behind (ai-memory ≥ 2.6.0; same operator only) |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |
 | `--rw-map <path>` | Read-write mount |
 | `--param <name=value>` | Sets a parameter declared in the agent catalog (repeatable) |
@@ -809,6 +811,7 @@ refuses, naming the explicit opt-in:
 | Mount a sensitive tree (`/etc`, `/usr`, another user's home, a container socket…) | Refused. Pass `--mount <path>` to accept it |
 | Enable a `permission` (ssh, gh, docker, gpu…) | Refused. Pass the matching flag (`--ssh`, `--gh`, `--docker`…) to accept it |
 | Set `options.yolo: true` | CLI: refused; pass `--yolo`. Bare TUI: shown as the `--yolo` option for review before `r` |
+| Set `options.force_unlock: true` | Refused. Pass `--force-unlock` to accept it |
 | List `options.extra_args` | Refused. Pass `--args "<args>"` to accept it |
 | Set `options.param_values` (model selection, catalog flags) | Refused. Pass `--param name=value` to accept it |
 | Set any `options.jail_flags` | Refused. There is no per-flag CLI toggle: run `--save` (it lists the flags it accepts) or select a profile |

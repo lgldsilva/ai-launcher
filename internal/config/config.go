@@ -361,6 +361,12 @@ const MinNoAutowireAIMemoryVersion = "2.3.0"
 // closed, so the launcher exports nothing there.
 const MinRequireServerAIMemoryVersion = "2.6.0"
 
+// MinForceUnlockAIMemoryVersion is the first ai-memory whose `run` accepts
+// --force-unlock (expire the selected workstream's active lease). Same
+// release as require-server; kept as its own constant so the floor stays
+// named in refusals.
+const MinForceUnlockAIMemoryVersion = "2.6.0"
+
 // Shared catalog names and platform identifiers. Keeping these values in the
 // config package avoids slightly different spellings in the CLI, catalog and
 // launcher packages that all consume the same persisted IDs.

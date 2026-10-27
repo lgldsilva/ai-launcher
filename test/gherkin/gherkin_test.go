@@ -52,6 +52,7 @@ type launchSpec struct {
 	Memory            bool              `yaml:"memory"`
 	Continue          bool              `yaml:"continue"`
 	Fresh             bool              `yaml:"fresh"`
+	ForceUnlock       bool              `yaml:"force_unlock"`
 	RunHarness        string            `yaml:"run_harness"`
 	NewWorkstream     string            `yaml:"new_workstream"`
 	Workstream        string            `yaml:"workstream"`
@@ -298,6 +299,7 @@ func toLaunchConfig(spec launchSpec) launcher.LaunchConfig {
 		UseMemory:                      spec.Memory,
 		ContinueSession:                spec.Continue,
 		Fresh:                          spec.Fresh,
+		ForceUnlock:                    spec.ForceUnlock,
 		NewWorkstream:                  spec.NewWorkstream,
 		Workstream:                     spec.Workstream,
 		ProjectDir:                     spec.ProjectDir,

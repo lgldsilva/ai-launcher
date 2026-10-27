@@ -58,7 +58,7 @@ type cliOptions struct {
 	containerNetwork                                  string
 	composeUpdate                                     string
 	yolo, noYolo                                      bool
-	fresh                                             bool
+	fresh, forceUnlock                                bool
 	dryRun, save, install, upgrade, installSystemDeps bool
 	listProfiles                                      bool
 	continueSession                                   bool
@@ -104,6 +104,7 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.noMemory, "no-memory", false, "disable ai-memory")
 	flags.BoolVar(&o.yolo, "yolo", false, "pass the dangerous-mode flag to the agent")
 	flags.BoolVar(&o.fresh, "fresh", false, "start a new ai-memory session in the current workstream instead of resuming one")
+	flags.BoolVar(&o.forceUnlock, "force-unlock", false, "expire the selected ai-memory workstream lease so a new launch can take over (ai-memory >= 2.6)")
 	flags.BoolVar(&o.noYolo, "no-yolo", false, "do not pass the dangerous-mode flag to the agent")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "print the generated command")
 	flags.BoolVar(&o.save, "save", false, "save local configuration and exit")
@@ -310,6 +311,7 @@ func (o *cliOptions) applyOptionFlags(flags *flag.FlagSet, local *config.Local) 
 		{"memory", func() { local.Options.Memory = o.memory }},
 		{"no-memory", func() { local.Options.Memory = !o.noMemory }},
 		{"fresh", func() { local.Options.Fresh = o.fresh }},
+		{"force-unlock", func() { local.Options.ForceUnlock = o.forceUnlock }},
 		{"yolo", func() { local.Options.Yolo = o.yolo }},
 		{"no-yolo", func() { local.Options.Yolo = !o.noYolo }},
 		{"new", func() { local.Options.NewWorkstream = o.newWorkstream }},

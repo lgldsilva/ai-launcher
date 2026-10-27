@@ -58,6 +58,7 @@ func optionsFromLaunch(base config.Options, launch launcher.LaunchConfig) config
 	options.Memory = launch.UseMemory
 	options.Yolo = launch.Yolo
 	options.Fresh = launch.Fresh
+	options.ForceUnlock = launch.ForceUnlock
 	options.NewWorkstream = launch.NewWorkstream
 	options.Workstream = launch.Workstream
 	// Workspace and Project are ai-memory scope names the operator chose, so

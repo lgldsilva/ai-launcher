@@ -790,7 +790,21 @@ func memoryRunFlagIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error
 	issues = append(issues, memoryProfileIssues(cfg)...)
 	issues = append(issues, memoryEnvFileIssues(cfg, stat)...)
 	issues = append(issues, memoryJailIssues(cfg)...)
+	issues = append(issues, forceUnlockIssues(cfg)...)
 	return issues
+}
+
+// forceUnlockIssues refuses force_unlock below its ai-memory floor. The flag
+// rides after the harness, so no ai-jail pre-harness floor applies. Without
+// memory the flag is inert (Build emits nothing), so there is nothing to refuse.
+func forceUnlockIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseMemory || !cfg.ForceUnlock {
+		return nil
+	}
+	if MemorySupportsForceUnlock(cfg.MemoryVersion) {
+		return nil
+	}
+	return []Issue{versionFloorIssue("memory-force-unlock-requires-ai-memory-2-6", "force_unlock", cfg.MemoryVersion, config.MinForceUnlockAIMemoryVersion)}
 }
 
 // memoryProfileIssues refuses memory_profile below its ai-memory floor, and
