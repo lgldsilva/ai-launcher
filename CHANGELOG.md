@@ -23,6 +23,32 @@ harness (and on `--continue`). Below 2.6.0 pre-flight refuses
 sets it requires the matching CLI flag, like `yolo`. `--true-yolo` stays on
 `extra_args` only.
 
+### Changed — revalidated against ai-jail 2.12.0 and ai-memory 3.2.6
+
+`UntestedAIJailVersion` stays `3.0.0` and `UntestedAIMemoryVersion` stays
+`3.3.0`. Live dry-run of the composed `ai-jail` → `ai-memory run` chain (parsed
+by both), `--allow-host` / `--allow-private-host`, and `--doctor` were re-run
+against ai-jail 2.12.0 and ai-memory 3.2.6 (latest published release assets;
+ai-memory's changelog lists 3.2.7 without matching GitHub assets yet).
+ai-jail 2.12.0's only new launch flag is `--macos-chromium` (added in #101);
+`--publish-port` remains design-only upstream. ai-memory 3.2.2–3.2.6 keep the
+`run` grammar this launcher emits. Stale ceiling numbers in
+`docs/design-decisions.md` (`2.3.0` / `2.5.0`) are corrected to match
+`config.go`.
+
+**What you need to do:** nothing. `ai-launcher --doctor` already treats both
+installs as inside the validated range.
+
+### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
+
+`jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`
+(ai-jail >= 2.12.0). It is the narrow Seatbelt opt-in that lets headless
+Chromium and Playwright register their MachPortRendezvousServer inside the
+jail; off by default upstream, dropped under lockdown, and trusted-only there
+(a project `.ai-jail` cannot enable it). Below 2.12.0 it is refused in
+pre-flight (`jail-toggles-require-ai-jail-2-12`). Unset configs build the same
+argv as before.
+
 ### Added — jail_flags.allow_private_hosts (ai-jail 2.11.0)
 
 `jail_flags.allow_private_hosts` forwards one `--allow-private-host` per entry

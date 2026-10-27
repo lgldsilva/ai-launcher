@@ -14,7 +14,7 @@ import (
 )
 
 // TestLiveUpstreamScenarios execs the real ai-jail and ai-memory binaries
-// (validated through ai-jail 2.9.0 and ai-memory 3.0.0) for the scenarios the
+// (validated through ai-jail 2.12.0 and ai-memory 3.2.6) for the scenarios the
 // Gherkin contract only assembles. The contract locks argv shape; this is the
 // run that checks the installed CLIs accept it. CI and the mutation container
 // have no upstream install, so they skip.

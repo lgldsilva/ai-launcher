@@ -1498,7 +1498,8 @@ Feature: Launcher command contract
 
   # The remaining toggle mirror: x11/host_shm are 1.18 opt-ins (no floor);
   # audio/terminal_passthrough/macos_host_ipc/update_check are floored at the
-  # verified 2.9; audit_log at 2.0. secrets ride filtered egress only.
+  # verified 2.9; macos_chromium at 2.12; audit_log at 2.0. secrets ride
+  # filtered egress only.
   Scenario: Emits the remaining ai-jail toggles when configured
     Given a launch configuration
       """
@@ -1524,6 +1525,44 @@ Feature: Launcher command contract
       --no-update-check
       --audit-log
       claude
+      """
+
+  Scenario: Emits macos-chromium on ai-jail 2.12
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "2.12.0"
+      jail_flags:
+        macos_chromium: true
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      --macos-chromium
+      claude
+      """
+
+  Scenario: Refuses macos_chromium below ai-jail 2.12
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.11.2"
+      jail_flags:
+        macos_chromium: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-toggles-require-ai-jail-2-12
       """
 
   Scenario: Emits secrets alongside filtered egress
