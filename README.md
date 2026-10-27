@@ -574,6 +574,8 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--workspace <name>` / `--project <name>` | Scope forwarded to `ai-memory run` |
 | `--workstream-search <query>` | Queries the ai-memory ledger and exits; `--limit N` and `--json` refine it |
 | `--workstream-id <id>` | Which workstream `--workstream-search` reads. Defaults to `$AI_MEMORY_WORKSTREAM_ID`, which ai-memory sets inside the agents it manages — so an agent launched from here needs no id, and a bare shell does. It is an **id**, not the name `--workstream` takes; upstream maps neither to the other |
+| `--workstreams` | Lists managed workstreams for this checkout (`ai-memory workstreams`) and exits; `--workspace` / `--project` / `--limit` / `--json` refine it |
+| `--resume` | Interactively picks a managed workstream (`ai-memory resume`) then launches; `--search`, `--all`, `--limit`, `--yolo`, and `--fresh` forward. Not `--continue` |
 | `--continue` | Continues the last ai-memory session of this checkout |
 | `--fresh` | Starts a new ai-memory session in the current workstream instead of resuming one (mutually exclusive with `--continue`) |
 | `--mount <path>[:ro\|:rw]` / `--map` | Read-only mount (ro by default; `--map` is an alias) |

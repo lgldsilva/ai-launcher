@@ -59,6 +59,8 @@ type cliOptions struct {
 	composeUpdate                                     string
 	yolo, noYolo                                      bool
 	fresh                                             bool
+	resume, resumeAll, listWorkstreams                bool
+	resumeSearch                                      string
 	installInstructions, instructionsPrint            bool
 	instructionsNoSkills, instructionsCompact         bool
 	instructionsTarget                                string
@@ -146,8 +148,12 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.StringVar(&o.deleteProfile, "delete-profile", "", "delete the named profile from the global config and exit")
 	flags.StringVar(&o.workstreamSearch, "workstream-search", "", "search the ai-memory workstream ledger for this query and exit")
 	flags.StringVar(&o.workstreamID, "workstream-id", "", "workstream to search with --workstream-search (defaults to $AI_MEMORY_WORKSTREAM_ID)")
-	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search (ai-memory's own default when unset)")
-	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search results as JSON")
+	flags.IntVar(&o.searchLimit, "limit", 0, "maximum results for --workstream-search / --workstreams / --resume (ai-memory's own default when unset)")
+	flags.BoolVar(&o.searchJSON, "json", false, "emit --workstream-search or --workstreams results as JSON")
+	flags.BoolVar(&o.resume, "resume", false, "interactively pick an ai-memory workstream (ai-memory resume) and exit after that launch")
+	flags.StringVar(&o.resumeSearch, "search", "", "initial workstream-name filter for --resume")
+	flags.BoolVar(&o.resumeAll, "all", false, "with --resume, list workstreams from every linked checkout")
+	flags.BoolVar(&o.listWorkstreams, "workstreams", false, "list ai-memory managed workstreams for this checkout and exit")
 	flags.BoolVar(&o.showVersion, "version", false, "print the binary version and exit")
 	flags.BoolVar(&o.doctor, "doctor", false, "report the installed upstream tool versions against the supported floor and exit")
 }
