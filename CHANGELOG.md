@@ -13,6 +13,14 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — --install-instructions (separate from --install)
+
+`--install-instructions` forwards to `ai-memory install-instructions` and is
+never part of `--install` / `--upgrade`. It requires `--target <file>` (for
+example `CLAUDE.md` or `AGENTS.md`) or `--print` to preview without writing;
+`--no-skills` and `--compact` forward when set. Combining it with
+`--install`/`--upgrade` is refused.
+
 ### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
 
 `jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`

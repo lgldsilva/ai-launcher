@@ -587,6 +587,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--compose-update=prompt\|keep\|replace` | Handles a changed generated Compose file: review interactively, preserve it, or replace it |
 | `--dry-run` | Runs pre-flight validation, prints the generated command, and exits without executing. Warnings go to stderr and still exit 0; a fatal issue reports the problem, still prints the argv, and exits non-zero |
 | `--version` | Prints the binary version and exits |
+| `--install-instructions` | Writes the ai-memory routing snippet into a checkout file via `ai-memory install-instructions`. Requires `--target <file>` (or `--print` to preview); never combined with `--install`/`--upgrade`. Optional `--no-skills` / `--compact` |
 | `--save`, `--save-only`, `--save-profile`, `--list-profiles`, `--delete-profile`, `--install`, `--upgrade`, `--add`, `--path`, `--command`, `--description` | See the commands table above |
 
 ### Permissions: CLI + config (what gets mounted)

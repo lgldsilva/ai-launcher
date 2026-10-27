@@ -42,8 +42,14 @@ func runGlobalCommands(opts *cliOptions, global config.Global, home string, out,
 	if opts.installSystemDeps && !opts.install && !opts.upgrade {
 		return true, fmt.Errorf("--install-system-deps requires --install or --upgrade")
 	}
+	if opts.installInstructions && (opts.install || opts.upgrade) {
+		return true, fmt.Errorf("--install-instructions cannot combine with --install/--upgrade; run it on its own")
+	}
 	if opts.install || opts.upgrade {
 		return true, launchcmd.InstallConfigured(global, opts.agent, home, opts.upgrade, opts.installSystemDeps, out, errOut)
+	}
+	if opts.installInstructions {
+		return true, installMemoryInstructions(opts, global, home, out, errOut)
 	}
 	if opts.listProfiles {
 		listProfiles(global, out)
@@ -135,4 +141,53 @@ func resolveWorkstreamID(opts *cliOptions) (string, error) {
 		return id, nil
 	}
 	return "", fmt.Errorf("--workstream-search needs a workstream id: pass --workstream-id, or run it from an agent this launcher started, where %s is set", memoryWorkstreamIDEnv)
+}
+
+// installMemoryInstructions forwards to `ai-memory install-instructions`.
+//
+// It is deliberately a separate flag from --install: that command provisions
+// binaries globally, while install-instructions mutates a markdown file in the
+// current checkout. Folding the two would surprise anyone who only asked for
+// binaries. The target file must be named with --target (or --print for a
+// no-write preview) so the operator answers "which file may it touch" before
+// anything is written.
+func installMemoryInstructions(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
+	target := strings.TrimSpace(opts.instructionsTarget)
+	if target == "" && !opts.instructionsPrint {
+		return fmt.Errorf("--install-instructions needs --target <file> (for example CLAUDE.md or AGENTS.md), or --print to preview without writing")
+	}
+	memoryPath, err := exec.LookPath(aiMemoryCommand)
+	if err != nil {
+		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
+	}
+	args := []string{"install-instructions"}
+	if opts.instructionsPrint {
+		args = append(args, "--print")
+	}
+	if target != "" {
+		args = append(args, "--target", target)
+	}
+	if opts.instructionsNoSkills {
+		args = append(args, "--no-skills")
+	}
+	if opts.instructionsCompact {
+		args = append(args, "--compact")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
+	defer cancel()
+	// #nosec G204 G702 -- memoryPath is LookPath of a fixed tool name; args are launcher-owned.
+	command := exec.CommandContext(ctx, memoryPath, args...)
+	command.Env = launcher.Environment(launcher.LaunchConfig{
+		UseMemory:       true,
+		HomeDir:         home,
+		MemoryServerURL: global.MemoryServerURL,
+		MemoryAuthToken: global.MemoryAuthToken,
+	})
+	command.Stdout = out
+	command.Stderr = errOut
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("install-instructions: %w", err)
+	}
+	return nil
 }

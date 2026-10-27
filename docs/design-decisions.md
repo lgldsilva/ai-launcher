@@ -622,13 +622,12 @@ exists to prevent.
   and the preflight checks ownership rather than just PATH. It does not
   install `ai-jail-bin` or `ai-memory-bin`. macOS does not need it; the
   sandbox is `sandbox-exec`.
-- **`ai-memory install-instructions` in the install flow.** `--install`
+- **`ai-memory install-instructions` stays out of `--install`.** `--install`
   provisions binaries globally; `install-instructions` writes a routing block
-  into `CLAUDE.md` / `AGENTS.md` **in the current checkout**. Folding a
-  file-mutating step into a binary installer would be a surprise, so it stays
-  out until it gets its own flag and its own answer to "which file may it
-  touch". Nothing is blocked meanwhile — running the upstream command by hand
-  does the same thing.
+  into a checkout markdown file. Folding a file-mutating step into a binary
+  installer would be a surprise, so the launcher exposes it as its own
+  `--install-instructions` flag that requires `--target <file>` (or `--print`
+  to preview) and refuses to combine with `--install` / `--upgrade`.
 - **Two upstream questions we handle at the trust boundary.** Both need a live
   upstream runtime for a definitive answer, so the launcher treats them as
   policy decisions rather than pretending they are closed:
