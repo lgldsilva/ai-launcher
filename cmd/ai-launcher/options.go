@@ -59,6 +59,9 @@ type cliOptions struct {
 	composeUpdate                                     string
 	yolo, noYolo                                      bool
 	fresh, forceUnlock                                bool
+	installInstructions, instructionsPrint            bool
+	instructionsNoSkills, instructionsCompact         bool
+	instructionsTarget                                string
 	dryRun, save, install, upgrade, installSystemDeps bool
 	listProfiles                                      bool
 	continueSession                                   bool
@@ -112,6 +115,11 @@ func (o *cliOptions) register(flags *flag.FlagSet) {
 	flags.BoolVar(&o.install, "install", false, "install missing configured tools from GitHub releases and update stale ones")
 	flags.BoolVar(&o.upgrade, "upgrade", false, "force reinstall of configured tools from the latest GitHub release")
 	flags.BoolVar(&o.installSystemDeps, "install-system-deps", false, "on Linux, install the bubblewrap package with sudo when ai-jail needs bwrap")
+	flags.BoolVar(&o.installInstructions, "install-instructions", false, "write the ai-memory routing snippet into a checkout markdown file (never part of --install)")
+	flags.StringVar(&o.instructionsTarget, "target", "", "markdown file for --install-instructions (required unless --print)")
+	flags.BoolVar(&o.instructionsPrint, "print", false, "with --install-instructions, print the snippet instead of writing a file")
+	flags.BoolVar(&o.instructionsNoSkills, "no-skills", false, "with --install-instructions, skip managed Agent Skills")
+	flags.BoolVar(&o.instructionsCompact, "compact", false, "with --install-instructions, write the compact routing snippet")
 	flags.StringVar(&o.newWorkstream, "new", "", "start a new ai-memory workstream with this name")
 	flags.StringVar(&o.workstream, "workstream", "", "resume an existing ai-memory workstream by name")
 	flags.StringVar(&o.workspace, "workspace", "", "ai-memory workspace name (forwarded to ai-memory run)")
