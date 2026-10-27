@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	launchcmd "github.com/lgldsilva/ai-launcher/internal/cmd"
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -102,6 +103,103 @@ func validateMemorySideCommandFlags(opts *cliOptions) error {
 	return nil
 }
 
+// appendTrimmedFlag appends flag and value when value is non-blank. The
+// blank check uses the trimmed form, which is also what is forwarded, so a
+// value of spaces does not become an empty ai-memory argument.
+func appendTrimmedFlag(args []string, flag, value string) []string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return append(args, flag, trimmed)
+	}
+	return args
+}
+
+// appendEnabledFlag appends flag when the operator turned that switch on.
+func appendEnabledFlag(args []string, enabled bool, flag string) []string {
+	if enabled {
+		return append(args, flag)
+	}
+	return args
+}
+
+// appendOptionalLimit appends --limit only for a positive cap.
+func appendOptionalLimit(args []string, limit int) []string {
+	if limit > 0 {
+		return append(args, memoryResultLimitFlag, strconv.Itoa(limit))
+	}
+	return args
+}
+
+// appendLimitAndJSON appends the result cap and the JSON switch shared by
+// the read-only ledger queries.
+func appendLimitAndJSON(args []string, limit int, asJSON bool) []string {
+	args = appendOptionalLimit(args, limit)
+	if asJSON {
+		args = append(args, "--json")
+	}
+	return args
+}
+
+// memorySideSpec is one ai-memory subcommand this launcher runs directly.
+// Search and workstreams set timeout; resume sets stdin and leaves timeout
+// at zero so the picker can wait on the terminal.
+type memorySideSpec struct {
+	name    string
+	args    []string
+	timeout time.Duration
+	stdin   io.Reader
+}
+
+// lookupAIMemory resolves the ai-memory executable. A missing binary is an
+// install hint, not an exec error, and it is reported before any other
+// refusal so the operator is not sent to fix a flag for a tool they lack.
+func lookupAIMemory() (string, error) {
+	memoryPath, err := exec.LookPath(aiMemoryCommand)
+	if err != nil {
+		return "", fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
+	}
+	return memoryPath, nil
+}
+
+// runMemorySideCommand resolves ai-memory on PATH and runs spec. The side
+// commands share this path so the server URL, the auth token, and the
+// decision to skip ai-jail cannot drift between them.
+func runMemorySideCommand(global config.Global, home string, spec memorySideSpec, out, errOut io.Writer) error {
+	memoryPath, err := lookupAIMemory()
+	if err != nil {
+		return err
+	}
+	return execMemorySideCommand(memoryPath, global, home, spec, out, errOut)
+}
+
+// execMemorySideCommand runs an already-resolved ai-memory. Search calls it
+// after lookupAIMemory so a missing workstream id is only reported once the
+// binary is known to be installed.
+func execMemorySideCommand(memoryPath string, global config.Global, home string, spec memorySideSpec, out, errOut io.Writer) error {
+	var command *exec.Cmd
+	if spec.timeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), spec.timeout)
+		defer cancel()
+		// #nosec G204 G702 -- memoryPath is LookPath of a fixed tool name; args are launcher-owned.
+		command = exec.CommandContext(ctx, memoryPath, spec.args...)
+	} else {
+		// #nosec G204 G702 -- memoryPath is LookPath of a fixed tool name; args are launcher-owned.
+		command = exec.Command(memoryPath, spec.args...)
+	}
+	command.Env = launcher.Environment(launcher.LaunchConfig{
+		UseMemory:       true,
+		HomeDir:         home,
+		MemoryServerURL: global.MemoryServerURL,
+		MemoryAuthToken: global.MemoryAuthToken,
+	})
+	command.Stdin = spec.stdin
+	command.Stdout = out
+	command.Stderr = errOut
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("%s: %w", spec.name, err)
+	}
+	return nil
+}
+
 // searchWorkstream forwards a query to `ai-memory workstream-search`.
 //
 // The launcher already creates workstreams (`--new`) and resumes them
@@ -122,40 +220,22 @@ func validateMemorySideCommandFlags(opts *cliOptions) error {
 // resolved by resolveWorkstreamID and always emitted, so the argv says which
 // ledger was read instead of depending on what the child inherits.
 func searchWorkstream(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
-	memoryPath, err := exec.LookPath(aiMemoryCommand)
+	memoryPath, err := lookupAIMemory()
 	if err != nil {
-		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
+		return err
 	}
 	workstreamID, err := resolveWorkstreamID(opts)
 	if err != nil {
 		return err
 	}
 	args := []string{"workstream-search", "--workstream-id", workstreamID}
-	if opts.searchLimit > 0 {
-		args = append(args, memoryResultLimitFlag, strconv.Itoa(opts.searchLimit))
-	}
-	if opts.searchJSON {
-		args = append(args, "--json")
-	}
+	args = appendLimitAndJSON(args, opts.searchLimit, opts.searchJSON)
 	args = append(args, opts.workstreamSearch)
-
-	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
-	defer cancel()
-	// #nosec G204 G702 -- memoryPath is the LookPath result for a fixed tool name;
-	// every argument is a launcher-controlled flag or the operator's own query.
-	command := exec.CommandContext(ctx, memoryPath, args...)
-	command.Env = launcher.Environment(launcher.LaunchConfig{
-		UseMemory:       true,
-		HomeDir:         home,
-		MemoryServerURL: global.MemoryServerURL,
-		MemoryAuthToken: global.MemoryAuthToken,
-	})
-	command.Stdout = out
-	command.Stderr = errOut
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("workstream-search: %w", err)
-	}
-	return nil
+	return execMemorySideCommand(memoryPath, global, home, memorySideSpec{
+		name:    "workstream-search",
+		args:    args,
+		timeout: workstreamSearchTimeout,
+	}, out, errOut)
 }
 
 // resolveWorkstreamID answers which workstream a search reads, preferring the
@@ -185,40 +265,15 @@ func resolveWorkstreamID(opts *cliOptions) (string, error) {
 // workstream-search it is a read-only ledger query: no jail, no harness, and
 // the operator's terminal must see the answer.
 func listMemoryWorkstreams(opts *cliOptions, global config.Global, home string, out, errOut io.Writer) error {
-	memoryPath, err := exec.LookPath(aiMemoryCommand)
-	if err != nil {
-		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
-	}
 	args := []string{"workstreams"}
-	if workspace := strings.TrimSpace(opts.workspace); workspace != "" {
-		args = append(args, "--workspace", workspace)
-	}
-	if project := strings.TrimSpace(opts.project); project != "" {
-		args = append(args, "--project", project)
-	}
-	if opts.searchLimit > 0 {
-		args = append(args, memoryResultLimitFlag, strconv.Itoa(opts.searchLimit))
-	}
-	if opts.searchJSON {
-		args = append(args, "--json")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), workstreamSearchTimeout)
-	defer cancel()
-	// #nosec G204 G702 -- memoryPath is LookPath of a fixed tool name; args are launcher-owned.
-	command := exec.CommandContext(ctx, memoryPath, args...)
-	command.Env = launcher.Environment(launcher.LaunchConfig{
-		UseMemory:       true,
-		HomeDir:         home,
-		MemoryServerURL: global.MemoryServerURL,
-		MemoryAuthToken: global.MemoryAuthToken,
-	})
-	command.Stdout = out
-	command.Stderr = errOut
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("workstreams: %w", err)
-	}
-	return nil
+	args = appendTrimmedFlag(args, "--workspace", opts.workspace)
+	args = appendTrimmedFlag(args, "--project", opts.project)
+	args = appendLimitAndJSON(args, opts.searchLimit, opts.searchJSON)
+	return runMemorySideCommand(global, home, memorySideSpec{
+		name:    "workstreams",
+		args:    args,
+		timeout: workstreamSearchTimeout,
+	}, out, errOut)
 }
 
 // resumeWorkstream forwards to `ai-memory resume`, the interactive picker.
@@ -227,43 +282,16 @@ func listMemoryWorkstreams(opts *cliOptions, global config.Global, home string, 
 // picker waits on the terminal. Still not jail-wrapped: the eventual `run`
 // that resume starts is ai-memory's own composition, not this launcher's.
 func resumeWorkstream(opts *cliOptions, global config.Global, home string, in io.Reader, out, errOut io.Writer) error {
-	memoryPath, err := exec.LookPath(aiMemoryCommand)
-	if err != nil {
-		return fmt.Errorf("%s not found in PATH; install it with --install", aiMemoryCommand)
-	}
 	args := []string{"resume"}
-	if workspace := strings.TrimSpace(opts.workspace); workspace != "" {
-		args = append(args, "--workspace", workspace)
-	}
-	if opts.resumeAll {
-		args = append(args, "--all")
-	}
-	if opts.searchLimit > 0 {
-		args = append(args, memoryResultLimitFlag, strconv.Itoa(opts.searchLimit))
-	}
-	if search := strings.TrimSpace(opts.resumeSearch); search != "" {
-		args = append(args, "--search", search)
-	}
-	if opts.yolo {
-		args = append(args, "--yolo")
-	}
-	if opts.fresh {
-		args = append(args, "--fresh")
-	}
-
-	// #nosec G204 G702 -- memoryPath is LookPath of a fixed tool name; args are launcher-owned.
-	command := exec.Command(memoryPath, args...)
-	command.Env = launcher.Environment(launcher.LaunchConfig{
-		UseMemory:       true,
-		HomeDir:         home,
-		MemoryServerURL: global.MemoryServerURL,
-		MemoryAuthToken: global.MemoryAuthToken,
-	})
-	command.Stdin = in
-	command.Stdout = out
-	command.Stderr = errOut
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("resume: %w", err)
-	}
-	return nil
+	args = appendTrimmedFlag(args, "--workspace", opts.workspace)
+	args = appendEnabledFlag(args, opts.resumeAll, "--all")
+	args = appendOptionalLimit(args, opts.searchLimit)
+	args = appendTrimmedFlag(args, "--search", opts.resumeSearch)
+	args = appendEnabledFlag(args, opts.yolo, "--yolo")
+	args = appendEnabledFlag(args, opts.fresh, "--fresh")
+	return runMemorySideCommand(global, home, memorySideSpec{
+		name:  "resume",
+		args:  args,
+		stdin: in,
+	}, out, errOut)
 }
