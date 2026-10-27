@@ -13,6 +13,16 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — --resume and --workstreams side commands
+
+`--resume` forwards to `ai-memory resume` (interactive picker; optional
+`--search`, `--all`, `--limit`, and launch `--yolo` / `--fresh`). `--workstreams`
+forwards to `ai-memory workstreams` (optional `--workspace`, `--project`,
+`--limit`, `--json`). Both are un-jailed like `--workstream-search`, carry the
+configured server URL and auth token, and are mutually exclusive with each
+other and with `--workstream-search`. They are not `--continue` (that stays
+`ai-memory run` without a harness).
+
 ### Added — jail_flags.macos_chromium (ai-jail 2.12.0)
 
 `jail_flags.macos_chromium` forwards `--macos-chromium` / `--no-macos-chromium`
