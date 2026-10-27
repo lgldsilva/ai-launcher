@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -13,7 +14,7 @@ func TestForceUnlockEmitsAfterHarness(t *testing.T) {
 		cfg.Workstream = "release-1"
 	}))
 	want := []string{"ai-memory", "run", "--workstream", "release-1", "claude", "--force-unlock"}
-	if got := stringsJoin(argv); got != stringsJoin(want) {
+	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
@@ -56,28 +57,34 @@ func TestForceUnlockEmittedOnContinue(t *testing.T) {
 }
 
 func TestForceUnlockDedupsExtraArgs(t *testing.T) {
+	// The duplicate is the only extra arg. A later unrelated token would
+	// still leave a single --force-unlock even if the equality check were
+	// inverted, so it would not prove the dedup.
 	argv := buildMemoryRun(t, hostMemoryLaunch("2.6.0", func(cfg *LaunchConfig) {
 		cfg.ForceUnlock = true
-		cfg.ExtraArgs = []string{"--force-unlock", "--model", "sonnet"}
+		cfg.ExtraArgs = []string{"--force-unlock"}
 	}))
-	count := 0
-	for _, token := range argv {
-		if token == "--force-unlock" {
-			count++
-		}
-	}
-	if count != 1 {
+	if countArg(argv, "--force-unlock") != 1 {
 		t.Fatalf("argv = %#v; --force-unlock must appear once", argv)
 	}
 }
 
-func stringsJoin(parts []string) string {
-	out := ""
-	for i, part := range parts {
-		if i > 0 {
-			out += " "
-		}
-		out += part
+func TestForceUnlockAppendsBesideOtherExtraArgs(t *testing.T) {
+	argv := buildMemoryRun(t, hostMemoryLaunch("2.6.0", func(cfg *LaunchConfig) {
+		cfg.ForceUnlock = true
+		cfg.ExtraArgs = []string{"--model", "sonnet"}
+	}))
+	if countArg(argv, "--force-unlock") != 1 {
+		t.Fatalf("argv = %#v; --force-unlock must be emitted once next to other extra args", argv)
 	}
-	return out
+}
+
+func countArg(argv []string, want string) int {
+	count := 0
+	for _, token := range argv {
+		if token == want {
+			count++
+		}
+	}
+	return count
 }
