@@ -46,7 +46,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	home := userHome()
 	resolveConfigPaths(&opts, home)
-	global, handled, err := dispatchSideCommands(flags, &opts, home, out, errOut)
+	global, handled, err := dispatchSideCommands(flags, &opts, home, in, out, errOut)
 	if handled || err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func validateGenerateCommand(explicit bool, positional []string) (bool, error) {
 
 // dispatchSideCommands handles commands that do not launch an agent. It also
 // loads the global catalog once, so every later path uses the same defaults.
-func dispatchSideCommands(flags *flag.FlagSet, opts *cliOptions, home string, out, errOut io.Writer) (config.Global, bool, error) {
+func dispatchSideCommands(flags *flag.FlagSet, opts *cliOptions, home string, in io.Reader, out, errOut io.Writer) (config.Global, bool, error) {
 	if flagsWasSet(flags, "add") {
 		return config.Global{}, true, launchcmd.AddAgent(opts.globalPath, opts.addName, opts.addPath, opts.addCommand, opts.addDescription, out)
 	}
@@ -238,7 +238,7 @@ func dispatchSideCommands(flags *flag.FlagSet, opts *cliOptions, home string, ou
 	for _, warning := range warnings {
 		warnf(errOut, valueFormat, warning)
 	}
-	if handled, err := runGlobalCommands(opts, global, home, out, errOut); handled {
+	if handled, err := runGlobalCommands(opts, global, home, in, out, errOut); handled {
 		return global, true, err
 	}
 	return global, false, nil
