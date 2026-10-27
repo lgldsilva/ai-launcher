@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/lgldsilva/ai-launcher/internal/config"
@@ -13,7 +14,7 @@ func TestForceUnlockEmitsAfterHarness(t *testing.T) {
 		cfg.Workstream = "release-1"
 	}))
 	want := []string{"ai-memory", "run", "--workstream", "release-1", "claude", "--force-unlock"}
-	if got := stringsJoin(argv); got != stringsJoin(want) {
+	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
@@ -55,29 +56,32 @@ func TestForceUnlockEmittedOnContinue(t *testing.T) {
 	}
 }
 
-func TestForceUnlockDedupsExtraArgs(t *testing.T) {
+// Unrelated extra args must not suppress the flag. The scan returns early
+// only when a token is exactly --force-unlock; any other token falls through
+// and the flag is still appended ahead of extra_args.
+func TestForceUnlockAppendsWhenExtraArgsOmitIt(t *testing.T) {
 	argv := buildMemoryRun(t, hostMemoryLaunch("2.6.0", func(cfg *LaunchConfig) {
 		cfg.ForceUnlock = true
-		cfg.ExtraArgs = []string{"--force-unlock", "--model", "sonnet"}
+		cfg.MemoryAutowire = true
+		cfg.ExtraArgs = []string{"--model", "sonnet"}
 	}))
-	count := 0
-	for _, token := range argv {
-		if token == "--force-unlock" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatalf("argv = %#v; --force-unlock must appear once", argv)
+	want := []string{"ai-memory", "run", "claude", "--force-unlock", "--model", "sonnet"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
 }
 
-func stringsJoin(parts []string) string {
-	out := ""
-	for i, part := range parts {
-		if i > 0 {
-			out += " "
-		}
-		out += part
+// A copy already present in extra_args is the only copy. The slice holds
+// only that flag, so the early return is the equality match itself: a
+// negated comparison would append a second --force-unlock.
+func TestForceUnlockDedupsExtraArgs(t *testing.T) {
+	argv := buildMemoryRun(t, hostMemoryLaunch("2.6.0", func(cfg *LaunchConfig) {
+		cfg.ForceUnlock = true
+		cfg.MemoryAutowire = true
+		cfg.ExtraArgs = []string{"--force-unlock"}
+	}))
+	want := []string{"ai-memory", "run", "claude", "--force-unlock"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("Build() = %#v; want %#v", argv, want)
 	}
-	return out
 }
