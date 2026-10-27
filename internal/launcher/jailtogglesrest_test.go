@@ -8,8 +8,9 @@ import (
 )
 
 // The remaining mirror: x11 and host-shm are 1.18 opt-ins and emit on any
-// jail in the supported range when configured; the 2.9-verified toggles and
-// the 2.0 audit journal emit only on a jail new enough for them.
+// jail in the supported range when configured; the 2.9-verified toggles, the
+// 2.12 macos-chromium opt-in, and the 2.0 audit journal emit only on a jail
+// new enough for them.
 func TestRemainingTogglesFollowTheirFloors(t *testing.T) {
 	oldJail := buildAgentState(t, "1.20.1", config.JailFlags{X11: boolPtr(true), HostSHM: boolPtr(true)})
 	for _, want := range []string{"--x11", "--host-shm"} {
@@ -29,6 +30,10 @@ func TestRemainingTogglesFollowTheirFloors(t *testing.T) {
 			t.Fatalf("argv = %#v; want %s", newJail, want)
 		}
 	}
+	chromium := buildAgentState(t, "2.12.0", config.JailFlags{MacOSChromium: boolPtr(true)})
+	if !containsArg(chromium, "--macos-chromium") {
+		t.Fatalf("argv = %#v; want --macos-chromium on 2.12.0", chromium)
+	}
 	for _, tc := range []struct {
 		version string
 		flags   config.JailFlags
@@ -37,6 +42,7 @@ func TestRemainingTogglesFollowTheirFloors(t *testing.T) {
 		{"2.8.1", config.JailFlags{UpdateCheck: boolPtr(true)}},
 		{"", config.JailFlags{TerminalPassthru: boolPtr(true)}},
 		{"1.20.1", config.JailFlags{AuditLog: boolPtr(true)}},
+		{"2.11.2", config.JailFlags{MacOSChromium: boolPtr(true)}},
 	} {
 		assertModernTogglesSilent(t, tc.version, tc.flags)
 	}
@@ -56,7 +62,8 @@ func assertModernTogglesSilent(t *testing.T, version string, flags config.JailFl
 
 func modernToggleToken(token string) bool {
 	switch token {
-	case "--audio", "--terminal-passthrough", "--no-terminal-passthrough", "--macos-host-ipc", "--update-check", "--audit-log":
+	case "--audio", "--terminal-passthrough", "--no-terminal-passthrough", "--macos-host-ipc", "--update-check",
+		"--macos-chromium", "--no-macos-chromium", "--audit-log":
 		return true
 	default:
 		return false
@@ -77,6 +84,9 @@ func TestRemainingToggleRefusalsNameTheirFloorBatch(t *testing.T) {
 	}
 	if _, ok := issueByCode(jailVersionValidate(base("1.20.1", config.JailFlags{AuditLog: boolPtr(true)})), "jail-toggles-require-ai-jail-2"); !ok {
 		t.Fatal("preflight accepted audit_log below ai-jail 2.0.0")
+	}
+	if _, ok := issueByCode(jailVersionValidate(base("2.11.2", config.JailFlags{MacOSChromium: boolPtr(true)})), "jail-toggles-require-ai-jail-2-12"); !ok {
+		t.Fatal("preflight accepted macos_chromium below ai-jail 2.12.0")
 	}
 	// Two batches misconfigured at once yield two named issues, not one
 	// blurry one.

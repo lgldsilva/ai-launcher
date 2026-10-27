@@ -257,7 +257,7 @@ const (
 // 3.2.1 added no flag this launcher emits (2.11.0's --allow-private-host is
 // opt-in through jail_flags); ai-memory 3.1.0 only changes what `run` hands the
 // harness on a switch (AI_MEMORY_PREVIOUS_SESSION_HISTORY). ai-jail 2.12.0
-// adds --macos-chromium (new opt-in; mirrored in a separate change); ai-memory
+// adds --macos-chromium (new opt-in, added in #101); ai-memory
 // 3.2.2 through 3.2.6 keep the same `run` grammar (latest published
 // Linux/macOS/Windows assets at revalidation time — a 3.2.7 changelog entry
 // had no matching release assets yet). Live dry-run of the composed chain and
@@ -329,6 +329,11 @@ const MinSecretAIJailVersion = "2.2.0"
 // refused with the floor named. --x11 and --host-shm carry no floor: the
 // repository's own 1.18.0 notes name both as opt-ins of that release.
 const MinModernTogglesAIJailVersion = "2.9.0"
+
+// MinMacOSChromiumAIJailVersion is the first ai-jail with --macos-chromium:
+// the narrow Seatbelt opt-in that lets headless Chromium (and Playwright)
+// register its MachPortRendezvousServer. Older releases reject the flag.
+const MinMacOSChromiumAIJailVersion = "2.12.0"
 
 // MinEnvFileAIMemoryVersion is the first ai-memory whose `run` accepts
 // --env-file (KEY=VALUE lines for the spawned harness, read before the

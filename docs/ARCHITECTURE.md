@@ -573,14 +573,16 @@ harness's own credential dirs; it is complementary to the `gh` permission's
 The rest of the mirror completes with the same floor discipline: `x11` and
 `host_shm` (1.18 opt-ins, no floor), `audio`, `terminal_passthrough`,
 `macos_host_ipc` and `update_check` (`MinModernTogglesAIJailVersion`, the
-version they were verified against — arrival releases not pinned), `audit_log`
+version they were verified against — arrival releases not pinned),
+`macos_chromium` (`MinMacOSChromiumAIJailVersion`, 2.12.0 — Chromium's Mach
+rendezvous on macOS for headless Chromium/Playwright), `audit_log`
 (`MinAuditLogAIJailVersion`, 2.0.0), `secrets` (`MinSecretAIJailVersion`,
 2.2.0, `--secret KEY=host` values substituted by the filtered-egress proxy
 and therefore refused without `allow_hosts` or `allow_private_hosts`) and `env_from_files`
 (`MinEnvFromFileAIJailVersion`, 2.0.0, existence checked in pre-flight;
 ai-jail itself enforces user-owned/0600/outside-the-project). One issue per
-floor batch (`jail-toggles-require-ai-jail-2`, `…-2-5`, `…-2-9`) names the
-flags to drop.
+floor batch (`jail-toggles-require-ai-jail-2`, `…-2-5`, `…-2-9`, `…-2-12`)
+names the flags to drop.
 
 A symlinked `.ai-jail` is a pre-flight error, not something the launcher works
 around. ai-jail never reads a project `.ai-jail` through a symlink, and it

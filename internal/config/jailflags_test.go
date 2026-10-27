@@ -170,6 +170,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		"terminal_passthrough": func(f *JailFlags) { f.TerminalPassthru = boolPointer(true) },
 		"macos_host_ipc":       func(f *JailFlags) { f.MacOSHostIPC = boolPointer(true) },
 		"update_check":         func(f *JailFlags) { f.UpdateCheck = boolPointer(true) },
+		"macos_chromium":       func(f *JailFlags) { f.MacOSChromium = boolPointer(true) },
 		"audit_log":            func(f *JailFlags) { f.AuditLog = boolPointer(true) },
 		"secrets":              func(f *JailFlags) { f.Secrets = []string{"GITHUB_TOKEN=github.com"} },
 		"env_from_files":       func(f *JailFlags) { f.EnvFromFiles = []string{"/home/tester/.secrets"} },
