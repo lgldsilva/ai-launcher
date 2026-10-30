@@ -121,6 +121,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		MemoryProfile:                  strings.TrimSpace(inputs.local.Options.MemoryProfile),
 		MemoryEnvFile:                  strings.TrimSpace(inputs.local.Options.MemoryEnvFile),
 		MemoryJail:                     strings.TrimSpace(inputs.local.Options.MemoryJail),
+		MemoryExitPrompt:               inputs.local.Options.MemoryExitPrompt,
 		BwrapBin:                       os.Getenv("BWRAP_BIN"),
 		MemoryAuthToken:                inputs.global.MemoryAuthToken,
 		UseJail:                        inputs.local.Options.Jail && !inputs.local.Options.Docker,

@@ -793,7 +793,26 @@ func memoryRunFlagIssues(cfg LaunchConfig, stat func(string) (os.FileInfo, error
 	issues = append(issues, memoryEnvFileIssues(cfg, stat)...)
 	issues = append(issues, memoryJailIssues(cfg)...)
 	issues = append(issues, forceUnlockIssues(cfg)...)
+	issues = append(issues, memoryExitPromptIssues(cfg)...)
 	return issues
+}
+
+// memoryExitPromptIssues refuses memory_exit_prompt: false below ai-memory
+// 3.3.0. Nil and explicit true emit nothing, so there is nothing to refuse.
+// The flag rides after the harness, so no ai-jail pre-harness floor applies.
+func memoryExitPromptIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseMemory || cfg.MemoryExitPrompt == nil || *cfg.MemoryExitPrompt {
+		return nil
+	}
+	if MemorySupportsNoExitPrompt(cfg.MemoryVersion) {
+		return nil
+	}
+	return []Issue{versionFloorIssue(
+		"memory-exit-prompt-requires-ai-memory-3-3",
+		"memory_exit_prompt",
+		cfg.MemoryVersion,
+		config.MinNoExitPromptAIMemoryVersion,
+	)}
 }
 
 // forceUnlockIssues refuses force_unlock below its ai-memory floor. The flag

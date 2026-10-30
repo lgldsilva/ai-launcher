@@ -604,7 +604,7 @@ runs (jail on, container backend off).
 The launcher composes a specific upstream surface, bounded at both ends by four
 constants in `internal/config`: `MinAIJailVersion` (`1.20.1`) and
 `MinAIMemoryVersion` (`1.25.0`) are the floor, `UntestedAIJailVersion`
-(`3.0.0`) and `UntestedAIMemoryVersion` (`3.3.0`) the first version the argv
+(`3.0.0`) and `UntestedAIMemoryVersion` (`3.4.0`) the first version the argv
 has *not* been validated against. Below the floor is `…-version-too-old`; at or
 above the ceiling is `…-version-untested`, which warns and never blocks.
 

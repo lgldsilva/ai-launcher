@@ -27,7 +27,41 @@ func buildContinue(cfg LaunchConfig) ([]string, error) {
 	command = appendMemoryScope(command, cfg)
 	command = appendWorkstreamSelection(command, cfg)
 	command = appendForceUnlock(command, cfg)
+	command = appendNoExitPrompt(command, cfg)
 	return appendYoloFlag(command, cfg), nil
+}
+
+// appendNoExitPrompt emits --no-exit-prompt when memory_exit_prompt is
+// explicitly false and the installed ai-memory accepts the flag. Nil and
+// explicit true leave the upstream menu alone. The flag stays after the
+// harness, like --no-autowire: ai-jail's managed-harness parser bails on
+// any other dash token before the harness name. Below 3.3.0 emission stays
+// silent — pre-flight refuses the configuration.
+func appendNoExitPrompt(command []string, cfg LaunchConfig) []string {
+	if !suppressMemoryExitPrompt(cfg) {
+		return command
+	}
+	for _, arg := range command {
+		if arg == "--no-exit-prompt" {
+			return command
+		}
+	}
+	for _, arg := range cfg.ExtraArgs {
+		if arg == "--no-exit-prompt" {
+			return command
+		}
+	}
+	return append(command, "--no-exit-prompt")
+}
+
+// suppressMemoryExitPrompt is the launch decision: an explicit false on an
+// ai-memory that knows --no-exit-prompt. An unreadable probe is not evidence
+// the flag would parse.
+func suppressMemoryExitPrompt(cfg LaunchConfig) bool {
+	if !cfg.UseMemory || cfg.MemoryExitPrompt == nil || *cfg.MemoryExitPrompt {
+		return false
+	}
+	return MemorySupportsNoExitPrompt(cfg.MemoryVersion)
 }
 
 // appendForceUnlock emits ai-memory's --force-unlock when the operator asked

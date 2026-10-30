@@ -224,6 +224,18 @@ func disableMemoryAutowire(cfg LaunchConfig) bool {
 	return cfg.UseMemory && !cfg.MemoryAutowire && MemoryDisablesAutowire(cfg.MemoryVersion)
 }
 
+// MemorySupportsNoExitPrompt reports whether ai-memory accepts
+// `run --no-exit-prompt`. The flag arrived in 3.3.0. An older CLI rejects
+// it as an unknown option, and an unreadable probe is not evidence that
+// the CLI is new enough.
+func MemorySupportsNoExitPrompt(version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return compareVersions(version, config.MinNoExitPromptAIMemoryVersion) >= 0
+}
+
 // MemoryRequiresServer reports whether ai-memory knows the require-server
 // switch. The flag and env arrived in 2.6.0, the release that downgraded an
 // unreachable server to a degraded launch; an older CLI already fails closed,
