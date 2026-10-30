@@ -14,7 +14,7 @@ import (
 )
 
 // TestLiveUpstreamScenarios execs the real ai-jail and ai-memory binaries
-// (validated through ai-jail 2.12.0 and ai-memory 3.2.6) for the scenarios the
+// (validated through ai-jail 2.13.1 and ai-memory 3.3.0) for the scenarios the
 // Gherkin contract only assembles. The contract locks argv shape; this is the
 // run that checks the installed CLIs accept it. CI and the mutation container
 // have no upstream install, so they skip.
@@ -136,7 +136,7 @@ func liveMemoryAcceptsNoAutowire(t *testing.T, memoryPath string) {
 	if !strings.Contains(text, "opencode2") {
 		t.Fatalf("unknown-harness error missing opencode2:\n%s", text)
 	}
-	for _, name := range []string{"grok-build", "claude-code", "oh-my-pi", "kimi-code", "open-code", "opencode2", "opencode-v2"} {
+	for _, name := range []string{"grok-build", "claude-code", "oh-my-pi", "kimi-code", "open-code", "opencode2", "opencode-v2", "agy", "copilot", "copilot-cli"} {
 		got := runMemory(t, memoryPath, name, "--fresh", "--no-autowire", "--", "--version")
 		if strings.Contains(got, "invalid value") || strings.Contains(got, "unexpected argument") {
 			t.Fatalf("ai-memory rejected harness %s with --no-autowire:\n%s", name, got)
@@ -148,6 +148,10 @@ func liveMemoryAcceptsNoAutowire(t *testing.T, memoryPath string) {
 		if !strings.Contains(got, "the agent was not started") && !strings.Contains(got, "was not found in the host PATH") {
 			t.Fatalf("harness %s did not stop before the agent:\n%s", name, got)
 		}
+	}
+	exitPrompt := runMemory(t, memoryPath, "claude", "--no-exit-prompt", "--no-autowire")
+	if strings.Contains(exitPrompt, "unexpected argument") || strings.Contains(exitPrompt, "unexpected value") || strings.Contains(exitPrompt, "invalid value") {
+		t.Fatalf("ai-memory rejected --no-exit-prompt:\n%s", exitPrompt)
 	}
 }
 

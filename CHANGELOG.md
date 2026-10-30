@@ -13,6 +13,24 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — memory_exit_prompt (ai-memory 3.3.0)
+
+`options.memory_exit_prompt: false` forwards `ai-memory run --no-exit-prompt`
+when the detected ai-memory is ≥ 3.3.0, so the harness returns to the shell
+instead of offering the switch/rerun menu. Unset (and explicit `true`) emit
+nothing — the menu stays. Below 3.3.0 pre-flight refuses
+(`memory-exit-prompt-requires-ai-memory-3-3`) instead of sending an unknown
+flag into the jail. The managed binary and the PATH binary both need to be
+3.3.0 before that option is useful.
+
+ai-jail 2.12.0 through 2.13.1 were read against the flags this launcher
+emits. 2.12.0 adds `--macos-chromium` and 2.13.0 adds `--publish-port`;
+neither is on the default argv. 2.13.1 fixes command precedence (CLI wins
+over a trusted project `command`), last-wins environment overrides, and
+nested same-path mounts. None of those reject or redefine a flag this
+launcher already sends, so `UntestedAIJailVersion` stays `3.0.0`. 2.13.1
+states every pre-2.13.1 `.ai-jail` still works.
+
 ### Added — --resume and --workstreams side commands
 
 `--resume` forwards to `ai-memory resume` (interactive picker; optional

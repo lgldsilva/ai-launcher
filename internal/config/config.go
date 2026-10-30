@@ -258,13 +258,23 @@ const (
 // opt-in through jail_flags); ai-memory 3.1.0 only changes what `run` hands the
 // harness on a switch (AI_MEMORY_PREVIOUS_SESSION_HISTORY). ai-jail 2.12.0
 // adds --macos-chromium (new opt-in, added in #101); ai-memory
-// 3.2.2 through 3.2.6 keep the same `run` grammar (latest published
-// Linux/macOS/Windows assets at revalidation time — a 3.2.7 changelog entry
-// had no matching release assets yet). Live dry-run of the composed chain and
-// --doctor were re-run against ai-jail 2.12.0 and ai-memory 3.2.6.
+// 3.2.2 through 3.2.6 keep the same `run` grammar. ai-memory 3.3.0 was read
+// and executed, not guessed: `run --help` still accepts the same harness
+// names (including agy, copilot, and copilot-cli), and the flags this
+// launcher emits (--no-autowire, --workspace, --project, --workstream, --new,
+// --executable, --fresh, --profile, --env-file, --jail / --no-jail) kept
+// their meaning. `--fresh claude` also sets AI_MEMORY_PREVIOUS_SESSION_HISTORY
+// (upstream behavior, not a launcher flag). `--project-id` is new and was
+// left to upstream's own selector. `--no-exit-prompt` is opt-in through
+// memory_exit_prompt: false. ai-jail 2.12.0 through 2.13.1 were read the
+// same way: --macos-chromium and --publish-port are new opt-ins this
+// launcher does not emit, and 2.13.1's command-precedence, last-wins env,
+// and nested-mount fixes do not reject or redefine a flag this launcher
+// sends. Live dry-run of the composed chain was re-run against ai-jail
+// 2.13.1 and ai-memory 3.3.0.
 const (
 	UntestedAIJailVersion   = "3.0.0"
-	UntestedAIMemoryVersion = "3.3.0"
+	UntestedAIMemoryVersion = "3.4.0"
 )
 
 // MinAllowHostAIJailVersion is the first ai-jail that accepts --allow-host.
@@ -351,6 +361,11 @@ const MinMemoryJailAIMemoryVersion = "2.5.2"
 // MinCopilotAIMemoryVersion is the first ai-memory with the copilot and
 // copilot-cli harnesses.
 const MinCopilotAIMemoryVersion = "3.0.0"
+
+// MinNoExitPromptAIMemoryVersion is the first ai-memory whose `run` accepts
+// --no-exit-prompt. Below it the flag is an unknown option, so pre-flight
+// refuses memory_exit_prompt: false instead of emitting it inside the jail.
+const MinNoExitPromptAIMemoryVersion = "3.3.0"
 
 // MinPreHarnessAIJailVersion is the first ai-jail verified to forward
 // ai-memory's newer pre-harness wrapper flags (--profile, --env-file)

@@ -68,6 +68,10 @@ type LaunchConfig struct {
 	MemoryProfile string
 	MemoryEnvFile string
 	MemoryJail    string
+	// MemoryExitPrompt is the tri-state for `ai-memory run --no-exit-prompt`
+	// (ai-memory >= 3.3.0). Nil and explicit true emit nothing, so the
+	// upstream menu stays. Explicit false emits the flag after the harness.
+	MemoryExitPrompt *bool
 	// JailEnv names the environment variables to forward into the sandbox with
 	// ai-jail's --env. Filled by ResolveHostBinaries from JailEnvPassthrough,
 	// so Build stays free of environment reads and --dry-run shows exactly the
@@ -211,6 +215,7 @@ func Build(cfg LaunchConfig) ([]string, error) {
 		if disableMemoryAutowire(cfg) {
 			command = append(command, "--no-autowire")
 		}
+		command = appendNoExitPrompt(command, cfg)
 	} else {
 		executable := cfg.Agent.Command
 		if resolved := resolve.hostPath(cfg.Executable); resolved != "" {
@@ -377,6 +382,7 @@ func prepareDockerRunConfig(cfg LaunchConfig) (container.RunConfig, error) {
 	// native argv after the harness.
 	run.AgentArgs = appendDeclaredParams(run.AgentArgs, cfg)
 	run.AgentArgs = appendForceUnlock(run.AgentArgs, cfg)
+	run.AgentArgs = appendNoExitPrompt(run.AgentArgs, cfg)
 	run.AgentArgs = appendYoloFlag(run.AgentArgs, cfg)
 	run.AgentArgs = append(run.AgentArgs, cfg.ExtraArgs...)
 	if err := run.Selection.Validate(); err != nil {

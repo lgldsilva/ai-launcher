@@ -159,6 +159,97 @@ func TestMemoryJailForms(t *testing.T) {
 	}
 }
 
+func TestMemoryExitPromptFlag(t *testing.T) {
+	omitted := buildMemoryRun(t, hostMemoryLaunch("3.3.0"))
+	if containsArg(omitted, "--no-exit-prompt") {
+		t.Fatalf("argv = %#v; unset memory_exit_prompt must omit --no-exit-prompt", omitted)
+	}
+	kept := buildMemoryRun(t, hostMemoryLaunch("3.3.0", func(cfg *LaunchConfig) {
+		cfg.MemoryExitPrompt = boolPtr(true)
+	}))
+	if containsArg(kept, "--no-exit-prompt") {
+		t.Fatalf("argv = %#v; memory_exit_prompt true must omit --no-exit-prompt", kept)
+	}
+	argv := buildMemoryRun(t, hostMemoryLaunch("3.3.0", func(cfg *LaunchConfig) {
+		cfg.MemoryExitPrompt = boolPtr(false)
+	}))
+	if !containsArg(argv, "--no-exit-prompt") {
+		t.Fatalf("argv = %#v; want --no-exit-prompt", argv)
+	}
+	harnessAt, flagAt := -1, -1
+	for i, token := range argv {
+		switch token {
+		case "claude":
+			harnessAt = i
+		case "--no-exit-prompt":
+			flagAt = i
+		}
+	}
+	if harnessAt < 0 || flagAt < harnessAt {
+		t.Fatalf("argv = %#v; --no-exit-prompt must follow the harness", argv)
+	}
+	silent := buildMemoryRun(t, hostMemoryLaunch("3.2.1", func(cfg *LaunchConfig) {
+		cfg.MemoryExitPrompt = boolPtr(false)
+	}))
+	if containsArg(silent, "--no-exit-prompt") {
+		t.Fatalf("argv = %#v; --no-exit-prompt must stay silent below 3.3.0", silent)
+	}
+	dup := hostMemoryLaunch("3.3.0", func(cfg *LaunchConfig) {
+		cfg.MemoryExitPrompt = boolPtr(false)
+		cfg.ExtraArgs = []string{"--no-exit-prompt"}
+	})
+	argv = buildMemoryRun(t, dup)
+	count := 0
+	for _, arg := range argv {
+		if arg == "--no-exit-prompt" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("argv = %#v; extra_args must not duplicate --no-exit-prompt", argv)
+	}
+	again := appendNoExitPrompt([]string{"ai-memory", "run", "claude", "--no-exit-prompt"}, dup)
+	count = 0
+	for _, arg := range again {
+		if arg == "--no-exit-prompt" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("argv = %#v; a flag already on the command must not be repeated", again)
+	}
+}
+
+func TestMemoryExitPromptRefusedBelowFloor(t *testing.T) {
+	stat := func(string) (os.FileInfo, error) { return nil, nil }
+	validate := func(cfg LaunchConfig) []Issue {
+		return memoryRunFlagIssues(cfg, stat)
+	}
+	for _, version := range []string{"3.2.1", ""} {
+		issue, ok := issueByCode(validate(hostMemoryLaunch(version, func(cfg *LaunchConfig) {
+			cfg.MemoryExitPrompt = boolPtr(false)
+		})), "memory-exit-prompt-requires-ai-memory-3-3")
+		if !ok {
+			t.Fatalf("preflight accepted memory_exit_prompt false on ai-memory %q", version)
+		}
+		if !strings.Contains(issue.Message, "memory_exit_prompt needs ai-memory >= 3.3.0") {
+			t.Fatalf("message = %q; want the shared floor wording", issue.Message)
+		}
+		seen := "unknown"
+		if version != "" {
+			seen = version
+		}
+		if !strings.Contains(issue.Message, "(installed: "+seen+")") {
+			t.Fatalf("message = %q; want installed: %s", issue.Message, seen)
+		}
+	}
+	if _, ok := issueByCode(validate(hostMemoryLaunch("3.3.0", func(cfg *LaunchConfig) {
+		cfg.MemoryExitPrompt = boolPtr(false)
+	})), "memory-exit-prompt-requires-ai-memory-3-3"); ok {
+		t.Fatal("preflight refused memory_exit_prompt false on ai-memory 3.3.0")
+	}
+}
+
 func TestMemoryRunFlagIssuesRefuseWhatThePairCannotApply(t *testing.T) {
 	stat := func(string) (os.FileInfo, error) { return nil, nil }
 	validate := func(cfg LaunchConfig) []Issue {

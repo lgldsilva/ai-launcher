@@ -430,14 +430,20 @@ type Options struct {
 	// "smart" or "true"). Only for launches the launcher itself neither
 	// jails nor containers — ai-memory ignores --jail inside ai-jail and a
 	// container image has no ai-jail to run.
-	MemoryJail    string            `yaml:"memory_jail,omitempty"`
-	NewWorkstream string            `yaml:"new_workstream,omitempty"`
-	Workstream    string            `yaml:"workstream,omitempty"`
-	Workspace     string            `yaml:"workspace,omitempty"`
-	Project       string            `yaml:"project,omitempty"`
-	JailFlags     JailFlags         `yaml:"jail_flags,omitempty"`
-	ExtraArgs     []string          `yaml:"extra_args,omitempty"`
-	ParamValues   map[string]string `yaml:"param_values,omitempty"`
+	MemoryJail string `yaml:"memory_jail,omitempty"`
+	// MemoryExitPrompt maps to `ai-memory run --no-exit-prompt` (ai-memory
+	// >= 3.3.0). Nil leaves the upstream menu in place and emits nothing.
+	// An explicit false returns to the shell when the harness exits. An
+	// explicit true is the same argv as unset. Below 3.3.0 pre-flight
+	// refuses an explicit false instead of emitting an unknown flag.
+	MemoryExitPrompt *bool             `yaml:"memory_exit_prompt,omitempty"`
+	NewWorkstream    string            `yaml:"new_workstream,omitempty"`
+	Workstream       string            `yaml:"workstream,omitempty"`
+	Workspace        string            `yaml:"workspace,omitempty"`
+	Project          string            `yaml:"project,omitempty"`
+	JailFlags        JailFlags         `yaml:"jail_flags,omitempty"`
+	ExtraArgs        []string          `yaml:"extra_args,omitempty"`
+	ParamValues      map[string]string `yaml:"param_values,omitempty"`
 }
 
 // ContainerRuntimeAuto is the default runtime preference for container mode.

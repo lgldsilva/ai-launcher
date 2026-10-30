@@ -66,6 +66,13 @@ jails nor containers: `no`/`false`/`none` emits `--no-jail` (skips the
 `--yolo` ai-jail offer), `smart`/`true` emits bare `--jail`, and any other
 value is the toggle list (`--jail=github,aws`). Inside the launcher's jail
 ai-memory ignores `--jail`, so `memory_jail` there only draws a warning.
+`memory_exit_prompt` (ai-memory ≥ 3.3.0) is off by default: the switch/rerun
+menu after the harness exits stays. Set `memory_exit_prompt: false` in the
+local config to pass `ai-memory run --no-exit-prompt` and return to the
+shell. The managed binary and the one on `PATH` both need to be 3.3.0;
+below that, pre-flight refuses the option. An explicit `true` is the same
+argv as leaving the key unset.
+
 A `memory_jail` launch on ai-memory ≥ 3.0.1 forwards the server route into the
 jail's private home but refuses to promote a root bearer that only lives in
 ai-memory's `config.toml` or `[auth].bearer_token_file`: it stops and asks for
@@ -886,7 +893,7 @@ Layers of defense:
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
-  (`ai-jail` < 3.0.0, `ai-memory` < 3.3.0). It probes `--version` and reports
+  (`ai-jail` < 3.0.0, `ai-memory` < 3.4.0). It probes `--version` and reports
   an install that is older (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`) or newer than the validated range
   (`…-version-untested`). It also probes the launcher-managed ai-memory native
