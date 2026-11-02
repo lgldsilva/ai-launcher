@@ -3,6 +3,7 @@ package launcher
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -60,7 +61,24 @@ type UpstreamStatus struct {
 	Behind     bool
 	BehindCode string
 	BehindOf   string
+	// Advisory reports an install below the recommended security release.
+	// Recommended is that release. It does not fail --doctor: TooOld still
+	// owns the hard floor, and a launch that meets the floor proceeds.
+	Advisory     bool
+	AdvisoryCode string
+	Recommended  string
 }
+
+// Doctor and pre-flight share these codes. The doctor spellings carry the
+// tool name because --doctor prints several rows; pre-flight codes match the
+// jail-version-too-old shape already in the contract.
+const (
+	codeJailAdvisory         = "jail-version-advisory"
+	codeMemoryAdvisory       = "memory-version-advisory"
+	codeDoctorJailAdvisory   = "ai-jail-version-advisory"
+	codeDoctorMemoryAdvisory = "ai-memory-version-advisory"
+	codeDoctorNativeAdvisory = "ai-memory-native-advisory"
+)
 
 // UpstreamReport probes the upstream CLIs this launcher composes with and
 // reports what is installed. It execs one child process per tool, so it belongs
@@ -76,13 +94,15 @@ func UpstreamReport(lookPath func(string) (string, error), goos string) []Upstre
 	}
 	report := make([]UpstreamStatus, 0, 2)
 	if goos != config.PlatformWindows {
-		report = append(report, probeUpstream(lookPath, config.AIJailCommand,
+		jail := probeUpstream(lookPath, config.AIJailCommand,
 			config.MinAIJailVersion, config.UntestedAIJailVersion,
-			"ai-jail-version-too-old", "ai-jail-version-untested"))
+			"ai-jail-version-too-old", "ai-jail-version-untested")
+		report = append(report, withAdvisory(jail, config.AdvisoryAIJailVersion, codeDoctorJailAdvisory))
 	}
 	memory := probeUpstream(lookPath, config.AIMemoryCommand,
 		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
 		"ai-memory-version-too-old", "ai-memory-version-untested")
+	memory = withAdvisory(memory, config.AdvisoryAIMemoryVersion, codeDoctorMemoryAdvisory)
 	report = append(report, memory)
 	if managed := probeManagedRunner(memory.Version); managed != nil {
 		report = append(report, *managed)
@@ -167,6 +187,7 @@ func probeManagedRunner(pathVersion string) *UpstreamStatus {
 		ManagedRunnerCommand,
 		config.MinAIMemoryVersion, config.UntestedAIMemoryVersion,
 		"ai-memory-native-too-old", "ai-memory-native-untested")
+	status = withAdvisory(status, config.AdvisoryAIMemoryVersion, codeDoctorNativeAdvisory)
 	if status.Missing || status.Version == "" {
 		return nil
 	}
@@ -327,6 +348,39 @@ func probeUpstream(lookPath func(string) (string, error), command, minimum, unte
 	status.TooOld = compareVersions(status.Version, minimum) < 0
 	status.TooNew = untested != "" && compareVersions(status.Version, untested) >= 0
 	return status
+}
+
+// withAdvisory flags an install below recommended. An unreadable version stays
+// unjudged: "version unknown" is not evidence of a missing fix.
+func withAdvisory(status UpstreamStatus, recommended, code string) UpstreamStatus {
+	if status.Version == "" || recommended == "" {
+		return status
+	}
+	if compareVersions(status.Version, recommended) < 0 {
+		status.Advisory = true
+		status.AdvisoryCode = code
+		status.Recommended = recommended
+	}
+	return status
+}
+
+// AdvisoryNotice is the operator-facing text for an install below the
+// recommended security release. tool is config.AIJailCommand or
+// config.AIMemoryCommand. The text names each published advisory and the
+// release that clears the warning.
+func AdvisoryNotice(tool, installed, recommended string) string {
+	switch tool {
+	case config.AIJailCommand:
+		return fmt.Sprintf(
+			"%s %s is below the recommended %s. GHSA-v2fr-83mr-f9cg (fixed in 2.10.0), GHSA-2gq6-9rhj-xrg4 (fixed in 2.11.0) and GHSA-w976-gw52-hvx2 (high) apply, and %s also fixes the symlinked-binary file-map regression (for example ~/.local/bin/claude).",
+			tool, installed, recommended, recommended)
+	case config.AIMemoryCommand:
+		return fmt.Sprintf(
+			"%s %s is below the recommended %s. GHSA-9xw8-cg9v-h9gw (high, RCE via POST /admin/auto-improve, fixed in 3.1.1), GHSA-55q2-6fgm-49ww (fixed in 3.2.4) and GHSA-pphw-hm98-3wh4 (fixed in 3.2.10).",
+			tool, installed, recommended)
+	default:
+		return fmt.Sprintf("%s %s is below the recommended %s.", tool, installed, recommended)
+	}
 }
 
 // compareVersions compares two dotted numeric versions, returning a negative

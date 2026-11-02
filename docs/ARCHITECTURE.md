@@ -607,6 +607,14 @@ constants in `internal/config`: `MinAIJailVersion` (`1.20.1`) and
 (`3.0.0`) and `UntestedAIMemoryVersion` (`3.4.0`) the first version the argv
 has *not* been validated against. Below the floor is `…-version-too-old`; at or
 above the ceiling is `…-version-untested`, which warns and never blocks.
+`AdvisoryAIJailVersion` (`2.13.0`) and `AdvisoryAIMemoryVersion` (`3.2.10`)
+sit inside that range. An install below either one warns
+(`ai-jail-version-advisory`, `ai-memory-version-advisory`, and
+`ai-memory-native-advisory` for the managed runner) and still launches when
+it meets the hard floor. Launch pre-flight repeats the jail and PATH-memory
+warnings (`jail-version-advisory`, `memory-version-advisory`) from the cached
+probe. A launch already below the hard floor is refused for that reason; the
+advisory text stays on `--doctor`.
 
 The ceiling exists because the floor only ever looked down. The failure that
 costs an afternoon is upstream keeping every flag the launcher emits while
@@ -629,18 +637,20 @@ under `~/.local/share/ai-launcher/bin` as a third row
 (`ai-memory-native-too-old`): it is a separate install that only moves when
 `--install` / `--upgrade` runs, so the copy on `PATH` cannot vouch for it.
 When that runner is older than the `ai-memory` on `PATH`, doctor also reports
-`ai-memory-native-behind-path` — the launch exports the managed file as
+`ai-memory-native-behind-path`, and when it is below 3.2.10 it reports
+`ai-memory-native-advisory`. The launch exports the managed file as
 `AI_MEMORY_NATIVE_BIN` even when both copies are inside the tested range. A
 probe that fails or cannot be parsed stays silent, and an absent managed runner
 adds no row at all. "Version unknown" has to stay distinguishable from "version
 too old", or a host where the probe merely failed would be refused a launch it
 can perform.
 
-Pre-flight sees one of these: the ai-jail version, via `jailVersionIssues`. It
-still execs nothing. `ResolveHostBinaries` — which is already outside the
+Pre-flight sees two of these: the ai-jail version, via `jailVersionIssues`,
+and the ai-memory version, via `memoryAdvisoryIssues`. It still execs nothing. `ResolveHostBinaries` — which is already outside the
 hermetic path, because it resolves host paths — calls `DetectJailVersion` and
-stores the result on `LaunchConfig.JailVersion`; `Validator.Validate` only
-reads that field. The probe is memoized with a `sync.Once`, and that cache is
+`DetectMemoryVersion` and stores the results on `LaunchConfig.JailVersion`
+and `LaunchConfig.MemoryVersion`; `Validator.Validate` only reads those
+fields. The probe is memoized with a `sync.Once`, and that cache is
 not an optimization: the TUI rebuilds its argv preview through
 `ResolveHostBinaries` on every keystroke, so an un-memoized probe would exec
 ai-jail once per rendered frame. An operator's ai-jail does not change

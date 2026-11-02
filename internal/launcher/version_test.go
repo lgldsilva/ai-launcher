@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -260,9 +261,94 @@ func TestUpstreamReportLeavesAnUnreadableVersionUnjudged(t *testing.T) {
 		"/bin/ai-memory": "no version here",
 	}, nil)
 	for _, status := range UpstreamReport(lookPathAll, "linux") {
-		if status.TooOld || status.TooNew {
+		if status.TooOld || status.TooNew || status.Advisory {
 			t.Errorf("%s judged %#v with no readable version", status.Command, status)
 		}
+	}
+}
+
+// The hard floor is what the argv requires. The recommended release is the
+// first version that contains the published fixes; an install between the two
+// warns and still counts as supported.
+func TestUpstreamReportFlagsSecurityAdvisoriesBelowTheRecommendedRelease(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail 2.12.0",
+		"/bin/ai-memory": "ai-memory 3.2.9",
+	}, nil)
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 2 {
+		t.Fatalf("report = %#v; want both tools", report)
+	}
+	jail, memory := report[0], report[1]
+	if jail.TooOld || !jail.Advisory || jail.AdvisoryCode != codeDoctorJailAdvisory || jail.Recommended != config.AdvisoryAIJailVersion {
+		t.Fatalf("ai-jail = %#v; want an advisory below %s without a hard-floor failure", jail, config.AdvisoryAIJailVersion)
+	}
+	if memory.TooOld || !memory.Advisory || memory.AdvisoryCode != codeDoctorMemoryAdvisory || memory.Recommended != config.AdvisoryAIMemoryVersion {
+		t.Fatalf("ai-memory = %#v; want an advisory below %s", memory, config.AdvisoryAIMemoryVersion)
+	}
+	notice := AdvisoryNotice(config.AIJailCommand, jail.Version, jail.Recommended)
+	for _, id := range []string{"GHSA-v2fr-83mr-f9cg", "GHSA-2gq6-9rhj-xrg4", "GHSA-w976-gw52-hvx2", config.AdvisoryAIJailVersion} {
+		if !strings.Contains(notice, id) {
+			t.Errorf("jail notice = %q; want %s", notice, id)
+		}
+	}
+	memoryNotice := AdvisoryNotice(config.AIMemoryCommand, memory.Version, memory.Recommended)
+	if !strings.Contains(memoryNotice, "GHSA-9xw8-cg9v-h9gw") || !strings.Contains(memoryNotice, "POST /admin/auto-improve") {
+		t.Errorf("memory notice = %q; want the high RCE advisory", memoryNotice)
+	}
+	if got := AdvisoryNotice("other", "1.0.0", "2.0.0"); !strings.Contains(got, "other 1.0.0") || !strings.Contains(got, "2.0.0") {
+		t.Errorf("fallback notice = %q", got)
+	}
+}
+
+func TestUpstreamReportAcceptsTheRecommendedSecurityRelease(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail " + config.AdvisoryAIJailVersion,
+		"/bin/ai-memory": "ai-memory " + config.AdvisoryAIMemoryVersion,
+	}, nil)
+	for _, status := range UpstreamReport(lookPathAll, "linux") {
+		if status.Advisory || status.TooOld {
+			t.Errorf("%s = %#v; the recommended release must not warn", status.Command, status)
+		}
+	}
+	// One patch below the bound still warns. The comparison is strict so a
+	// mutant that flips < to <= cries wolf on the release that fixed it.
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail 2.12.9",
+		"/bin/ai-memory": "ai-memory 3.2.9",
+	}, nil)
+	for _, status := range UpstreamReport(lookPathAll, "linux") {
+		if !status.Advisory {
+			t.Errorf("%s Advisory = false for %s; it is below the recommended release", status.Command, status.Version)
+		}
+	}
+}
+
+func TestUpstreamReportFlagsAManagedRunnerBelowTheSecurityRelease(t *testing.T) {
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":       "ai-jail " + config.AdvisoryAIJailVersion,
+		"/bin/ai-memory":     "ai-memory " + config.AdvisoryAIMemoryVersion,
+		"/managed/ai-memory": "ai-memory 3.2.9",
+	}, nil)
+	stubManagedRunner(t, "/managed/ai-memory")
+	stubExecutableStat(t, map[string]bool{"/managed/ai-memory": true})
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 3 {
+		t.Fatalf("report = %#v; want the managed row", report)
+	}
+	managed := report[2]
+	if !managed.Advisory || managed.AdvisoryCode != codeDoctorNativeAdvisory || managed.Recommended != config.AdvisoryAIMemoryVersion {
+		t.Fatalf("managed = %#v; want the native advisory", managed)
+	}
+	if report[0].Advisory || report[1].Advisory {
+		t.Fatal("PATH installs at the recommended release were flagged")
+	}
+}
+
+func TestWithAdvisoryIgnoresAnEmptyRecommendation(t *testing.T) {
+	status := withAdvisory(UpstreamStatus{Version: "1.0.0"}, "", codeDoctorJailAdvisory)
+	if status.Advisory {
+		t.Fatalf("status = %#v; an empty recommendation is not a finding", status)
 	}
 }
 

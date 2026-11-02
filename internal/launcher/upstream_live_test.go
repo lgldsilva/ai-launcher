@@ -14,7 +14,7 @@ import (
 )
 
 // TestLiveUpstreamScenarios execs the real ai-jail and ai-memory binaries
-// (validated through ai-jail 2.13.1 and ai-memory 3.3.0) for the scenarios the
+// (validated through ai-jail 2.14.0 and ai-memory 3.3.1) for the scenarios the
 // Gherkin contract only assembles. The contract locks argv shape; this is the
 // run that checks the installed CLIs accept it. CI and the mutation container
 // have no upstream install, so they skip.
@@ -143,9 +143,11 @@ func liveMemoryAcceptsNoAutowire(t *testing.T, memoryPath string) {
 		}
 		// ai-memory 3.0 resolves some managed executables (oh-my-pi → omp)
 		// before it opens the workstream, so a harness this host lacks stops
-		// on the missing executable instead of the unreachable server. Either
-		// way the agent never started and no workstream was opened.
-		if !strings.Contains(got, "the agent was not started") && !strings.Contains(got, "was not found in the host PATH") {
+		// on the missing executable instead of the unreachable server. 3.3.1
+		// says "OpenCode executable `opencode` was not found" for open-code
+		// rather than "was not found in the host PATH". Either way the agent
+		// never started and no workstream was opened.
+		if !strings.Contains(got, "the agent was not started") && !strings.Contains(got, "was not found") {
 			t.Fatalf("harness %s did not stop before the agent:\n%s", name, got)
 		}
 	}
@@ -343,6 +345,24 @@ func runLauncher(t *testing.T, bin string, args, extraEnv []string) (string, str
 
 // mergeEnv applies overrides in place of any earlier value of the same key.
 // Appending to os.Environ is not enough: getenv returns the first match.
+// dropEnvKeys removes every entry whose key is listed. An empty override
+// would still leave the variable set, which is not the same as absent.
+func dropEnvKeys(env []string, keys ...string) []string {
+	drop := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		drop[key] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if drop[key] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 func mergeEnv(base, overrides []string) []string {
 	replace := make(map[string]string, len(overrides))
 	for _, entry := range overrides {
@@ -377,7 +397,11 @@ func runLive(t *testing.T, argv []string, timeout time.Duration) (string, error)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- argv comes from Build in this test
 	dir := t.TempDir()
 	cmd.Dir = dir
-	cmd.Env = mergeEnv(os.Environ(), []string{"HOME=" + dir, "USERPROFILE=" + dir})
+	// Drop the host toolchain homes. ai-jail bind-mounts CARGO_HOME's
+	// registry and git checkouts; a toolchain directory that does not contain
+	// them makes bwrap fail with "Read-only file system" before it can say
+	// whether it accepted the argv. The scenario is that acceptance.
+	cmd.Env = dropEnvKeys(mergeEnv(os.Environ(), []string{"HOME=" + dir, "USERPROFILE=" + dir}), "CARGO_HOME", "RUSTUP_HOME")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

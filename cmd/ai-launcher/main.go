@@ -210,6 +210,7 @@ func reportDoctor(out io.Writer) error {
 	stale := false
 	var untested []launcher.UpstreamStatus
 	var behind []launcher.UpstreamStatus
+	var advisory []launcher.UpstreamStatus
 	for _, status := range launcher.UpstreamReport(nil, "") {
 		switch {
 		case status.Missing:
@@ -231,9 +232,15 @@ func reportDoctor(out io.Writer) error {
 		if status.Behind {
 			behind = append(behind, status)
 		}
+		if status.Advisory {
+			advisory = append(advisory, status)
+		}
 	}
 	if stale {
 		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits, or accept the same one and do something else with it. See CHANGELOG.md for what each floor covers.")
+	}
+	for _, status := range advisory {
+		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.AdvisoryCode, doctorAdvisoryNotice(status))
 	}
 	for _, status := range untested {
 		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.UntestedCode, untestedAdvice(status))
@@ -257,6 +264,17 @@ func reportDoctor(out io.Writer) error {
 // true once the launcher started emitting --network and --env, and that named a
 // release now below MinAIJailVersion. One generic sentence outlives the next
 // upstream release; a hand-written case study does not.
+// doctorAdvisoryNotice names the advisories for one doctor row. A warning
+// does not join the blocked list: the hard floor is TooOld, and an install
+// between the floor and the recommended release still exits 0.
+func doctorAdvisoryNotice(status launcher.UpstreamStatus) string {
+	tool := config.AIJailCommand
+	if strings.Contains(status.AdvisoryCode, "memory") {
+		tool = config.AIMemoryCommand
+	}
+	return launcher.AdvisoryNotice(tool, status.Version, status.Recommended)
+}
+
 func untestedAdvice(status launcher.UpstreamStatus) string {
 	return "ai-launcher composes against " + status.Command + " >= " + status.Minimum +
 		" and < " + status.Untested + "; this install is newer, so the wrapper surface it " +
