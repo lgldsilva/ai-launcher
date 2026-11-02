@@ -214,6 +214,42 @@ const (
 	MinAIMemoryVersion = "1.25.0"
 )
 
+// AdvisoryAIJailVersion and AdvisoryAIMemoryVersion are the recommended
+// upstream releases. An install below one still launches when it meets the
+// hard floor above; `ai-launcher --doctor` and launch pre-flight warn and do
+// not refuse. The hard floors stay where they are because those older CLIs
+// still accept the argv this launcher emits — the gap is what the sandbox or
+// the server does with it, which is published upstream rather than a flag
+// this process can stop emitting.
+//
+// ai-jail 2.13.0 is the first release that contains every fix named here and
+// the symlinked-binary file-map regression:
+//
+//   - GHSA-v2fr-83mr-f9cg, fixed in 2.10.0 (medium: the worktree check, the
+//     host environment visible from bwrap's pid 1 without Landlock, and an
+//     unauthenticated TCP listener on the filtered-egress proxy).
+//   - GHSA-2gq6-9rhj-xrg4, fixed in 2.11.0 (low: on Linux a host rename over
+//     a masked path unmasks it in a running sandbox).
+//   - GHSA-w976-gw52-hvx2 (high: the 1.22.0 source audit). The published
+//     range does not name a patched version; the 2.8.1 follow-up records
+//     that its five findings were fixed, and 2.13.0 is past that.
+//   - 2.13.0 itself stops a file map of a symlinked binary (for example
+//     ~/.local/bin/claude) from failing the launch. That regression arrived
+//     with the 2.11.0 parent-first mount order.
+//
+// ai-memory 3.2.10 is the same kind of bound:
+//
+//   - GHSA-9xw8-cg9v-h9gw, fixed in 3.1.1 (high: request-controlled eval
+//     configuration on POST /admin/auto-improve, remote command execution).
+//   - GHSA-55q2-6fgm-49ww, fixed in 3.2.4 (medium: a restricted project opens
+//     to every authenticated user when its access mode or grant cannot be read).
+//   - GHSA-pphw-hm98-3wh4, fixed in 3.2.10 (low: hollow-project cleanup removes
+//     a fresh purge tombstone and permits session replay).
+const (
+	AdvisoryAIJailVersion   = "2.13.0"
+	AdvisoryAIMemoryVersion = "3.2.10"
+)
+
 // UntestedAIJailVersion and UntestedAIMemoryVersion are the first upstream
 // versions this launcher's argv has NOT been validated against. They are
 // exclusive bounds — an install at or above one of them is reported by
@@ -262,16 +298,23 @@ const (
 // and executed, not guessed: `run --help` still accepts the same harness
 // names (including agy, copilot, and copilot-cli), and the flags this
 // launcher emits (--no-autowire, --workspace, --project, --workstream, --new,
-// --executable, --fresh, --profile, --env-file, --jail / --no-jail) kept
-// their meaning. `--fresh claude` also sets AI_MEMORY_PREVIOUS_SESSION_HISTORY
-// (upstream behavior, not a launcher flag). `--project-id` is new and was
-// left to upstream's own selector. `--no-exit-prompt` is opt-in through
-// memory_exit_prompt: false. ai-jail 2.12.0 through 2.13.1 were read the
-// same way: --macos-chromium and --publish-port are new opt-ins this
-// launcher does not emit, and 2.13.1's command-precedence, last-wins env,
-// and nested-mount fixes do not reject or redefine a flag this launcher
-// sends. Live dry-run of the composed chain was re-run against ai-jail
-// 2.13.1 and ai-memory 3.3.0.
+// --executable, --fresh, --profile, --env-file, --jail / --no-jail,
+// --no-exit-prompt, --force-unlock) kept their meaning. `--fresh claude`
+// also sets AI_MEMORY_PREVIOUS_SESSION_HISTORY (upstream behavior, not a
+// launcher flag). `--project-id` is new and was left to upstream's own
+// selector. `--no-exit-prompt` is opt-in through memory_exit_prompt: false.
+// ai-memory 3.3.1 keeps that grammar: its changelog is server, hook, web,
+// and backfill fixes, and `run --help` on 3.3.1 still lists the same wrapper
+// flags. ai-jail 2.12.0 through 2.14.0 were read the same way. 2.12.0 adds
+// --macos-chromium and 2.13.0 adds --publish-port; 2.14.0 adds
+// --prompt-hosts (Linux filtered-egress desktop approval, off by default,
+// off under --lockdown, and a project .ai-jail can only disable it). None
+// of those are on the default argv. 2.13.0 also stops a file map of a
+// symlinked binary such as ~/.local/bin/claude from failing the launch, and
+// 2.13.1's command-precedence, last-wins env, and nested-mount fixes do not
+// reject or redefine a flag this launcher sends. 2.14.0 states every
+// pre-2.14.0 .ai-jail still works. Live dry-run of the composed chain was
+// re-run against ai-jail 2.14.0 and ai-memory 3.3.1.
 const (
 	UntestedAIJailVersion   = "3.0.0"
 	UntestedAIMemoryVersion = "3.4.0"

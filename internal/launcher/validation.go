@@ -178,6 +178,7 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	issues = append(issues, freshIssues(cfg)...)
 	issues = append(issues, memoryScopePathIssues(cfg, stat)...)
 	issues = append(issues, jailVersionIssues(cfg)...)
+	issues = append(issues, memoryAdvisoryIssues(cfg)...)
 	return issues
 }
 
@@ -195,6 +196,11 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 // At or above the untested bound is a warning, not a refusal: a newer upstream
 // may work perfectly, and blocking would strand everyone the day a release
 // lands. `--doctor` carries the detail; this is the reminder at launch time.
+//
+// Between the hard floor and AdvisoryAIJailVersion is also a warning. Those
+// builds parse the argv and still miss published upstream fixes; refusing
+// them would turn a security recommendation into a new minimum. Below the
+// hard floor the refusal stands alone — the advisory text is on `--doctor`.
 //
 // An empty version means the probe could not read one. That is not evidence of
 // anything, so it is left alone.
@@ -214,16 +220,47 @@ func jailVersionIssues(cfg LaunchConfig) []Issue {
 				version, config.MinAIJailVersion),
 		}}
 	}
+	var issues []Issue
+	// Below the recommended release the launch still proceeds: the hard floor
+	// is what the argv requires, and these advisories are upstream fixes the
+	// operator has to install. --doctor carries the same text.
+	if compareVersions(version, config.AdvisoryAIJailVersion) < 0 {
+		issues = append(issues, Issue{
+			Code:    codeJailAdvisory,
+			Message: AdvisoryNotice(config.AIJailCommand, version, config.AdvisoryAIJailVersion),
+			Warning: true,
+		})
+	}
 	if compareVersions(version, config.UntestedAIJailVersion) >= 0 {
-		return []Issue{{
+		issues = append(issues, Issue{
 			Code: "jail-version-untested",
 			Message: fmt.Sprintf(
 				"ai-jail %s is newer than the validated range (>= %s, < %s); run `ai-launcher --doctor` for what changed",
 				version, config.MinAIJailVersion, config.UntestedAIJailVersion),
 			Warning: true,
-		}}
+		})
 	}
-	return nil
+	return issues
+}
+
+// memoryAdvisoryIssues warns when the detected ai-memory is below the
+// recommended security release. There is no hard memory-version refusal at
+// launch — the floor is a --doctor failure — so this warning is the launch
+// path for every readable version below AdvisoryAIMemoryVersion, including
+// one that is also below MinAIMemoryVersion. An empty version stays silent.
+func memoryAdvisoryIssues(cfg LaunchConfig) []Issue {
+	if !cfg.UseMemory {
+		return nil
+	}
+	version := strings.TrimSpace(cfg.MemoryVersion)
+	if version == "" || compareVersions(version, config.AdvisoryAIMemoryVersion) >= 0 {
+		return nil
+	}
+	return []Issue{{
+		Code:    codeMemoryAdvisory,
+		Message: AdvisoryNotice(config.AIMemoryCommand, version, config.AdvisoryAIMemoryVersion),
+		Warning: true,
+	}}
 }
 
 // memoryScopePathIssues warns when an ai-memory scope looks like a filesystem

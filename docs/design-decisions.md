@@ -49,16 +49,21 @@ version pinning, not by the contract alone — `config.MinAIJailVersion`
 floor in exactly one place, with `UntestedAIJailVersion` (`3.0.0`) and
 `UntestedAIMemoryVersion` (`3.4.0`) closing the range at the top, and
 `ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version` (5s
-timeout), reporting `…-version-too-old` below the floor and
-`…-version-untested` at or above the ceiling. Above the ceiling it reports and
-never blocks: the user may knowingly run ahead, and refusing would strand
-everyone the day upstream ships. Below the floor it does block, because there
-the argv is known not to work. The probe is a `--doctor` command rather than a
+timeout), reporting `…-version-too-old` below the floor,
+`…-version-advisory` below the recommended security releases
+(`AdvisoryAIJailVersion` `2.13.0`, `AdvisoryAIMemoryVersion` `3.2.10`) and
+`…-version-untested` at or above the ceiling. Above the ceiling, and below
+the recommended release, it reports and never blocks: the user may knowingly
+run ahead or stay on a build that still parses the argv, and refusing would
+strand everyone the day upstream ships or the day an advisory is published
+above the floor. Below the floor it does block, because there the argv is
+known not to work. The probe is a `--doctor` command rather than a
 per-launch fork because `Validator.Validate` runs on every launch and inside
 the TUI update loop — forking children there buys ~300 ms of latency and a
-frozen UI for a diagnostic nobody asked for. Pre-flight does judge the ai-jail
-version, but from a `sync.Once`-cached value `ResolveHostBinaries` already
-collected outside the hermetic path, so `Validate` itself still execs nothing. The jail flags live in a declarative structure
+frozen UI for a diagnostic nobody asked for. Pre-flight does judge the
+ai-jail version and the ai-memory advisory, but from the `sync.Once`-cached
+values `ResolveHostBinaries` already collected outside the hermetic path, so
+`Validate` itself still execs nothing. The jail flags live in a declarative structure
 (tri-state `config.JailFlags`) that mirrors ai-jail's own auto / on / off
 model, so absorbing a new ai-jail version is adding a row to a table, not
 rewriting `if`s — and the process for a bump is: review the upstream
@@ -657,7 +662,8 @@ the capability; each item is one PR on its own (one concern).
 
 | Watch | Trigger | Launcher response |
 | --- | --- | --- |
-| ai-jail `--publish-port` | Contributor PR / release after the design note in ai-jail 2.12.0 (#195) | Mirror as `jail_flags.publish_ports` the same way as `forward_ports` (list, floor, refuse with unrestricted network) |
+| ai-jail `--publish-port` | Shipped in ai-jail 2.13.0 (`publish_ports` in trusted global config; Linux; cannot combine with `--network`) | Mirror as `jail_flags.publish_ports` the same way as `forward_ports` (list, floor, refuse with unrestricted network). Not absorbed with the 2.14.0 revalidation: the rules (port range, lockdown, same-port forward, macOS refusal) are a feature of their own |
+| ai-jail `--prompt-hosts` | Shipped in ai-jail 2.14.0. Linux filtered-egress desktop prompt, off by default, off under `--lockdown`; a project `.ai-jail` can only disable it | Mirror as `jail_flags.prompt_hosts` with a 2.14.0 floor, and a test that an unset value emits nothing. Left as a follow-up: the prompt is interactive and trusted-global-only, so a bool toggle without those checks would over-claim |
 | ai-memory scope auth (#18) | Live server that can prove whether `workspace`/`project` forwarded by the launcher are authorized | Add an integration test under a build tag; keep the trust gate either way |
 | New `ai-memory run` harnesses | Changelog entry adding a harness token (IBM Bob / CodeBuddy today are hooks/MCP clients only, not `run` harnesses) | Extend `memoryRunHarnesses` and any `MemoryHarnessMinVersion` floor in the same commit as the Gherkin update |
 

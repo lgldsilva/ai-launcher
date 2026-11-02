@@ -487,14 +487,17 @@ func TestJailVersionIssuesWarnAboveTheTestedBound(t *testing.T) {
 	}
 }
 
-// A version inside the range, an unreadable probe, and a jail-less launch are
-// all silent — the last two because "unknown" is not evidence of anything.
+// A version at the recommended release, an unreadable probe, and a jail-less
+// launch are all silent — the last two because "unknown" is not evidence of
+// anything. The hard floor (1.20.1) is inside the advisory window, so it is
+// not a silent case.
 func TestJailVersionIssuesStaySilentWhenThereIsNothingToSay(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		cfg  LaunchConfig
 	}{
-		{"inside the range", jailVersionConfig(config.MinAIJailVersion)},
+		{"recommended release", jailVersionConfig(config.AdvisoryAIJailVersion)},
+		{"last live-tested release", jailVersionConfig("2.14.0")},
 		{"probe failed", jailVersionConfig("")},
 		{"jail disabled", LaunchConfig{Agent: config.Agent{Command: "claude"}, JailVersion: "1.14.2"}},
 	} {
@@ -505,5 +508,67 @@ func TestJailVersionIssuesStaySilentWhenThereIsNothingToSay(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Between the hard floor and the recommended release the launch proceeds.
+// The advisories are upstream fixes, and refusing would strand every install
+// that still parses the argv this launcher emits.
+func TestJailVersionIssuesWarnBelowTheRecommendedRelease(t *testing.T) {
+	issue, ok := issueByCode(jailVersionValidate(jailVersionConfig("2.12.0")), codeJailAdvisory)
+	if !ok {
+		t.Fatal("preflight said nothing about an ai-jail below the recommended release")
+	}
+	if !issue.Warning {
+		t.Error("the advisory is fatal; an install above the hard floor must launch")
+	}
+	if !strings.Contains(issue.Message, "GHSA-w976-gw52-hvx2") || !strings.Contains(issue.Message, config.AdvisoryAIJailVersion) {
+		t.Errorf("message = %q; want the high advisory and the recommended release", issue.Message)
+	}
+	belowFloor := jailVersionValidate(jailVersionConfig("1.19.1"))
+	if _, ok := issueByCode(belowFloor, codeJailAdvisory); ok {
+		t.Fatal("advisory warning duplicated the hard-floor refusal")
+	}
+	if _, ok := issueByCode(belowFloor, "jail-version-too-old"); !ok {
+		t.Fatal("preflight dropped the hard-floor refusal")
+	}
+}
+
+func TestMemoryAdvisoryIssuesWarnBelowTheRecommendedRelease(t *testing.T) {
+	old := jailVersionValidate(LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: "3.2.9",
+	})
+	issue, ok := issueByCode(old, codeMemoryAdvisory)
+	if !ok {
+		t.Fatal("preflight said nothing about an ai-memory below the recommended release")
+	}
+	if !issue.Warning {
+		t.Error("the advisory is fatal; the memory floor is a doctor failure, not a launch refusal")
+	}
+	for _, id := range []string{"GHSA-9xw8-cg9v-h9gw", "GHSA-55q2-6fgm-49ww", "GHSA-pphw-hm98-3wh4", config.AdvisoryAIMemoryVersion} {
+		if !strings.Contains(issue.Message, id) {
+			t.Errorf("message = %q; want %s", issue.Message, id)
+		}
+	}
+	current := jailVersionValidate(LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		UseMemory:     true,
+		MemoryVersion: config.AdvisoryAIMemoryVersion,
+	})
+	if _, ok := issueByCode(current, codeMemoryAdvisory); ok {
+		t.Fatal("the recommended release was reported as missing its own fixes")
+	}
+	off := jailVersionValidate(LaunchConfig{
+		Agent:         config.Agent{Command: "claude"},
+		MemoryVersion: "3.2.9",
+	})
+	if _, ok := issueByCode(off, codeMemoryAdvisory); ok {
+		t.Fatal("memory advisory fired with memory integration off")
+	}
+	unknown := jailVersionValidate(LaunchConfig{Agent: config.Agent{Command: "claude"}, UseMemory: true})
+	if _, ok := issueByCode(unknown, codeMemoryAdvisory); ok {
+		t.Fatal("an unreadable memory version was treated as vulnerable")
 	}
 }

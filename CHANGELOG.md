@@ -13,6 +13,39 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — security advisory warnings for ai-jail and ai-memory
+
+`ai-launcher --doctor` warns, and still exits 0, when the installed ai-jail
+is below 2.13.0 (`ai-jail-version-advisory`) or ai-memory is below 3.2.10
+(`ai-memory-version-advisory`). Launch pre-flight prints the same text as a
+warning (`jail-version-advisory`, `memory-version-advisory`) and does not
+refuse. The hard floors stay 1.20.1 and 1.25.0: those older CLIs still accept
+the argv this launcher emits.
+
+The ai-jail warning names GHSA-v2fr-83mr-f9cg (fixed in 2.10.0),
+GHSA-2gq6-9rhj-xrg4 (fixed in 2.11.0) and GHSA-w976-gw52-hvx2 (high). 2.13.0
+also fixes the symlinked-binary file-map regression (for example
+`~/.local/bin/claude`). The ai-memory warning names GHSA-9xw8-cg9v-h9gw
+(high, RCE via `POST /admin/auto-improve`, fixed in 3.1.1),
+GHSA-55q2-6fgm-49ww (fixed in 3.2.4) and GHSA-pphw-hm98-3wh4 (fixed in
+3.2.10). The managed native runner is judged on its own row
+(`ai-memory-native-advisory`).
+
+**What you need to do:** nothing to keep launching. Upgrade ai-jail to 2.13.0
+or newer and ai-memory to 3.2.10 or newer to clear the warning.
+
+### Changed — revalidated against ai-jail 2.14.0 and ai-memory 3.3.1
+
+`UntestedAIJailVersion` stays `3.0.0` and `UntestedAIMemoryVersion` stays
+`3.4.0`. Live dry-run of the composed `ai-jail` → `ai-memory run` chain was
+re-run against ai-jail 2.14.0 and ai-memory 3.3.1. `run --help` on 3.3.1
+still lists the wrapper flags this launcher emits. ai-jail 2.14.0 adds
+`--prompt-hosts` (opt-in Linux filtered-egress approval, off by default) and
+2.13.0 already added `--publish-port`. Neither is on the default argv, and
+neither is mirrored in `jail_flags` yet.
+
+**What you need to do:** nothing.
+
 ### Added — memory_exit_prompt (ai-memory 3.3.0)
 
 `options.memory_exit_prompt: false` forwards `ai-memory run --no-exit-prompt`

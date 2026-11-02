@@ -519,6 +519,45 @@ func TestDoctorSucceedsWhenUpstreamMeetsFloor(t *testing.T) {
 	if strings.Contains(out, "untested") {
 		t.Fatalf("--doctor output = %q; a version inside the range must not be reported as untested", out)
 	}
+	// The hard floor is below the recommended security release, so meeting it
+	// is a warning, not a failure and not silence.
+	if !strings.Contains(out, "ai-jail-version-advisory") || !strings.Contains(out, "GHSA-w976-gw52-hvx2") {
+		t.Fatalf("--doctor output = %q; want the ai-jail advisory warning", out)
+	}
+	if !strings.Contains(out, "ai-memory-version-advisory") || !strings.Contains(out, "GHSA-9xw8-cg9v-h9gw") {
+		t.Fatalf("--doctor output = %q; want the ai-memory advisory warning", out)
+	}
+}
+
+func TestDoctorWarnsWithoutFailingBelowTheRecommendedRelease(t *testing.T) {
+	stubUpstreamVersions(t, map[string]string{
+		"ai-jail":   "2.12.0",
+		"ai-memory": "3.2.9",
+	})
+	out, err := runDryRun(t, "--doctor")
+	if err != nil {
+		t.Fatalf("run(--doctor) error = %v; an advisory must warn, not block\n%s", err, out)
+	}
+	if !strings.Contains(out, "ai-jail-version-advisory") || !strings.Contains(out, config.AdvisoryAIJailVersion) {
+		t.Fatalf("--doctor output = %q; want the jail advisory naming %s", out, config.AdvisoryAIJailVersion)
+	}
+	if !strings.Contains(out, "ai-memory-version-advisory") || !strings.Contains(out, "GHSA-pphw-hm98-3wh4") {
+		t.Fatalf("--doctor output = %q; want the memory advisory naming GHSA-pphw-hm98-3wh4", out)
+	}
+}
+
+func TestDoctorStaysQuietAtTheRecommendedRelease(t *testing.T) {
+	stubUpstreamVersions(t, map[string]string{
+		"ai-jail":   "2.14.0",
+		"ai-memory": config.AdvisoryAIMemoryVersion,
+	})
+	out, err := runDryRun(t, "--doctor")
+	if err != nil {
+		t.Fatalf("run(--doctor) error = %v\n%s", err, out)
+	}
+	if strings.Contains(out, "advisory") || strings.Contains(out, "GHSA-") {
+		t.Fatalf("--doctor output = %q; the recommended releases must not warn", out)
+	}
 }
 
 // An upstream above the validated range is reported, not refused: it may well

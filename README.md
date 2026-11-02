@@ -574,7 +574,7 @@ the `--upgrade` flag (reinstall of the third-party tools).
 | `--agent <cmd>` | Selects the agent (claude, codex, opencode, kimi, kimi-cli, …) |
 | `--ssh` / `--gh` / `--docker` / `--gpu` | Optional jail helpers (see [Permissions: CLI + config](#permissions-cli--config-what-gets-mounted); none required; all independent of each other) |
 | `--display` / `--pictures` / `--tailscale` / `--systemd-user` / `--mise` / `--worktree` | Optional jail passthroughs, all off by default; each one **forces** its capability on (platform support varies — `display` and `systemd-user` are Linux-only) |
-| `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and exits |
+| `--doctor` | Prints the installed ai-jail / ai-memory versions against the supported floor and the recommended security releases, then exits |
 | `--no-jail` / `--sandbox` | Explicitly disables / enables ai-jail |
 | `--memory` / `--no-memory` | Enables / disables the ai-memory layer. A non-boolean value is the container memory limit instead: `--memory 4g` (or `--memory=512m`) is an alias for `--container-memory` |
 | `--yolo` / `--no-yolo` | Passes (or not) the agent's dangerous-mode flag |
@@ -892,16 +892,28 @@ Layers of defense:
   off with `--no-docker` unless you opt in, because auto mode for that one
   capability meant an unannounced host-root escape on ai-jail ≤ 1.15.x.
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
-  `ai-memory` ≥ 1.25.0) and the ceiling the argv was validated against
+  `ai-memory` ≥ 1.25.0), the recommended security releases (`ai-jail` ≥ 2.13.0,
+  `ai-memory` ≥ 3.2.10) and the ceiling the argv was validated against
   (`ai-jail` < 3.0.0, `ai-memory` < 3.4.0). It probes `--version` and reports
-  an install that is older (`ai-jail-version-too-old` /
-  `ai-memory-version-too-old`) or newer than the validated range
-  (`…-version-untested`). It also probes the launcher-managed ai-memory native
-  binary separately (`ai-memory-native-too-old`), because that copy only moves
-  when `--install` / `--upgrade` runs and can sit years behind the one on
-  `PATH` (`ai-memory-native-behind-path` when it does, even inside the tested
-  range). Only ai-jail's version is re-checked at launch — `--doctor` execs the
-  binaries, pre-flight just reads what the one cached probe found.
+  an install that is older than the floor (`ai-jail-version-too-old` /
+  `ai-memory-version-too-old`, a failure), below the recommended release
+  (`ai-jail-version-advisory` / `ai-memory-version-advisory`, a warning, exit 0)
+  or newer than the validated range (`…-version-untested`, also a warning).
+  The ai-jail warning names GHSA-v2fr-83mr-f9cg (fixed in 2.10.0),
+  GHSA-2gq6-9rhj-xrg4 (fixed in 2.11.0) and GHSA-w976-gw52-hvx2 (high); 2.13.0
+  also fixes the symlinked-binary file-map regression (for example
+  `~/.local/bin/claude`). The ai-memory warning names GHSA-9xw8-cg9v-h9gw
+  (high, RCE via `POST /admin/auto-improve`, fixed in 3.1.1),
+  GHSA-55q2-6fgm-49ww (fixed in 3.2.4) and GHSA-pphw-hm98-3wh4 (fixed in
+  3.2.10). It also probes the launcher-managed ai-memory native binary
+  separately (`ai-memory-native-too-old`, `ai-memory-native-advisory`), because
+  that copy only moves when `--install` / `--upgrade` runs and can sit years
+  behind the one on `PATH` (`ai-memory-native-behind-path` when it does, even
+  inside the tested range). Launch pre-flight repeats the advisory as a
+  warning when the cached probe already has a version (`jail-version-advisory`,
+  `memory-version-advisory`) and does not refuse. `--doctor` is what execs the
+  binaries; pre-flight only reads the cached probe. Last live-tested upstreams:
+  ai-jail 2.14.0 and ai-memory 3.3.1.
 - Every install from a GitHub release asset is SHA-256 checksum-verified
   (`.sha256`, `.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release
   body); `allow_unverified: true` exists, but it is an explicit operator

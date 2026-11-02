@@ -636,6 +636,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       memory-force-unlock-requires-ai-memory-2-6
+      memory-version-advisory
       """
 
   Scenario: Rejects --fresh together with --continue
@@ -928,6 +929,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       allow-host-requires-ai-jail-2
+      jail-version-advisory
       """
 
   Scenario: Refuses allow_hosts combined with unrestricted network
@@ -946,6 +948,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       allow-host-conflicts-with-network
+      jail-version-advisory
       """
 
   Scenario: Refuses allow_hosts when memory would call plain HTTP
@@ -964,6 +967,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       allow-host-memory-needs-https
+      jail-version-advisory
       """
 
   Scenario: Refuses allow_hosts that omit the https memory server
@@ -982,6 +986,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       allow-host-omits-memory-server
+      jail-version-advisory
       """
 
   Scenario: Emits allow-host for an https memory server that is listed
@@ -1138,6 +1143,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       agent-state-requires-ai-jail-2-6
+      jail-version-advisory
       """
 
   # The ai-jail 2.5.0 toggle batch. nil leaves ai-jail's own default in
@@ -1183,6 +1189,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       jail-toggles-require-ai-jail-2-5
+      jail-version-advisory
       """
 
   # forward_ports (ai-jail 2.9.0) relays a host loopback port into the
@@ -1227,6 +1234,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       forward-ports-conflict-with-network
+      jail-version-advisory
       """
 
   Scenario: Refuses forward ports below ai-jail 2.9
@@ -1244,6 +1252,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       forward-ports-require-ai-jail-2-9
+      jail-version-advisory
       """
 
   # allow_private_hosts (ai-jail 2.11.0) is --allow-host for a self-hosted
@@ -1313,6 +1322,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       allow-private-host-requires-ai-jail-2-11
+      jail-version-advisory
       """
 
   Scenario: Refuses private allow hosts combined with unrestricted network
@@ -1331,6 +1341,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       allow-host-conflicts-with-network
+      jail-version-advisory
       """
 
   # ai-memory's own run options: --profile and --env-file precede the
@@ -1405,6 +1416,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       memory-profile-requires-ai-memory-2-6
+      memory-version-advisory
       """
 
   Scenario: Refuses a pre-harness run option through an old jail
@@ -1422,6 +1434,8 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       memory-run-flag-requires-ai-jail-2-9
+      jail-version-advisory
+      memory-version-advisory
       """
 
   Scenario: Refuses memory_jail below ai-memory 2.5.2
@@ -1438,6 +1452,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       memory-jail-requires-ai-memory-2-5-2
+      memory-version-advisory
       """
 
   Scenario: Warns when memory_jail meets the launcher jail
@@ -1455,6 +1470,8 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       memory-jail-with-launcher-jail
+      jail-version-advisory
+      memory-version-advisory
       """
 
   # ai-jail 2.6.2 made --lockdown always force --unshare-net: the same
@@ -1476,6 +1493,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       lockdown-forces-offline
+      jail-version-advisory
       """
 
   Scenario: Lockdown keeps the network below the unshare flip
@@ -1563,6 +1581,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       jail-toggles-require-ai-jail-2-12
+      jail-version-advisory
       """
 
   Scenario: Emits secrets alongside filtered egress
@@ -1605,6 +1624,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       secrets-require-filtered-egress
+      jail-version-advisory
       """
 
   Scenario: Refuses a 2.9-verified toggle below its floor
@@ -1622,6 +1642,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       jail-toggles-require-ai-jail-2-9
+      jail-version-advisory
       """
 
   Scenario: Emits env files on ai-jail 2.0+
@@ -1747,6 +1768,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       permission-without-jail
+      memory-version-advisory
       """
 
   Scenario: Refuses copilot below ai-memory 3.0
@@ -1762,6 +1784,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       memory-harness-version
+      memory-version-advisory
       """
 
   # The unrelated permission issue is deliberate: an empty expectation would
@@ -1797,17 +1820,18 @@ Feature: Launcher command contract
       jail-version-untested
       """
 
-  # 2.9.0 is the newest ai-jail the argv was re-validated against; the
-  # network conflict is the sentinel that preflight actually ran (an empty
-  # expectation would also pass if it never did).
-  Scenario: Accepts ai-jail 2.9.0 inside the validated range
+  # 2.14.0 is the last ai-jail the composed argv was live-tested against, and
+  # it is at or above the recommended security release, so preflight must not
+  # add a version warning. The network conflict is the sentinel that preflight
+  # actually ran (an empty expectation would also pass if it never did).
+  Scenario: Accepts ai-jail 2.14.0 inside the validated range
     Given a validation configuration
       """
       agent: claude
       goos: linux
       jail: true
       memory: false
-      jail_version: "2.9.0"
+      jail_version: "2.14.0"
       jail_flags:
         network: true
         allow_hosts: [api.anthropic.com]
@@ -1817,6 +1841,62 @@ Feature: Launcher command contract
       """
       allow-host-conflicts-with-network
       """
+
+  # 2.12.0 parses the argv (it is above the 1.20.1 floor) and still misses the
+  # published ai-jail fixes, including the symlinked-binary file-map regression
+  # fixed in 2.13.0. The launch proceeds; the warning names the advisories.
+  Scenario: Warns when ai-jail meets the floor but misses published advisories
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.12.0"
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      jail-version-advisory
+      """
+
+  # 3.2.9 is inside the tested range and below the 3.2.10 advisory release.
+  # The warning is not a refusal: the hard memory floor stays a --doctor failure.
+  Scenario: Warns when ai-memory meets the floor but misses published advisories
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "3.2.9"
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      memory-version-advisory
+      """
+
+  # Exactly the recommended release: the comparison is strict, so 3.2.10 does
+  # not warn about the advisory it contains. The permission issue is the
+  # sentinel that preflight ran.
+  Scenario: Stays silent on ai-memory at the recommended security release
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: false
+      memory: true
+      memory_version: "3.2.10"
+      permissions:
+        gh: true
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      permission-without-jail
+      """
+
 
   # 1.19.1 was inside the supported range until the floor moved to 1.20.1. On
   # macOS every release below that could exec a binary the sandbox never
@@ -1892,6 +1972,7 @@ Feature: Launcher command contract
     Then issue codes equal
       """
       permission-without-jail
+      memory-version-advisory
       """
 
   Scenario: Remaps a wrapper command to the ai-memory harness name
