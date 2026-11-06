@@ -156,7 +156,7 @@ func checkCLIExpectation(t *testing.T, run cliRun, text string) int {
 		}
 		return 1
 	}
-	if match := cliStdoutEmptyExpectation.FindStringSubmatch(text); match != nil {
+	if cliStdoutEmptyExpectation.MatchString(text) {
 		if run.stdout != "" {
 			t.Fatalf("standard output = %q; want empty", run.stdout)
 		}
