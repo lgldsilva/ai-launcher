@@ -373,6 +373,73 @@ func launchSupportsHarness(cfg LaunchConfig) bool {
 	return cfg.JailContract.SupportsHarness(cfg.JailVersion)
 }
 
+// jailAcceptsHarness reports whether ai-jail 3.0.1 will accept --harness NAME.
+// The wrapper contract rejects an unknown name before the sandbox starts, so
+// emitting it for a catalog agent ai-jail does not know (kilo, goose, oc, …)
+// turns a launch that 2.x ran into an immediate failure. Those agents keep
+// the legacy argv inference. The set mirrors command::normalize_harness_name
+// and KNOWN_API_AGENTS in ai-jail 3.0.1, including the kimi* prefix.
+func jailAcceptsHarness(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "claude", "claude-code",
+		"codex",
+		"opencode", "open-code",
+		"pi",
+		"omp", "oh-my-pi",
+		"agy", "antigravity", "antigravity-cli",
+		"gemini", "crush", "grok", "jcode", "devin", "aider", "soulforge", "kiro-cli":
+		return true
+	default:
+		return strings.HasPrefix(strings.TrimSpace(name), "kimi")
+	}
+}
+
 func launchSupportsRequestFile(cfg LaunchConfig) bool {
 	return cfg.JailContract.SupportsRequestFile(cfg.JailVersion)
+}
+
+// jail3KnownAPIHosts are the hosts ai-jail 3 adds by itself for a known API
+// agent during non-interactive onboarding. Passing --network in that case is
+// rejected: filtered egress and unrestricted network cannot be combined.
+// The map mirrors command::api_host in ai-jail 3.0.1, plus chatgpt.com for
+// codex, which default_egress_hosts adds beside api.openai.com.
+func jail3KnownAPIHosts(name string) []string {
+	switch strings.TrimSpace(name) {
+	case "claude", "claude-code":
+		return []string{"api.anthropic.com"}
+	case "codex":
+		return []string{"api.openai.com", "chatgpt.com"}
+	case "gemini":
+		return []string{"generativelanguage.googleapis.com"}
+	case "grok":
+		return []string{"api.x.ai"}
+	case "devin":
+		return []string{"server.codeium.com"}
+	default:
+		return nil
+	}
+}
+
+// jail3FiltersUnrestrictedNetwork reports whether this launch must express
+// "network on" as filtered egress. ai-jail 3's non-interactive onboarding
+// inserts the harness API host into allow_hosts, then refuses --network.
+func jail3FiltersUnrestrictedNetwork(cfg LaunchConfig) bool {
+	if !jailAtLeast3(cfg) {
+		return false
+	}
+	return len(jail3KnownAPIHosts(resolvedHarnessName(cfg))) > 0
+}
+
+func jailAtLeast3(cfg LaunchConfig) bool {
+	if jailSupportsFlag(cfg.JailVersion, config.MinXDGStoreAIJailVersion) {
+		return true
+	}
+	return cfg.JailContract.Probed && cfg.JailContract.SchemaVersion >= 1
+}
+
+func resolvedHarnessName(cfg LaunchConfig) string {
+	if cfg.UseMemory {
+		return memoryRunHarness(cfg.Agent)
+	}
+	return filepath.Base(strings.TrimSpace(cfg.Agent.Command))
 }

@@ -57,6 +57,7 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if inputs.handled {
 		return nil
 	}
+	applyResolvedAgentPath(&inputs.status)
 	composeCommand, composeArgs := parseComposeCommand(inputs.positionalArgs, &opts)
 	if isGenerate, err := validateGenerateCommand(generateCommand, inputs.positionalArgs); isGenerate || err != nil {
 		if err != nil {
@@ -195,6 +196,16 @@ func selectionWithContainerTools(selection container.Selection, global config.Gl
 		return selection, err
 	}
 	return selection, nil
+}
+
+// applyResolvedAgentPath copies the PATH hit onto the catalog agent. The
+// docker image planner reads Agent.Path, which stays empty unless the
+// operator configured one, so a host-binary agent found on PATH was dropped
+// from the image ("docker-no-agent") even though the jail path could exec it.
+func applyResolvedAgentPath(status *catalog.AgentStatus) {
+	if strings.TrimSpace(status.Agent.Path) == "" {
+		status.Agent.Path = status.Path
+	}
 }
 
 func parseComposeCommand(positional []string, opts *cliOptions) (bool, []string) {
