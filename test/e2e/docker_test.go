@@ -16,7 +16,11 @@ import (
 func TestDockerGenerationAndRun(t *testing.T) {
 	root := t.TempDir()
 	keepWritable(t, root)
-	tools := filepath.Join(cacheDir(), "bins")
+	cache, err := cacheDir()
+	if err != nil {
+		t.Fatalf("e2e cache: %v", err)
+	}
+	tools := filepath.Join(cache, "bins")
 	if err := installPinnedTools(tools); err != nil {
 		t.Fatalf("install pinned CLIs: %v", err)
 	}
@@ -28,13 +32,20 @@ func TestDockerGenerationAndRun(t *testing.T) {
 	writeStubs(t, stubs, []config.Agent{{Command: "goose"}, {Command: "claude"}, {Command: "gemini"}, {Command: "kilo"}})
 	global := writeGlobal(t, root, writeRequestFile(t, root))
 	local := filepath.Join(root, "missing-local.yaml")
-	env := baseEnv(home, project)
+	fx := launchFixture{
+		launcher: launcher,
+		env:      baseEnv(home, project),
+		project:  project,
+		global:   global,
+		local:    local,
+		stubs:    stubs,
+		memory:   filepath.Join(tools, "ai-memory-3.4.2"),
+	}
 	jail := filepath.Join(tools, "ai-jail-3.0.1")
-	memory := filepath.Join(tools, "ai-memory-3.4.2")
 
 	for _, agent := range []string{"claude", "gemini", "kilo", "goose"} {
 		spec := dockerDrySpec(agent)
-		row := runCell(t, launcher, spec, env, project, global, local, stubs, jail, memory)
+		row := runCell(t, fx, spec, jail)
 		if !strings.HasSuffix(row, "\tpass") {
 			t.Errorf("dry-run %s: %s", agent, row)
 		}
@@ -48,7 +59,7 @@ func TestDockerGenerationAndRun(t *testing.T) {
 		t.Log("docker build not-testable: daemon is not reachable")
 		return
 	}
-	runHostBinaryContainer(t, launcher, env, project, global, local, stubs, jail, memory)
+	runHostBinaryContainer(t, fx, jail)
 }
 
 func generateKinds(t *testing.T, launcher, global, project, home, stubs string) {
@@ -90,13 +101,13 @@ func dockerReady() bool {
 	return cmd.Run() == nil
 }
 
-func runHostBinaryContainer(t *testing.T, launcher string, env []string, project, global, local, stubs, jail, memory string) {
+func runHostBinaryContainer(t *testing.T, fx launchFixture, jail string) {
 	t.Helper()
 	spec := dockerDrySpec("goose")
 	spec.dryRun = false
 	spec.timeout = 20 * time.Minute
 	spec.wantText = "stub-ok goose"
-	row := runCell(t, launcher, spec, env, project, global, local, stubs, jail, memory)
+	row := runCell(t, fx, spec, jail)
 	if !strings.HasSuffix(row, "\tpass") {
 		t.Fatalf("docker run goose: %s", row)
 	}

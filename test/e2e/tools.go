@@ -43,11 +43,28 @@ var pinnedTools = []pinnedTool{
 	},
 }
 
-func cacheDir() string {
+// cacheDir is the private directory that holds checksummed upstream tarballs
+// between runs. It is the user cache (or E2E_CACHE), created mode 0700.
+// A predictable name under the shared temp directory is not used.
+func cacheDir() (string, error) {
 	if dir := os.Getenv("E2E_CACHE"); dir != "" {
-		return dir
+		return mkdirPrivate(dir)
 	}
-	return filepath.Join(os.TempDir(), "ai-launcher-e2e-cache")
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("user cache dir: %w", err)
+	}
+	return mkdirPrivate(filepath.Join(base, "ai-launcher", "e2e"))
+}
+
+func mkdirPrivate(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 func installPinnedTools(dir string) error {

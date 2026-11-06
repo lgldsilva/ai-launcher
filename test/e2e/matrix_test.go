@@ -18,7 +18,11 @@ import (
 func TestSandboxMatrix(t *testing.T) {
 	root := t.TempDir()
 	keepWritable(t, root)
-	tools := filepath.Join(cacheDir(), "bins")
+	cache, err := cacheDir()
+	if err != nil {
+		t.Fatalf("e2e cache: %v", err)
+	}
+	tools := filepath.Join(cache, "bins")
 	if err := installPinnedTools(tools); err != nil {
 		t.Fatalf("install pinned CLIs: %v", err)
 	}
@@ -31,51 +35,57 @@ func TestSandboxMatrix(t *testing.T) {
 	writeStubs(t, stubs, agents)
 	request := writeRequestFile(t, root)
 	global := writeGlobal(t, root, request)
-	local := filepath.Join(root, "missing-local.yaml")
-	env := baseEnv(home, project)
+	fx := launchFixture{
+		launcher: launcher,
+		env:      baseEnv(home, project),
+		project:  project,
+		global:   global,
+		local:    filepath.Join(root, "missing-local.yaml"),
+		stubs:    stubs,
+		memory:   filepath.Join(tools, "ai-memory-3.4.2"),
+	}
 	jail2 := filepath.Join(tools, "ai-jail-2.15")
 	jail3 := filepath.Join(tools, "ai-jail-3.0.1")
-	memory := filepath.Join(tools, "ai-memory-3.4.2")
 
 	var rows []string
 	for _, agent := range agents {
-		rows = append(rows, runAgent(t, launcher, agent, env, project, global, local, stubs, jail2, jail3, memory)...)
+		rows = append(rows, runAgent(t, fx, agent, jail2, jail3)...)
 	}
 	writeReport(t, rows)
 }
 
-func runAgent(t *testing.T, launcher string, agent config.Agent, env []string, project, global, local, stubs, jail2, jail3, memory string) []string {
+func runAgent(t *testing.T, fx launchFixture, agent config.Agent, jail2, jail3 string) []string {
 	t.Helper()
 	name := agent.Command
 	var rows []string
-	rows = append(rows, runCell(t, launcher, directSpec(name, jail2, false), env, project, global, local, stubs, jail2, memory))
-	rows = append(rows, runCell(t, launcher, directSpec(name, jail2, true), env, project, global, local, stubs, jail2, memory))
-	rows = append(rows, runCell(t, launcher, stateOffSpec(name, jail2), env, project, global, local, stubs, jail2, memory))
-	rows = append(rows, runCell(t, launcher, directSpec(name, jail3, false), env, project, global, local, stubs, jail3, memory))
-	rows = append(rows, runCell(t, launcher, directSpec(name, jail3, true), env, project, global, local, stubs, jail3, memory))
-	rows = append(rows, runCell(t, launcher, stateOffSpec(name, jail3), env, project, global, local, stubs, jail3, memory))
-	rows = append(rows, runCell(t, launcher, requestSpec(name, false), env, project, global, local, stubs, jail2, memory))
-	rows = append(rows, runCell(t, launcher, requestSpec(name, true), env, project, global, local, stubs, jail3, memory))
+	rows = append(rows, runCell(t, fx, directSpec(name, jail2, false), jail2))
+	rows = append(rows, runCell(t, fx, directSpec(name, jail2, true), jail2))
+	rows = append(rows, runCell(t, fx, stateOffSpec(name, jail2), jail2))
+	rows = append(rows, runCell(t, fx, directSpec(name, jail3, false), jail3))
+	rows = append(rows, runCell(t, fx, directSpec(name, jail3, true), jail3))
+	rows = append(rows, runCell(t, fx, stateOffSpec(name, jail3), jail3))
+	rows = append(rows, runCell(t, fx, requestSpec(name, false), jail2))
+	rows = append(rows, runCell(t, fx, requestSpec(name, true), jail3))
 	if agent.SupportsMemory {
-		rows = append(rows, runCell(t, launcher, memorySpec(agent, jail2), env, project, global, local, stubs, jail2, memory))
-		rows = append(rows, runCell(t, launcher, memorySpec(agent, jail3), env, project, global, local, stubs, jail3, memory))
+		rows = append(rows, runCell(t, fx, memorySpec(agent, jail2), jail2))
+		rows = append(rows, runCell(t, fx, memorySpec(agent, jail3), jail3))
 	} else {
 		rows = append(rows, name+"\tjail-memory\tnot-testable\tcatalog SupportsMemory is false")
 	}
-	rows = append(rows, runCell(t, launcher, dockerDrySpec(name), env, project, global, local, stubs, jail3, memory))
+	rows = append(rows, runCell(t, fx, dockerDrySpec(name), jail3))
 	return rows
 }
 
-func runCell(t *testing.T, launcher string, spec launchSpec, env []string, project, global, local, stubs, jailBin, memory string) string {
+func runCell(t *testing.T, fx launchFixture, spec launchSpec, jailBin string) string {
 	t.Helper()
 	label := spec.agent + "\t" + cellName(spec)
-	pathEnv, err := pathWith(filepath.Dir(global), labelSlug(label), jailBin, memory, stubs)
+	pathEnv, err := pathWith(filepath.Dir(fx.global), labelSlug(label), jailBin, fx.memory, fx.stubs)
 	if err != nil {
 		t.Errorf("%s setup: %v", label, err)
 		return label + "\tfail\t" + err.Error()
 	}
-	full := append(append([]string{}, env...), pathEnv...)
-	got := runLaunch(context.Background(), launcher, spec, full, project, global, local)
+	full := append(append([]string{}, fx.env...), pathEnv...)
+	got := runLaunch(context.Background(), fx.launcher, spec, full, fx.project, fx.global, fx.local)
 	if err := checkLaunch(spec, got); err != nil {
 		t.Errorf("%s: %v", label, err)
 		return label + "\tfail\t" + oneLine(err.Error())

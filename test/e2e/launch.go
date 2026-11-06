@@ -35,6 +35,22 @@ type launchResult struct {
 	stderr string
 }
 
+// launchFixture is the workspace shared by every matrix cell. Grouping it
+// keeps the cell helpers under the parameter cap.
+type launchFixture struct {
+	launcher string
+	env      []string
+	project  string
+	global   string
+	local    string
+	stubs    string
+	memory   string
+}
+
+// systemPath is the only host PATH an e2e child may see outside the private
+// stub and tool directories. The entries are fixed and root-owned.
+const systemPath = "/usr/sbin:/usr/bin:/sbin:/bin"
+
 func (s launchSpec) args(global, local string) []string {
 	args := []string{"--config", global, "--local-config", local, "--agent", s.agent}
 	if s.profile != "" {
@@ -148,8 +164,8 @@ func pathWith(dir, jailName, jailBin, memoryBin, stubs string) ([]string, error)
 	if err := link(memoryBin, filepath.Join(binDir, "ai-memory")); err != nil {
 		return nil, err
 	}
-	base := os.Getenv("PATH")
-	return []string{"PATH=" + stubs + string(os.PathListSeparator) + binDir + string(os.PathListSeparator) + base}, nil
+	sep := string(os.PathListSeparator)
+	return []string{"PATH=" + stubs + sep + binDir + sep + systemPath}, nil
 }
 
 func link(src, dest string) error {
@@ -160,7 +176,16 @@ func link(src, dest string) error {
 func keepWritable(t *testing.T, root string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_ = exec.Command("chmod", "-R", "u+w", root).Run()
+		// ai-jail may drop the write bit. Restore it with a fixed absolute
+		// binary so cleanup does not search PATH.
+		cmd := exec.Command("/usr/bin/chmod", "-R", "u+w", root)
+		cmd.Env = []string{"PATH=" + systemPath}
+		if cmd.Run() == nil {
+			return
+		}
+		fallback := exec.Command("/bin/chmod", "-R", "u+w", root)
+		fallback.Env = []string{"PATH=" + systemPath}
+		_ = fallback.Run()
 	})
 }
 
@@ -171,7 +196,9 @@ func baseEnv(home, project string) []string {
 		"AI_MEMORY_RUN_AUTOWIRE=false",
 		"TERM=dumb",
 	}
-	for _, key := range []string{"USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "PATH"} {
+	// PATH is not copied. pathWith supplies the stub dir, the tool dir, and
+	// systemPath so a writable or relative entry cannot reach the child.
+	for _, key := range []string{"USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}
