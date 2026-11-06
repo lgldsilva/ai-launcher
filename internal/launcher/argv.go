@@ -290,6 +290,13 @@ func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
 	if cfg.UseJail && cfg.JailEnv == nil {
 		cfg.JailEnv = JailEnvPassthrough(cfg, Environment(cfg))
 	}
+	return resolveMemoryExecutable(cfg)
+}
+
+// resolveMemoryExecutable records the host path of ai-memory when both layers
+// are on and the caller has not already resolved it. Extracted from
+// ResolveHostBinaries to keep that function under the cognitive complexity cap.
+func resolveMemoryExecutable(cfg LaunchConfig) LaunchConfig {
 	if !cfg.UseJail || !cfg.UseMemory || strings.TrimSpace(cfg.MemoryExecutable) != "" {
 		return cfg
 	}

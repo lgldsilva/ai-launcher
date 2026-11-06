@@ -206,36 +206,7 @@ func reportInfoFlags(opts cliOptions, out io.Writer) (bool, error) {
 // processes, and the TUI event loop never blocks on them.
 func reportDoctor(out io.Writer) error {
 	_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
-	var blocked []string
-	stale := false
-	var untested []launcher.UpstreamStatus
-	var behind []launcher.UpstreamStatus
-	var advisory []launcher.UpstreamStatus
-	for _, status := range launcher.UpstreamReport(nil, "") {
-		switch {
-		case status.Missing:
-			blocked = append(blocked, status.Command)
-			_, _ = fmt.Fprintf(out, "%-10s not found in PATH (required >= %s)\n", status.Command, status.Minimum)
-		case status.Version == "":
-			blocked = append(blocked, status.Command)
-			_, _ = fmt.Fprintf(out, "%-10s %s (version unreadable; required >= %s)\n", status.Command, status.Path, status.Minimum)
-		case status.TooOld:
-			stale = true
-			blocked = append(blocked, status.Command)
-			_, _ = fmt.Fprintf(out, "%-10s %s is older than the required %s; upgrade with --upgrade\n", status.Command, status.Version, status.Minimum)
-		case status.TooNew:
-			untested = append(untested, status)
-			_, _ = fmt.Fprintf(out, "%-10s %s is newer than the validated range (>= %s, < %s)\n", status.Command, status.Version, status.Minimum, status.Untested)
-		default:
-			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
-		}
-		if status.Behind {
-			behind = append(behind, status)
-		}
-		if status.Advisory {
-			advisory = append(advisory, status)
-		}
-	}
+	blocked, stale, untested, behind, advisory := reportDoctorUpstreams(out)
 	if stale {
 		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits, or accept the same one and do something else with it. See CHANGELOG.md for what each floor covers.")
 	}
@@ -262,6 +233,39 @@ func reportDoctor(out io.Writer) error {
 		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))
 	}
 	return nil
+}
+
+// reportDoctorUpstreams prints one status line per upstream CLI and returns
+// the rows that need a follow-up notice. blocked names the commands that make
+// --doctor fail; stale is an upstream below the required floor. Extracted
+// from reportDoctor to keep that function under the cognitive complexity cap.
+func reportDoctorUpstreams(out io.Writer) (blocked []string, stale bool, untested, behind, advisory []launcher.UpstreamStatus) {
+	for _, status := range launcher.UpstreamReport(nil, "") {
+		switch {
+		case status.Missing:
+			blocked = append(blocked, status.Command)
+			_, _ = fmt.Fprintf(out, "%-10s not found in PATH (required >= %s)\n", status.Command, status.Minimum)
+		case status.Version == "":
+			blocked = append(blocked, status.Command)
+			_, _ = fmt.Fprintf(out, "%-10s %s (version unreadable; required >= %s)\n", status.Command, status.Path, status.Minimum)
+		case status.TooOld:
+			stale = true
+			blocked = append(blocked, status.Command)
+			_, _ = fmt.Fprintf(out, "%-10s %s is older than the required %s; upgrade with --upgrade\n", status.Command, status.Version, status.Minimum)
+		case status.TooNew:
+			untested = append(untested, status)
+			_, _ = fmt.Fprintf(out, "%-10s %s is newer than the validated range (>= %s, < %s)\n", status.Command, status.Version, status.Minimum, status.Untested)
+		default:
+			_, _ = fmt.Fprintf(out, "%-10s %s (>= %s)\n", status.Command, status.Version, status.Minimum)
+		}
+		if status.Behind {
+			behind = append(behind, status)
+		}
+		if status.Advisory {
+			advisory = append(advisory, status)
+		}
+	}
+	return blocked, stale, untested, behind, advisory
 }
 
 // untestedAdvice explains what an upstream above the validated range means for

@@ -360,7 +360,7 @@ func TestRequestFileOwnershipRules(t *testing.T) {
 	}
 }
 
-func TestJailStoreDirAndIssues(t *testing.T) {
+func TestJailStoreDirUsesXDGConfigHome(t *testing.T) {
 	home := t.TempDir()
 	store, ok := JailStoreDir(home, "")
 	if !ok || store != filepath.Join(home, ".config", "ai-jail") {
@@ -380,6 +380,10 @@ func TestJailStoreDirAndIssues(t *testing.T) {
 	if component, ok := symlinkComponent(""); ok || component != "" {
 		t.Fatalf("empty path = %q, %v", component, ok)
 	}
+}
+
+func TestJailStoreIssuesFlagHomeSymlinksAndOldVersions(t *testing.T) {
+	home := t.TempDir()
 	cfg := LaunchConfig{UseJail: true, Agent: config.Agent{Command: "claude"}, JailVersion: "3.0.0"}
 	issues := jailStoreIssues(cfg, fixedDir(home), fixedDir(home), "")
 	if len(issues) != 1 || issues[0].Code != "jail-xdg-store-inside-project" {
