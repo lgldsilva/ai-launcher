@@ -7,7 +7,7 @@
 # git remote, so no gitea_urls/release block is needed here.
 #
 # Validate locally without publishing:
-#   go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --snapshot --clean --skip=publish
+#   GOTOOLCHAIN=auto go run github.com/goreleaser/goreleaser/v2@v2.20.0 release --snapshot --clean --skip=publish
 version: 2
 
 project_name: ai-launcher

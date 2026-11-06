@@ -1812,7 +1812,7 @@ Feature: Launcher command contract
       goos: linux
       jail: true
       memory: false
-      jail_version: "3.0.0"
+      jail_version: "3.1.0"
       """
     When launcher preflight is checked
     Then issue codes equal
@@ -1820,8 +1820,92 @@ Feature: Launcher command contract
       jail-version-untested
       """
 
-  # 2.14.0 is the last ai-jail the composed argv was live-tested against, and
-  # it is at or above the recommended security release, so preflight must not
+  # 3.0.1 is inside the validated range and above the recommended release, so
+  # preflight must not add a version warning. The network conflict is the
+  # sentinel that preflight actually ran.
+  Scenario: Accepts ai-jail 3.0.1 inside the validated range
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "3.0.1"
+      jail_flags:
+        network: true
+        allow_hosts: [api.anthropic.com]
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      allow-host-conflicts-with-network
+      """
+
+  Scenario: Declares the harness on ai-jail 3.0.1
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: true
+      jail_version: "3.0.1"
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --harness
+      claude
+      --no-docker
+      --no-network
+      --agent-state
+      ai-memory
+      run
+      claude
+      """
+
+  Scenario: Forwards a request file when ai-jail 3.0.1 can accept it
+    Given a launch configuration
+      """
+      agent: claude
+      jail: true
+      memory: false
+      jail_version: "3.0.1"
+      jail_flags:
+        request_file: /secure/requests.json
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --harness
+      claude
+      --request-file
+      /secure/requests.json
+      --no-docker
+      --no-network
+      --agent-state
+      claude
+      """
+
+  Scenario: Refuses a request file on ai-jail 2.14
+    Given a validation configuration
+      """
+      agent: claude
+      goos: linux
+      jail: true
+      memory: false
+      jail_version: "2.14.0"
+      jail_flags:
+        request_file: /secure/requests.json
+      """
+    When launcher preflight is checked
+    Then issue codes equal
+      """
+      request-file-requires-ai-jail-3-0-1
+      """
+
+  # 2.14.0 is inside the validated range and
+  # at or above the recommended security release, so preflight must not
   # add a version warning. The network conflict is the sentinel that preflight
   # actually ran (an empty expectation would also pass if it never did).
   Scenario: Accepts ai-jail 2.14.0 inside the validated range

@@ -206,11 +206,40 @@ func reportInfoFlags(opts cliOptions, out io.Writer) (bool, error) {
 // processes, and the TUI event loop never blocks on them.
 func reportDoctor(out io.Writer) error {
 	_, _ = fmt.Fprintf(out, "ai-launcher %s (%s, %s)\n", version, commit, date)
-	var blocked []string
-	stale := false
-	var untested []launcher.UpstreamStatus
-	var behind []launcher.UpstreamStatus
-	var advisory []launcher.UpstreamStatus
+	blocked, stale, untested, behind, advisory := reportDoctorUpstreams(out)
+	if stale {
+		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits, or accept the same one and do something else with it. See CHANGELOG.md for what each floor covers.")
+	}
+	for _, status := range advisory {
+		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.AdvisoryCode, doctorAdvisoryNotice(status))
+	}
+	for _, status := range untested {
+		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.UntestedCode, untestedAdvice(status))
+	}
+	for _, status := range behind {
+		_, _ = fmt.Fprintf(out, "\n%s: the managed runner %s is older than ai-memory %s on PATH. Launches export it as AI_MEMORY_NATIVE_BIN; run `ai-launcher --upgrade` to refresh it.\n", status.BehindCode, status.Version, status.BehindOf)
+	}
+	contract := launcher.ProbeJailContract()
+	if note := contract.DoctorNote(); note != "" {
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, note)
+	}
+	if status, ok := launcher.ProbeJailStatus(contract); ok {
+		for _, line := range launcher.FormatJailStatus(status) {
+			_, _ = fmt.Fprintln(out, line)
+		}
+	}
+	if len(blocked) > 0 {
+		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))
+	}
+	return nil
+}
+
+// reportDoctorUpstreams prints one status line per upstream CLI and returns
+// the rows that need a follow-up notice. blocked names the commands that make
+// --doctor fail; stale is an upstream below the required floor. Extracted
+// from reportDoctor to keep that function under the cognitive complexity cap.
+func reportDoctorUpstreams(out io.Writer) (blocked []string, stale bool, untested, behind, advisory []launcher.UpstreamStatus) {
 	for _, status := range launcher.UpstreamReport(nil, "") {
 		switch {
 		case status.Missing:
@@ -236,22 +265,7 @@ func reportDoctor(out io.Writer) error {
 			advisory = append(advisory, status)
 		}
 	}
-	if stale {
-		_, _ = fmt.Fprintln(out, "\nAn older upstream may accept a different flag surface than the one ai-launcher emits, or accept the same one and do something else with it. See CHANGELOG.md for what each floor covers.")
-	}
-	for _, status := range advisory {
-		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.AdvisoryCode, doctorAdvisoryNotice(status))
-	}
-	for _, status := range untested {
-		_, _ = fmt.Fprintf(out, "\n%s: %s\n", status.UntestedCode, untestedAdvice(status))
-	}
-	for _, status := range behind {
-		_, _ = fmt.Fprintf(out, "\n%s: the managed runner %s is older than ai-memory %s on PATH. Launches export it as AI_MEMORY_NATIVE_BIN; run `ai-launcher --upgrade` to refresh it.\n", status.BehindCode, status.Version, status.BehindOf)
-	}
-	if len(blocked) > 0 {
-		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))
-	}
-	return nil
+	return blocked, stale, untested, behind, advisory
 }
 
 // untestedAdvice explains what an upstream above the validated range means for
@@ -382,6 +396,9 @@ func isWorkstreamConflict(errText string) bool {
 
 // launchFailureHint maps common child stderr/exit text to a short recovery tip.
 func launchFailureHint(errText string) string {
+	if hint := launcher.JailExitHint(errText); hint != "" {
+		return hint
+	}
 	switch {
 	case strings.Contains(errText, "409") && strings.Contains(errText, "workstream is already active"):
 		return "hint: another ai-memory run still holds this workstream (or left a stale lease).\n" +

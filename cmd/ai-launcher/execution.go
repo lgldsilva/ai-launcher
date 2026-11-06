@@ -57,7 +57,11 @@ func (r *launchRequest) execute(argv []string) error {
 	defer stop()
 	execErr := (launcher.PTYExecutor{}).RunWithEnv(ctx, argv, launcher.Environment(r.launchConfig), r.in, r.out, r.errOut)
 	if execErr != nil {
-		return fmt.Errorf("failed to start %s: %w\ncommand: %s\n%s", label, execErr, cmdLine, launchFailureHint(execErr.Error()))
+		hint := launchFailureHint(execErr.Error())
+		if _, advice, ok := launcher.ClassifyJailExitError(execErr, r.launchConfig.JailContract); ok {
+			hint = advice
+		}
+		return fmt.Errorf("failed to start %s: %w\ncommand: %s\n%s", label, execErr, cmdLine, hint)
 	}
 	return nil
 }

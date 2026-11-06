@@ -50,7 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOTOOLCHAIN: auto
-        run: go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --clean
+        run: go run github.com/goreleaser/goreleaser/v2@v2.20.0 release --clean
 
       # SBOM is generated after GoReleaser so it does not end up inside
       # checksums.txt; it is attached to the release as a separate asset.

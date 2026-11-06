@@ -595,16 +595,22 @@ both refusals so they surface before the PTY starts:
 | `jail-home-as-project` | Launched from `$HOME` with a symlinked `~/.ai-jail`: the file is then both the global and the project config |
 | `jail-project-config-symlink` | The working directory's `.ai-jail` is a symlink |
 | `jail-global-config-inside-project` | `~/.ai-jail` is a symlink whose target lies inside the working directory |
+| `jail-xdg-store-inside-project` | ai-jail >= 3.0.0 and `$XDG_CONFIG_HOME/ai-jail` (default `~/.config/ai-jail`) lies inside the working directory |
+| `jail-xdg-store-symlink` | ai-jail >= 3.0.0 and a component of that store path is a symlink |
+| `jail-xdg-store-invalid` | ai-jail >= 3.0.0 and `XDG_CONFIG_HOME` is set but not absolute |
 
-A regular `~/.ai-jail` is fine from `$HOME`. The checks apply only when ai-jail
-runs (jail on, container backend off).
+A regular `~/.ai-jail` is fine from `$HOME`. From ai-jail 3.0.0 the trusted
+store is the XDG path, which is not fine when the launch directory contains
+it — launching from `$HOME` is that case, because the store lives under
+`$HOME/.config`. The checks apply only when ai-jail runs (jail on, container
+backend off).
 
 ## Upstream version compatibility
 
 The launcher composes a specific upstream surface, bounded at both ends by four
 constants in `internal/config`: `MinAIJailVersion` (`1.20.1`) and
 `MinAIMemoryVersion` (`1.25.0`) are the floor, `UntestedAIJailVersion`
-(`3.0.0`) and `UntestedAIMemoryVersion` (`3.4.0`) the first version the argv
+(`3.1.0`) and `UntestedAIMemoryVersion` (`3.5.0`) the first version the argv
 has *not* been validated against. Below the floor is `…-version-too-old`; at or
 above the ceiling is `…-version-untested`, which warns and never blocks.
 `AdvisoryAIJailVersion` (`2.13.0`) and `AdvisoryAIMemoryVersion` (`3.2.10`)
@@ -632,8 +638,10 @@ longer an exact egress description from there on (documented with the
 `jail_flags` table in the README).
 
 `ai-launcher --doctor` probes `ai-jail --version` / `ai-memory --version`
-(5-second timeout each), plus the launcher-managed ai-memory native binary
-under `~/.local/share/ai-launcher/bin` as a third row
+(5-second timeout each). When `ai-jail capabilities --json` parses, doctor
+also names the wrapper contract and any `status --json` blockers. The
+launcher-managed ai-memory native binary is a further row
+under `~/.local/share/ai-launcher/bin`
 (`ai-memory-native-too-old`): it is a separate install that only moves when
 `--install` / `--upgrade` runs, so the copy on `PATH` cannot vouch for it.
 When that runner is older than the `ai-memory` on `PATH`, doctor also reports
@@ -647,10 +655,13 @@ can perform.
 
 Pre-flight sees two of these: the ai-jail version, via `jailVersionIssues`,
 and the ai-memory version, via `memoryAdvisoryIssues`. It still execs nothing. `ResolveHostBinaries` — which is already outside the
-hermetic path, because it resolves host paths — calls `DetectJailVersion` and
-`DetectMemoryVersion` and stores the results on `LaunchConfig.JailVersion`
-and `LaunchConfig.MemoryVersion`; `Validator.Validate` only reads those
-fields. The probe is memoized with a `sync.Once`, and that cache is
+hermetic path, because it resolves host paths — calls `DetectJailVersion`,
+`DetectMemoryVersion` and `ProbeJailContract`, and stores the results on
+`LaunchConfig.JailVersion`, `LaunchConfig.MemoryVersion` and
+`LaunchConfig.JailContract`; `Validator.Validate` only reads those
+fields. When the contract advertises `harness_flag`, Build passes
+`--harness`. `jail_flags.request_file` is forwarded only when `request_file`
+is advertised. A probed contract with those flags false keeps the 2.x argv. The probe is memoized with a `sync.Once`, and that cache is
 not an optimization: the TUI rebuilds its argv preview through
 `ResolveHostBinaries` on every keystroke, so an un-memoized probe would exec
 ai-jail once per rendered frame. An operator's ai-jail does not change

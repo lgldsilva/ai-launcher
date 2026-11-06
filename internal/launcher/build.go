@@ -39,6 +39,12 @@ type LaunchConfig struct {
 	// the TUI — so Build stays pure and Validator.Validate stays hermetic: the
 	// validator reads a string, it never execs anything.
 	JailVersion string
+	// JailContract is the ai-jail 3.0.1 wrapper contract, filled by
+	// ResolveHostBinaries from `capabilities --json`. The zero value means
+	// the probe did not run; Build then falls back to JailVersion for
+	// --harness and --request-file. A probed contract whose feature flags
+	// are false keeps the 2.x argv even when JailVersion is 3.0.1 or newer.
+	JailContract JailContract
 	// MemoryVersion is the ai-memory version detected on this host, or "" when
 	// memory is off or the probe failed. Same rule as JailVersion: filled
 	// outside Build, read by it.

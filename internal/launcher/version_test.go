@@ -236,6 +236,36 @@ func TestUpstreamReportFlagsInstallsAboveTheTestedCeiling(t *testing.T) {
 	}
 }
 
+// ai-jail 3.0.x and ai-memory 3.4.x were read and stay inside the range.
+// The floors and the advisory releases do not move with that ceiling.
+func TestValidatedRangeCoversJail301AndMemory342(t *testing.T) {
+	if config.MinAIJailVersion != "1.20.1" || config.AdvisoryAIJailVersion != "2.13.0" {
+		t.Fatalf("ai-jail floors = %s / %s; the hard floor and the advisory stay put", config.MinAIJailVersion, config.AdvisoryAIJailVersion)
+	}
+	if config.MinAIMemoryVersion != "1.25.0" || config.AdvisoryAIMemoryVersion != "3.2.10" {
+		t.Fatalf("ai-memory floors = %s / %s; the hard floor and the advisory stay put", config.MinAIMemoryVersion, config.AdvisoryAIMemoryVersion)
+	}
+	stubVersionCommand(t, map[string]string{
+		"/bin/ai-jail":   "ai-jail 3.0.1",
+		"/bin/ai-memory": "ai-memory 3.4.2",
+	}, nil)
+	report := UpstreamReport(lookPathAll, "linux")
+	if len(report) != 2 {
+		t.Fatalf("report = %#v; want both tools", report)
+	}
+	for _, status := range report {
+		if status.TooNew || status.TooOld || status.Advisory {
+			t.Errorf("%s = %#v; 3.0.1 and 3.4.2 are inside the tested range and at or above the advisory", status.Command, status)
+		}
+	}
+	if compareVersions("3.0.0", config.UntestedAIJailVersion) >= 0 || compareVersions("3.1.0", config.UntestedAIJailVersion) < 0 {
+		t.Fatalf("ai-jail ceiling %s; want 3.0.x tested and 3.1.0 untested", config.UntestedAIJailVersion)
+	}
+	if compareVersions("3.4.0", config.UntestedAIMemoryVersion) >= 0 || compareVersions("3.5.0", config.UntestedAIMemoryVersion) < 0 {
+		t.Fatalf("ai-memory ceiling %s; want 3.4.x tested and 3.5.0 untested", config.UntestedAIMemoryVersion)
+	}
+}
+
 // The bound is exclusive, so the last validated version is still clean. Without
 // this the report would cry wolf on every install the launcher does support.
 func TestUpstreamReportAcceptsTheVersionJustBelowTheCeiling(t *testing.T) {

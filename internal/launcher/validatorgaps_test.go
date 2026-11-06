@@ -497,7 +497,8 @@ func TestJailVersionIssuesStaySilentWhenThereIsNothingToSay(t *testing.T) {
 		cfg  LaunchConfig
 	}{
 		{"recommended release", jailVersionConfig(config.AdvisoryAIJailVersion)},
-		{"last live-tested release", jailVersionConfig("2.14.0")},
+		{"ai-jail 2.14.0", jailVersionConfig("2.14.0")},
+		{"ai-jail 3.0.1", jailVersionConfig("3.0.1")},
 		{"probe failed", jailVersionConfig("")},
 		{"jail disabled", LaunchConfig{Agent: config.Agent{Command: "claude"}, JailVersion: "1.14.2"}},
 	} {

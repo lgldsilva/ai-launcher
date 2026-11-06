@@ -879,6 +879,7 @@ synonym for unset, so both forms are always emitted:
 | `forward_ports` | list of int | `--forward-port <PORT>` per entry on ai-jail >= 2.9.0, under filtered egress (`--no-network`). Refused below 2.9.0, with unrestricted network, for ports outside 1024-65535, and above 256 entries |
 | `secrets` | list of `KEY=host` | `--secret KEY=host` per entry on ai-jail >= 2.2.0: the child sees a placeholder and the filtered-egress proxy substitutes the real value only for requests to host. KEY must reach the sandbox env (`jail_env` passthrough or `env_from_files`) — ai-jail refuses a secret whose key it does not have. Refused below 2.2, without `allow_hosts` (`secrets-require-filtered-egress`), and for entries that are not `KEY=host` |
 | `env_from_files` | list of paths | `--env-from-file <PATH>` per entry on ai-jail >= 2.0.0; must be mode 0600 (checked in pre-flight), user-owned and outside the project (ai-jail's own rules). Refused below 2.0 and for paths that do not exist |
+| `request_file` | path | `--request-file <PATH>` on ai-jail >= 3.0.1 when `capabilities --json` advertises `request_file` (version fallback when that probe did not run). Schema-v1 JSON. The path must be absolute, outside the project, user-owned, not a symlink or hard link, and not group- or world-writable. A request is not a grant: an unapproved one makes ai-jail exit 3. Refused below 3.0.1 (`request-file-requires-ai-jail-3-0-1`) and when the probed contract has no `request_file` (`request-file-unsupported`) |
 
 ## Security
 
@@ -894,7 +895,8 @@ Layers of defense:
 - `ai-launcher --doctor` pins the supported upstream floor (`ai-jail` ≥ 1.20.1,
   `ai-memory` ≥ 1.25.0), the recommended security releases (`ai-jail` ≥ 2.13.0,
   `ai-memory` ≥ 3.2.10) and the ceiling the argv was validated against
-  (`ai-jail` < 3.0.0, `ai-memory` < 3.4.0). It probes `--version` and reports
+  (`ai-jail` < 3.1.0, `ai-memory` < 3.5.0). It probes `--version` and, when
+  ai-jail answers `capabilities --json`, the 3.0.1 wrapper contract. It reports
   an install that is older than the floor (`ai-jail-version-too-old` /
   `ai-memory-version-too-old`, a failure), below the recommended release
   (`ai-jail-version-advisory` / `ai-memory-version-advisory`, a warning, exit 0)
@@ -912,8 +914,14 @@ Layers of defense:
   inside the tested range). Launch pre-flight repeats the advisory as a
   warning when the cached probe already has a version (`jail-version-advisory`,
   `memory-version-advisory`) and does not refuse. `--doctor` is what execs the
-  binaries; pre-flight only reads the cached probe. Last live-tested upstreams:
-  ai-jail 2.14.0 and ai-memory 3.3.1.
+  binaries; pre-flight only reads the cached probe. On ai-jail >= 3.0.1 the
+  launcher passes `--harness` when the contract advertises it, forwards an
+  optional `jail_flags.request_file`, and explains exit codes 3, 4 and 5.
+  ai-jail 2.13+ keeps the previous argv when `capabilities --json` is absent.
+  ai-jail 3 keeps trusted policy in `$XDG_CONFIG_HOME/ai-jail` (normally
+  `~/.config/ai-jail`); pre-flight refuses that store inside the project or
+  reached through a symlink. Last read upstreams: ai-jail 3.0.1 and
+  ai-memory 3.4.2. The advisory floors stay 2.13.0 and 3.2.10.
 - Every install from a GitHub release asset is SHA-256 checksum-verified
   (`.sha256`, `.sha256sum`, `checksums.txt`, `SHA256SUMS`, or the release
   body); `allow_unverified: true` exists, but it is an explicit operator

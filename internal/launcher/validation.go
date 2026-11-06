@@ -75,6 +75,10 @@ type Validator struct {
 	// Home overrides the home directory used to locate the global ai-jail
 	// config; nil skips the symlinked-config checks, as a nil Getwd does.
 	Home func() (string, error)
+	// XDGConfigHome overrides $XDG_CONFIG_HOME for the ai-jail 3 trusted
+	// store. Nil reads the process environment. An empty string means unset,
+	// which is ~/.config/ai-jail.
+	XDGConfigHome func() string
 	// Root reports whether the process is uid 0. Nil uses os.Geteuid.
 	// A root host skips sudo in the bwrap-not-found suggestion, as does a
 	// host with no sudo binary. Tests set Root so that text does not depend
@@ -101,6 +105,15 @@ func NewValidator() Validator {
 
 // processIsRoot reports uid 0. A set Root wins, so tests can force either
 // answer; otherwise the real process uid is used.
+// xdgConfigHome is the raw $XDG_CONFIG_HOME the store check should use.
+// A nil func reads the environment, which is what a production validator does.
+func (v Validator) xdgConfigHome() string {
+	if v.XDGConfigHome != nil {
+		return v.XDGConfigHome()
+	}
+	return os.Getenv("XDG_CONFIG_HOME")
+}
+
 func (v Validator) processIsRoot() bool {
 	if v.Root != nil {
 		return v.Root()
@@ -162,6 +175,8 @@ func (v Validator) Validate(cfg LaunchConfig) []Issue {
 	}
 	if !cfg.UseDocker {
 		issues = append(issues, jailConfigSymlinkIssues(cfg, v.Getwd, v.Home)...)
+		issues = append(issues, jailStoreIssues(cfg, v.Getwd, v.Home, v.xdgConfigHome())...)
+		issues = append(issues, requestFileIssues(cfg, v.Getwd)...)
 	}
 	if cfg.UseMemory {
 		if _, err := lookPath(aiMemoryCommand); err != nil {
