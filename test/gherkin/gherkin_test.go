@@ -95,6 +95,9 @@ func TestGherkinLauncherContract(t *testing.T) {
 
 func runScenario(t *testing.T, scenario featureScenario) {
 	t.Helper()
+	if runCLIInvocationScenario(t, scenario) {
+		return
+	}
 	if runValidationScenario(t, scenario) {
 		return
 	}
