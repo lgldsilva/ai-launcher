@@ -248,6 +248,16 @@ func reportDoctor(out io.Writer) error {
 	for _, status := range behind {
 		_, _ = fmt.Fprintf(out, "\n%s: the managed runner %s is older than ai-memory %s on PATH. Launches export it as AI_MEMORY_NATIVE_BIN; run `ai-launcher --upgrade` to refresh it.\n", status.BehindCode, status.Version, status.BehindOf)
 	}
+	contract := launcher.ProbeJailContract()
+	if note := contract.DoctorNote(); note != "" {
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, note)
+	}
+	if status, ok := launcher.ProbeJailStatus(contract); ok {
+		for _, line := range launcher.FormatJailStatus(status) {
+			_, _ = fmt.Fprintln(out, line)
+		}
+	}
 	if len(blocked) > 0 {
 		return fmt.Errorf("doctor found %d upstream issue(s); see above", len(blocked))
 	}
@@ -382,6 +392,9 @@ func isWorkstreamConflict(errText string) bool {
 
 // launchFailureHint maps common child stderr/exit text to a short recovery tip.
 func launchFailureHint(errText string) string {
+	if hint := launcher.JailExitHint(errText); hint != "" {
+		return hint
+	}
 	switch {
 	case strings.Contains(errText, "409") && strings.Contains(errText, "workstream is already active"):
 		return "hint: another ai-memory run still holds this workstream (or left a stale lease).\n" +

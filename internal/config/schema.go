@@ -262,6 +262,13 @@ type JailFlags struct {
 	// entry; ai-jail itself requires the file to be user-owned, mode 0600
 	// and outside the project.
 	EnvFromFiles []string `yaml:"env_from_files,omitempty"`
+	// RequestFile (ai-jail >= 3.0.1, and only when capabilities --json
+	// advertises request_file) forwards --request-file. The file is schema-v1
+	// JSON. ai-jail requires an absolute path outside the checkout, owned by
+	// the user, not a symlink or hard link, and not group- or world-writable.
+	// A request is not a grant: an unapproved one exits 3 before the sandbox
+	// starts. Empty leaves the legacy flag argv alone.
+	RequestFile string `yaml:"request_file,omitempty"`
 }
 
 // PortMapping maps a container port to a host port. Host defaults to Internal
@@ -316,7 +323,7 @@ func (f JailFlags) IsZero() bool {
 		len(f.OverlayMaps) == 0 && len(f.Mask) == 0 && len(f.DenyPaths) == 0 &&
 		len(f.AllowTCPPorts) == 0 && len(f.AllowHosts) == 0 && len(f.AllowPrivateHosts) == 0 && len(f.MaskExceptions) == 0 &&
 		len(f.DenyPathExceptions) == 0 && len(f.HideDotdirs) == 0 && len(f.ForwardPorts) == 0 &&
-		len(f.Secrets) == 0 && len(f.EnvFromFiles) == 0 && f.StatusBarStyle == ""
+		len(f.Secrets) == 0 && len(f.EnvFromFiles) == 0 && f.RequestFile == "" && f.StatusBarStyle == ""
 }
 
 // Options holds the per-launch behavior toggles persisted in the local config.

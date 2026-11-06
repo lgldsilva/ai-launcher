@@ -168,6 +168,7 @@ func appendYoloFlag(command []string, cfg LaunchConfig) []string {
 // enabled permissions and configured mounts.
 func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) []string {
 	command = append(command, config.AIJailCommand)
+	command = appendJailContractArgs(command, cfg)
 	if cfg.JailExec {
 		// --exec is ai-jail's programmatic mode: direct exec without the PTY
 		// proxy or status bar. Interactive TUI launches leave the ai-jail
@@ -207,6 +208,44 @@ func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) [
 	return command
 }
 
+// appendJailContractArgs emits the ai-jail 3.0.1 wrapper identity flags.
+// --harness names the harness ai-memory is about to run, because the next
+// argv word is ai-memory itself and legacy inference would bind onboarding
+// to the wrapper. --request-file is opt-in: an unapproved request exits 3,
+// so it is never synthesized from the flags this launcher already passes.
+// Neither flag is emitted unless the contract (or, when the probe did not
+// run, ai-jail >= 3.0.1) accepts it. A continue launch has no harness token
+// to declare, so --harness stays off there.
+func appendJailContractArgs(command []string, cfg LaunchConfig) []string {
+	if name := jailHarnessArg(cfg); name != "" {
+		command = append(command, "--harness", name)
+	}
+	if path := strings.TrimSpace(cfg.JailFlags.RequestFile); path != "" && launchSupportsRequestFile(cfg) {
+		command = append(command, "--request-file", path)
+	}
+	return command
+}
+
+// jailHarnessArg is the harness name --harness should declare, or "" when
+// the flag must stay off. With memory, the name is the token ai-memory run
+// receives. Without memory, it is the executable's base name, which is what
+// ai-jail compares against a direct command.
+func jailHarnessArg(cfg LaunchConfig) string {
+	if cfg.ContinueSession || !launchSupportsHarness(cfg) {
+		return ""
+	}
+	name := strings.TrimSpace(cfg.Agent.Command)
+	if cfg.UseMemory {
+		name = memoryRunHarness(cfg.Agent)
+	} else {
+		name = filepath.Base(name)
+	}
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
+}
+
 // appendExecutableMount maps the directory holding the resolved harness binary
 // read-only, unless a configured mount already covers it. `--executable` names
 // a host path that has to exist *inside* the sandbox; nothing mounted it, so
@@ -237,6 +276,13 @@ func ResolveHostBinaries(cfg LaunchConfig) LaunchConfig {
 	}
 	if cfg.UseJail && strings.TrimSpace(cfg.JailVersion) == "" {
 		cfg.JailVersion = DetectJailVersion()
+	}
+	// The contract probe is memoized the same way the version is. A 2.x
+	// binary is remembered as "no features", so the TUI does not fork
+	// `capabilities --json` on every keystroke and does not grow --harness
+	// onto an argv that binary would reject.
+	if cfg.UseJail && !cfg.JailContract.Probed {
+		cfg.JailContract = ProbeJailContract()
 	}
 	if cfg.UseMemory && strings.TrimSpace(cfg.MemoryVersion) == "" {
 		cfg.MemoryVersion = DetectMemoryVersion()

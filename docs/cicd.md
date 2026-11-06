@@ -107,7 +107,7 @@ Release is fully automated and two-staged:
 2. **Release** (`.github/workflows/release.yml`): triggered by `v*` tags (or
    manually via `workflow_dispatch` with a tag input, which is idempotent —
    the previous release for that tag is dropped and recreated). It runs
-   GoReleaser (`go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --clean`)
+   GoReleaser (`go run github.com/goreleaser/goreleaser/v2@v2.20.0 release --clean`)
    driven by `.goreleaser.yaml`: six binaries (linux/darwin/windows
    × amd64/arm64), archives named
    `ai-launcher_<version>_<os>_<arch>.{tar.gz,zip}` (zip on Windows) with
@@ -132,9 +132,14 @@ compares against the latest release tag.
 To validate the release artifacts locally without publishing:
 
 ```bash
-go run github.com/goreleaser/goreleaser/v2@v2.13.0 check
-go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --snapshot --clean --skip=publish
+GOTOOLCHAIN=auto go run github.com/goreleaser/goreleaser/v2@v2.20.0 check
+GOTOOLCHAIN=auto go run github.com/goreleaser/goreleaser/v2@v2.20.0 release --snapshot --clean --skip=publish
 ```
+
+`v2.20.0` needs a Go newer than this module's `go.mod`. `GOTOOLCHAIN=auto`
+(also set by `make lint-dist` and by the release job) lets a runner that pins
+`GOTOOLCHAIN=local` fetch that toolchain. The module build itself stays on
+the `go` line in `go.mod`.
 
 `make release-local` still exists as a minimal local fallback (plain `dist/`
 binaries + `SHA256SUMS`), but the canonical check of what `release.yml`

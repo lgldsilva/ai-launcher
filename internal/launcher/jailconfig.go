@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/lgldsilva/ai-launcher/internal/config"
 )
 
 // jailConfigFile is the name ai-jail reads both as the project config (in the
@@ -82,6 +84,189 @@ func jailConfigSymlinkIssues(cfg LaunchConfig, getwd, home func() (string, error
 				"launch from a directory that does not contain it, or launch with --no-jail",
 			global, target, cwd),
 	}}
+}
+
+// jailStoreIssues predicts ai-jail 3's refusal to keep its trusted store
+// inside the project or to reach it through a symlink. 2.x has no such
+// store, so the check stays quiet below 3.0.0 and when the version probe
+// did not run. A nil getwd or home skips it, as the legacy symlink check does.
+// xdgConfigHome is the raw $XDG_CONFIG_HOME value; empty means unset.
+func jailStoreIssues(cfg LaunchConfig, getwd, home func() (string, error), xdgConfigHome string) []Issue {
+	if !cfg.UseJail || !jailUsesExternalStore(cfg) || getwd == nil || home == nil {
+		return nil
+	}
+	cwd, err := getwd()
+	if err != nil || strings.TrimSpace(cwd) == "" {
+		return nil
+	}
+	homeDir, err := home()
+	if err != nil || strings.TrimSpace(homeDir) == "" {
+		return nil
+	}
+	if base := strings.TrimSpace(xdgConfigHome); base != "" && !filepath.IsAbs(base) {
+		return []Issue{{
+			Code: "jail-xdg-store-invalid",
+			Message: fmt.Sprintf(
+				"XDG_CONFIG_HOME %q is not an absolute path; ai-jail 3 refuses it and will not open the trusted store",
+				base),
+		}}
+	}
+	store, ok := JailStoreDir(homeDir, xdgConfigHome)
+	if !ok {
+		return nil
+	}
+	if pathInside(cwd, store) || samePath(filepath.Clean(cwd), store) {
+		return []Issue{{
+			Code: "jail-xdg-store-inside-project",
+			Message: fmt.Sprintf(
+				"ai-jail keeps trusted policy in %s, which is inside the project directory %s; "+
+					"launch from a directory that does not contain the store, or launch with --no-jail",
+				store, cwd),
+		}}
+	}
+	if component, linked := symlinkComponent(store); linked {
+		return []Issue{{
+			Code: "jail-xdg-store-symlink",
+			Message: fmt.Sprintf(
+				"ai-jail's trusted store %s is reached through the symlink %s; ai-jail 3 refuses a store path with a symlink component — "+
+					"point XDG_CONFIG_HOME at a path with no symlinks, or launch with --no-jail",
+				store, component),
+		}}
+	}
+	return nil
+}
+
+// symlinkComponent reports the first existing symlink on path. A missing
+// component stops the walk: ai-jail does the same, and a store that does
+// not exist yet is not a symlink.
+func symlinkComponent(path string) (string, bool) {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if cleaned == "" || cleaned == "." {
+		return "", false
+	}
+	current := ""
+	if filepath.IsAbs(cleaned) {
+		current = string(filepath.Separator)
+	}
+	rest := cleaned
+	if filepath.IsAbs(cleaned) {
+		rest = strings.TrimPrefix(cleaned, string(filepath.Separator))
+	}
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", false
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return current, true
+		}
+	}
+	return "", false
+}
+
+// requestFileIssues refuses jail_flags.request_file when this ai-jail cannot
+// accept it, and when the path would fail ai-jail's own checks. The file is
+// host input: a checkout path, a symlink, or a group-writable file must not
+// reach the wrapper.
+func requestFileIssues(cfg LaunchConfig, getwd func() (string, error)) []Issue {
+	path := strings.TrimSpace(cfg.JailFlags.RequestFile)
+	if !cfg.UseJail || path == "" {
+		return nil
+	}
+	if !launchSupportsRequestFile(cfg) {
+		seen := strings.TrimSpace(cfg.JailVersion)
+		if seen == "" {
+			seen = "unknown"
+		}
+		if cfg.JailContract.Probed {
+			return []Issue{{
+				Code: "request-file-unsupported",
+				Message: fmt.Sprintf(
+					"jail_flags.request_file is set, but this ai-jail does not advertise --request-file (installed: %s); remove request_file or upgrade to ai-jail >= %s",
+					seen, config.MinJailContractVersion),
+			}}
+		}
+		return []Issue{{
+			Code: "request-file-requires-ai-jail-3-0-1",
+			Message: fmt.Sprintf(
+				"jail_flags.request_file needs ai-jail >= %s (installed: %s); upgrade ai-jail, or remove request_file",
+				config.MinJailContractVersion, seen),
+		}}
+	}
+	project := ""
+	if getwd != nil {
+		if cwd, err := getwd(); err == nil {
+			project = cwd
+		}
+	}
+	if problem := inspectRequestFile(path, project); problem != "" {
+		return []Issue{{
+			Code:    "request-file-rejected",
+			Message: fmt.Sprintf("jail_flags.request_file %s %s", path, problem),
+		}}
+	}
+	return nil
+}
+
+// inspectRequestFile reports why path would not pass ai-jail's --request-file
+// checks, or "" when it would. project is the working directory; empty skips
+// the outside-the-checkout check.
+func inspectRequestFile(path, project string) string {
+	if !filepath.IsAbs(path) {
+		return "must be an absolute path outside the project checkout"
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "does not exist, or cannot be inspected"
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "cannot be a symlink"
+	}
+	if !info.Mode().IsRegular() {
+		return "must be a regular file"
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return "must not be group- or world-writable"
+	}
+	if problem := requestFileOwnershipProblem(info); problem != "" {
+		return problem
+	}
+	if strings.TrimSpace(project) == "" {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolved = path
+	}
+	if pathInside(project, resolved) {
+		return "must live outside the project checkout"
+	}
+	return ""
+}
+
+// requestFileOwnershipProblem applies the owner and hard-link rules when the
+// platform can see them. current is split out so the mismatch branch is
+// testable without a second uid.
+func requestFileOwnershipProblem(info os.FileInfo) string {
+	uid, nlink, ok := requestFileIdentity(info)
+	return requestFileOwnership(uid, nlink, os.Getuid(), ok)
+}
+
+func requestFileOwnership(uid int, nlink uint64, current int, known bool) string {
+	if !known {
+		return ""
+	}
+	if nlink > 1 {
+		return "must not be a hard link"
+	}
+	if uid != current {
+		return "must be owned by the current user"
+	}
+	return ""
 }
 
 // isSymlink reports whether path exists and is itself a symbolic link.

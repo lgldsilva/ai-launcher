@@ -27,7 +27,10 @@ GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lin
 GOSEC ?= $(GO) run github.com/securego/gosec/v2/cmd/gosec@v2.28.0
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.6.0
 SHFMT ?= $(GO) run mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
-GORELEASER ?= $(GO) run github.com/goreleaser/goreleaser/v2@v2.13.0
+# v2.20.0 needs a Go newer than this module's go.mod. GOTOOLCHAIN=auto on the
+# check (and on the release workflow) lets a runner that pins
+# GOTOOLCHAIN=local fetch that toolchain. The module build stays on go.mod.
+GORELEASER ?= $(GO) run github.com/goreleaser/goreleaser/v2@v2.20.0
 MUTATION_IMAGE ?= gogremlins/gremlins@sha256:1a026981a9155871ccaae7101e5ff8dc3a62616f6e054ace07336d5b559d5efe
 MUTATION_BASE ?= origin/main
 MUTATION_EFFICACY_MIN ?= 70
@@ -64,7 +67,7 @@ release-checksums: build-release
 
 # Local fallback for cutting release artifacts without CI. The canonical
 # local check of what release.yml publishes is the GoReleaser snapshot:
-#   go run github.com/goreleaser/goreleaser/v2@v2.13.0 release --snapshot --clean --skip=publish
+#   GOTOOLCHAIN=auto go run github.com/goreleaser/goreleaser/v2@v2.20.0 release --snapshot --clean --skip=publish
 release-local: build-release release-checksums
 
 test:
@@ -88,7 +91,7 @@ DIST_SHELL := install.sh scripts/mutation.sh scripts/mutation_test.sh \
 lint-dist:
 	shellcheck $(DIST_SHELL)
 	$(SHFMT) -i 2 -ci -d $(DIST_SHELL)
-	$(GORELEASER) check
+	GOTOOLCHAIN=auto $(GORELEASER) check
 
 # The two halves are separate targets because CI runs them as separate jobs:
 # a gosec finding and a vulnerable dependency are different failures with

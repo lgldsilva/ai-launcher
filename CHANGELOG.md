@@ -13,6 +13,45 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — ai-jail 3.0.1 wrapper contract
+
+`ai-launcher --doctor` treats ai-jail 3.0.x and ai-memory 3.4.x as inside the
+validated range. The first untested releases are now ai-jail 3.1.0 and
+ai-memory 3.5.0. The hard floors stay 1.20.1 and 1.25.0, and the advisory
+warnings stay where they are: ai-jail below 2.13.0 and ai-memory below 3.2.10.
+
+When `ai-jail capabilities --json` advertises the 3.0.1 wrapper contract, the
+launcher passes `--harness` for the harness it is about to run, forwards
+`jail_flags.request_file` as `--request-file`, and explains exit codes 3
+(request not approved), 4 (saved approval blocked by host drift) and 5
+(sandbox backend unavailable). `status --json` blockers are printed by
+`--doctor`. ai-jail 2.13+ keeps the previous argv when that JSON is absent;
+a probed contract with the feature off also keeps it, even if `--version`
+says 3.0.1. `--request-file` is opt-in. An unapproved request is not a grant
+and stops a non-interactive launch, so the launcher does not synthesize one
+from flags it already passes.
+
+ai-jail 3.0.0 moves trusted policy to `$XDG_CONFIG_HOME/ai-jail` (normally
+`~/.config/ai-jail`). Pre-flight refuses that store inside the project
+directory and a store path that contains a symlink. Legacy `.ai-jail` symlink
+checks still apply.
+
+ai-memory 3.4.0's post-compaction anchor, 3.4.1's split-project repair and
+3.4.2's `repair-split` and OMP/Pi `ignore_paths` matching do not change the
+`ai-memory run` flags this launcher emits.
+
+**What you need to do:** nothing to keep launching on ai-jail 2.x. On ai-jail
+3, do not launch from `$HOME` (the trusted store lives under `~/.config`),
+and do not point `XDG_CONFIG_HOME` through a symlink. Set
+`jail_flags.request_file` only to a user-owned file outside the checkout.
+
+### Changed — goreleaser 2.20.0
+
+The release workflow, Makefile and docs pin `goreleaser/v2` at v2.20.0
+(GHSA-9422-8p9m-393x). `goreleaser check` is unchanged.
+
+**What you need to do:** nothing.
+
 ### Added — security advisory warnings for ai-jail and ai-memory
 
 `ai-launcher --doctor` warns, and still exits 0, when the installed ai-jail

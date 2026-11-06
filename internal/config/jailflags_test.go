@@ -174,6 +174,7 @@ func TestJailFlagsIsZeroDetectsEverySingleFieldDeviation(t *testing.T) {
 		"audit_log":            func(f *JailFlags) { f.AuditLog = boolPointer(true) },
 		"secrets":              func(f *JailFlags) { f.Secrets = []string{"GITHUB_TOKEN=github.com"} },
 		"env_from_files":       func(f *JailFlags) { f.EnvFromFiles = []string{"/home/tester/.secrets"} },
+		"request_file":         func(f *JailFlags) { f.RequestFile = "/home/tester/.config/ai-launcher/requests.json" },
 	}
 	for name, mutate := range mutators {
 		var flags JailFlags

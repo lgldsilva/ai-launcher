@@ -315,10 +315,43 @@ const (
 // reject or redefine a flag this launcher sends. 2.14.0 states every
 // pre-2.14.0 .ai-jail still works. Live dry-run of the composed chain was
 // re-run against ai-jail 2.14.0 and ai-memory 3.3.1.
+//
+// ai-jail 2.15.0 adds --macos-trustd, --allow-pty and --allow-loopback-listen.
+// All three are off by default and absent from the argv this launcher emits.
+// 3.0.0 moves trusted policy to $XDG_CONFIG_HOME/ai-jail (normally
+// ~/.config/ai-jail). A repository .ai-jail stays an untrusted monotonic
+// input, and the symlink refusals above still apply to it. 3.0.1 adds the
+// wrapper contract: capabilities --json, --harness, --request-file,
+// status --json, and exit codes 3 (request not approved), 4 (saved approval
+// blocked by host drift) and 5 (sandbox backend unavailable). The launcher
+// prefers that JSON over a version guess and keeps the 2.x argv when the
+// contract is absent. Existing flags still grant access; --request-file is
+// opt-in because an unapproved request stops a non-interactive launch.
+//
+// ai-memory 3.4.0 injects a post-compaction anchor from the hooks, 3.4.1
+// repairs a project split by a git remote that arrived after capture began,
+// and 3.4.2 joins that split (`repair-split`) and drops OMP/Pi ignore_paths
+// matches that the harness rewrites (`path:line`, a leading `@`, `file://`).
+// None of those change the `ai-memory run` flags this launcher emits.
+// `run --help` on 3.4.x still accepts that grammar. 3.4.2's `--jail-map` is
+// ai-memory's own inner-jail flag; this launcher already maps folders on the
+// outer ai-jail argv, and ai-memory ignores --jail while it is itself inside
+// ai-jail.
 const (
-	UntestedAIJailVersion   = "3.0.0"
-	UntestedAIMemoryVersion = "3.4.0"
+	UntestedAIJailVersion   = "3.1.0"
+	UntestedAIMemoryVersion = "3.5.0"
 )
+
+// MinJailContractVersion is the first ai-jail that speaks the wrapper
+// contract (capabilities --json, --harness, --request-file, status --json,
+// exit codes 3, 4 and 5). 3.0.0 moved the trusted store but did not add this
+// contract. A successful capabilities probe wins over this floor; the floor
+// is only the fallback when that probe did not run.
+const MinJailContractVersion = "3.0.1"
+
+// MinXDGStoreAIJailVersion is the first ai-jail whose trusted policy lives
+// under $XDG_CONFIG_HOME/ai-jail instead of only ~/.ai-jail.
+const MinXDGStoreAIJailVersion = "3.0.0"
 
 // MinAllowHostAIJailVersion is the first ai-jail that accepts --allow-host.
 // Older releases reject the flag outright, so the launcher refuses a configured
