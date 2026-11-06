@@ -196,6 +196,67 @@ func TestBuildKeepsThe2xArgvWhenTheContractIsAbsent(t *testing.T) {
 	}
 }
 
+func TestJailAcceptsOnlyHarnessesAIJail301Knows(t *testing.T) {
+	for _, name := range []string{"claude", "claude-code", "codex", "opencode", "kimi", "kimi-cli", "agy", "pi", "crush", "omp", "grok", "devin", "gemini", "aider", "kiro-cli"} {
+		if !jailAcceptsHarness(name) {
+			t.Errorf("jailAcceptsHarness(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"kilo", "mimo", "cursor-agent", "zero", "oc", "qwen", "goose", "command-code", "openclaw", "hermes", "cline", "copilot", "copilot-cli", ""} {
+		if jailAcceptsHarness(name) {
+			t.Errorf("jailAcceptsHarness(%q) = true; ai-jail 3.0.1 rejects this name", name)
+		}
+	}
+}
+
+func TestBuildUsesFilteredEgressForJail3APIAgents(t *testing.T) {
+	argv, err := Build(LaunchConfig{
+		Agent:        config.Agent{Command: "claude"},
+		UseJail:      true,
+		JailVersion:  "3.0.1",
+		JailContract: contract31(t),
+		Permissions:  map[string]bool{"network": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--no-network") || !strings.Contains(joined, "--allow-host api.anthropic.com") {
+		t.Fatalf("argv = %s; jail 3 must not combine --network with the harness API host", joined)
+	}
+	if strings.Contains(joined, " --network") {
+		t.Fatalf("argv = %s; unrestricted --network is rejected for claude on jail 3", joined)
+	}
+	kilo, err := Build(LaunchConfig{
+		Agent:        config.Agent{Command: "kilo"},
+		UseJail:      true,
+		JailVersion:  "3.0.1",
+		JailContract: contract31(t),
+		Permissions:  map[string]bool{"network": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(kilo, " "), "--network") {
+		t.Fatalf("kilo argv = %#v; an agent without a default API host keeps --network", kilo)
+	}
+}
+
+func TestBuildOmitsHarnessForAnUnknownAgent(t *testing.T) {
+	argv, err := Build(LaunchConfig{
+		Agent:        config.Agent{Command: "kilo"},
+		UseJail:      true,
+		JailVersion:  "3.0.1",
+		JailContract: contract31(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(argv, " "), "--harness") {
+		t.Fatalf("argv = %#v; --harness kilo is rejected by ai-jail 3.0.1", argv)
+	}
+}
+
 func TestBuildDeclaresTheHarnessFromAProbedContract(t *testing.T) {
 	cfg := LaunchConfig{
 		Agent:        config.Agent{Command: "oc", Memory: &config.MemoryIntegration{RunHarness: "opencode"}},

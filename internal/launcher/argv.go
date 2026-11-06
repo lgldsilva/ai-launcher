@@ -211,11 +211,13 @@ func appendJailArgs(command []string, cfg LaunchConfig, resolve *pathResolver) [
 // appendJailContractArgs emits the ai-jail 3.0.1 wrapper identity flags.
 // --harness names the harness ai-memory is about to run, because the next
 // argv word is ai-memory itself and legacy inference would bind onboarding
-// to the wrapper. --request-file is opt-in: an unapproved request exits 3,
-// so it is never synthesized from the flags this launcher already passes.
-// Neither flag is emitted unless the contract (or, when the probe did not
-// run, ai-jail >= 3.0.1) accepts it. A continue launch has no harness token
-// to declare, so --harness stays off there.
+// to the wrapper. It is omitted when ai-jail 3.0.1 would reject the name:
+// a direct launch of kilo, goose, oc and the other catalog agents it does
+// not know still uses legacy inference. --request-file is opt-in: an
+// unapproved request exits 3, so it is never synthesized from the flags
+// this launcher already passes. Neither flag is emitted unless the contract
+// (or, when the probe did not run, ai-jail >= 3.0.1) accepts it. A continue
+// launch has no harness token to declare, so --harness stays off there.
 func appendJailContractArgs(command []string, cfg LaunchConfig) []string {
 	if name := jailHarnessArg(cfg); name != "" {
 		command = append(command, "--harness", name)
@@ -240,7 +242,7 @@ func jailHarnessArg(cfg LaunchConfig) string {
 	} else {
 		name = filepath.Base(name)
 	}
-	if name == "" || name == "." || name == string(filepath.Separator) {
+	if name == "" || name == "." || name == string(filepath.Separator) || !jailAcceptsHarness(name) {
 		return ""
 	}
 	return name
@@ -456,9 +458,26 @@ func appendNetworkDecision(command []string, cfg LaunchConfig) []string {
 		return append(command, noNetworkFlag)
 	}
 	if cfg.Permissions[config.PermissionNetwork] {
-		return append(command, "--network")
+		return appendUnrestrictedNetwork(command, cfg)
 	}
 	return append(command, noNetworkFlag)
+}
+
+// appendUnrestrictedNetwork emits --network, except on ai-jail 3 for a known
+// API agent. That release's non-interactive onboarding inserts the agent's
+// API host into allow_hosts and then rejects --network as mutually exclusive
+// with filtered egress. The launch states the same intent as filtered access
+// to those hosts, which is the posture ai-jail will actually run.
+func appendUnrestrictedNetwork(command []string, cfg LaunchConfig) []string {
+	hosts := jail3KnownAPIHosts(resolvedHarnessName(cfg))
+	if !jail3FiltersUnrestrictedNetwork(cfg) {
+		return append(command, "--network")
+	}
+	command = append(command, "--no-network")
+	for _, host := range hosts {
+		command = append(command, "--allow-host", host)
+	}
+	return command
 }
 
 // appendDockerDecision emits exactly one of --docker / --no-docker, always.

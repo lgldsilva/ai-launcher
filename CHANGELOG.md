@@ -40,10 +40,24 @@ ai-memory 3.4.0's post-compaction anchor, 3.4.1's split-project repair and
 3.4.2's `repair-split` and OMP/Pi `ignore_paths` matching do not change the
 `ai-memory run` flags this launcher emits.
 
+`--harness` is sent only for names ai-jail 3.0.1 accepts. Catalog agents it
+does not know (kilo, goose, oc, …) keep the 2.x argv, because an unknown
+`--harness` aborts the launch. For claude, codex, gemini, grok and devin,
+ai-jail 3's non-interactive onboarding inserts the model API host into
+`allow_hosts` and then rejects `--network`. Those launches state network-on
+as `--no-network` plus `--allow-host` for that API (and `chatgpt.com` for
+codex). Other agents still get unrestricted `--network`.
+
+A host-binary agent found on `PATH` is included in the docker image. The
+resolved path used to stay off `Agent.Path`, so preflight reported
+`docker-no-agent` even though the jail path could exec the same binary.
+
 **What you need to do:** nothing to keep launching on ai-jail 2.x. On ai-jail
 3, do not launch from `$HOME` (the trusted store lives under `~/.config`),
 and do not point `XDG_CONFIG_HOME` through a symlink. Set
 `jail_flags.request_file` only to a user-owned file outside the checkout.
+Known API agents no longer get unrestricted network on ai-jail 3; they get
+filtered egress to their API host.
 
 ### Changed — goreleaser 2.20.0
 

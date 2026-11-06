@@ -1863,6 +1863,26 @@ Feature: Launcher command contract
       claude
       """
 
+  # kilo is a catalog agent ai-jail 3.0.1 does not know. --harness kilo is
+  # rejected before the sandbox starts, so the launcher keeps legacy inference.
+  Scenario: Omits --harness for an agent ai-jail 3.0.1 does not know
+    Given a launch configuration
+      """
+      agent: kilo
+      jail: true
+      memory: false
+      jail_version: "3.0.1"
+      """
+    When the launch command is built
+    Then the command equals
+      """
+      ai-jail
+      --no-docker
+      --no-network
+      --agent-state
+      kilo
+      """
+
   Scenario: Forwards a request file when ai-jail 3.0.1 can accept it
     Given a launch configuration
       """

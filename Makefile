@@ -117,6 +117,13 @@ test-property:
 test-gherkin:
 	$(GO) test ./test/gherkin -run '^TestGherkin' -count=1
 
+# End-to-end sandbox matrix. Downloads pinned ai-jail 2.15.0, ai-jail 3.0.1
+# and ai-memory 3.4.2 (checksum-checked) and launches every catalog agent
+# through stub CLIs. No provider credentials. Docker image builds stay off
+# unless E2E_DOCKER_BUILD=1 and a daemon is reachable.
+e2e:
+	$(GO) test -tags e2e -count=1 -timeout 45m ./test/e2e/
+
 test-race:
 	$(GO) test -race -shuffle=on ./...
 
