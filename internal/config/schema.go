@@ -78,6 +78,16 @@ type GitHubRelease struct {
 	Binary          string            `yaml:"binary"`
 	ChecksumAsset   string            `yaml:"checksum_asset,omitempty"`
 	AllowUnverified bool              `yaml:"allow_unverified,omitempty"`
+	// Dirs are archive directories installed alongside the binary, for tools
+	// whose runtime needs more than the executable (ai-memory's hooks).
+	Dirs []ArchiveDir `yaml:"dirs,omitempty"`
+}
+
+// ArchiveDir copies the directory Source of a release archive to Target, a
+// path relative to the home directory. Target is replaced on every install.
+type ArchiveDir struct {
+	Source string `yaml:"source"`
+	Target string `yaml:"target"`
 }
 
 // MemoryIntegration maps an ai-launcher harness to ai-memory's two host-side
