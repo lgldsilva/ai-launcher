@@ -20,9 +20,18 @@ forward it.
 
 ## Supported versions
 
-Security fixes land on `main` and ship in the next tagged release. Only the
-latest release is supported — the binary self-updates (`ai-launcher upgrade`),
-so staying current is one command.
+ai-launcher is discontinued. [v5.12.1](https://github.com/lgldsilva/ai-launcher/releases/tag/v5.12.1)
+is the last release. No further security fix is scheduled in this repository.
+A defect in the sandbox belongs in
+[ai-jail](https://github.com/akitaonrails/ai-jail). A defect in sessions,
+hooks, or the memory server belongs in
+[ai-memory](https://github.com/akitaonrails/ai-memory). The migration,
+which keeps the sandbox and does not convert `.ai-launcher` config, is
+[docs/discontinuation.md](docs/discontinuation.md).
+
+The floors below describe v5.12.1. They are not a promise of a newer
+launcher build. `ai-launcher upgrade` is not a path onto a supported
+release after v5.12.1.
 
 Upstream floors are pinned in `internal/config` and reported by
 `ai-launcher --doctor`:

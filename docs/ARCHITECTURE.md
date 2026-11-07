@@ -1,5 +1,8 @@
 # Architecture
 
+Discontinued. The user migration is [discontinuation.md](discontinuation.md).
+This page describes the tree that shipped.
+
 The README is operational; the long form lives in `docs/`. This page is the
 operational summary of "what it is and what shape it has" for anyone about to
 read the code.

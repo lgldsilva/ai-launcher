@@ -13,6 +13,18 @@ project follows [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — project discontinued
+
+ai-launcher is discontinued. v5.12.1 stays the last release. History, tags,
+and releases stay. The migration is [docs/discontinuation.md](docs/discontinuation.md).
+There is no converter for `.ai-launcher` config, launcher profiles, or the
+container/Compose backend.
+
+**What you need to do:** install ai-jail and ai-memory from their own
+releases and re-enter access in ai-jail. Keep the sandbox on that path. A
+host-only launch is not the replacement. Details and the limits of what was
+actually run are in the migration document.
+
 ### Added — ai-jail 3.0.1 wrapper contract
 
 `ai-launcher --doctor` treats ai-jail 3.0.x and ai-memory 3.4.x as inside the
