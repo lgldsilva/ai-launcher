@@ -1,5 +1,10 @@
 # AGENTS.md — instructions for AI agents in this repository
 
+ai-launcher is discontinued. Do not add features, cut a release, archive the
+repository, or merge pull requests unless a human asks for that exact step.
+User migration: `docs/discontinuation.md`. The instructions below describe the
+tree as it exists.
+
 ## What this project is
 
 TUI/CLI launcher in Go that orchestrates AI CLIs composed from two

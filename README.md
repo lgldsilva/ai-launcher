@@ -1,5 +1,16 @@
 # ai-launcher
 
+## Discontinued
+
+ai-launcher is discontinued. The last release,
+[v5.12.1](https://github.com/lgldsilva/ai-launcher/releases/tag/v5.12.1),
+stays published with the rest of the history and tags. Install the sandbox
+and the memory layer from
+[ai-jail](https://github.com/akitaonrails/ai-jail) and
+[ai-memory](https://github.com/akitaonrails/ai-memory). The migration,
+including what has no automatic conversion, is
+[docs/discontinuation.md](docs/discontinuation.md).
+
 TUI/CLI launcher that orchestrates AI CLIs (Claude Code, Codex, Kimi, Crush, OpenCode, Gemini etc.) through a sandbox and a memory layer (Go, bubbletea, ai-jail + ai-memory).
 
 > ai-launcher is a "super facilitator": it reimplements nothing. It composes two
@@ -970,6 +981,7 @@ Documentation and UI strings in this repository are **English**.
 
 | Document | Contents |
 | --- | --- |
+| [docs/discontinuation.md](docs/discontinuation.md) | Discontinuation and the manual move to ai-jail and ai-memory |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System shape: data flow, package map, state, invariants |
 | [docs/design-decisions.md](docs/design-decisions.md) | Thematic decisions, trade-offs, and what we are not doing |
 | [docs/cicd.md](docs/cicd.md) | GitHub Actions pipeline, SonarCloud, and the release process |
@@ -983,6 +995,8 @@ Documentation and UI strings in this repository are **English**.
 | [CHANGELOG.md](CHANGELOG.md) | Breaking changes and their migrations (per-release notes are on the releases page) |
 
 ## Roadmap
+
+The roadmap is frozen with the discontinuation. Nothing below is scheduled.
 
 - [x] Interactive TUI with real execution (`r` / Ctrl+Enter runs; Space/Enter select)
 - [x] Named profiles and harness-declared parameters
