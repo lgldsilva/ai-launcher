@@ -34,11 +34,38 @@ func mergeGlobalDefaults(defaults, cfg Global) Global {
 	cfg.Permissions = mergePermissions(defaults.Permissions, cfg.Permissions)
 	if len(cfg.Tools) == 0 {
 		cfg.Tools = defaults.Tools
+	} else {
+		cfg.Tools = inheritReleaseDirs(defaults.Tools, cfg.Tools)
 	}
 	if len(cfg.DefaultMounts) == 0 {
 		cfg.DefaultMounts = defaults.DefaultMounts
 	}
 	return cfg
+}
+
+// inheritReleaseDirs gives a user tool entry the built-in release dirs it
+// lacks. A tools list replaces the defaults wholesale, and entries written by
+// an older release predate Dirs, so without this ai-memory installed from such
+// a config would keep coming without its hooks. Only an entry for the same
+// command and repository inherits; the user's own Dirs always win.
+func inheritReleaseDirs(defaults, user []Tool) []Tool {
+	merged := make([]Tool, len(user))
+	for index, tool := range user {
+		merged[index] = tool
+		if tool.Release == nil || len(tool.Release.Dirs) > 0 {
+			continue
+		}
+		for _, base := range defaults {
+			if base.Command == tool.Command && base.Release != nil &&
+				base.Release.Repository == tool.Release.Repository && len(base.Release.Dirs) > 0 {
+				release := *tool.Release
+				release.Dirs = append([]ArchiveDir(nil), base.Release.Dirs...)
+				merged[index].Release = &release
+				break
+			}
+		}
+	}
+	return merged
 }
 
 // mergeAgents merges the built-in agent catalog with the user's, per entry,
