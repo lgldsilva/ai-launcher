@@ -109,6 +109,10 @@ func DefaultGlobal() Global {
 						"windows-amd64":     "ai-memory-windows-x86_64.zip",
 					},
 					Binary: aiMemoryTool,
+					// `ai-memory install-hooks` and `setup` search this dir for
+					// the hooks bundle; without it a new machine fails with
+					// "could not locate hooks directory".
+					Dirs: []ArchiveDir{{Source: "hooks", Target: ".local/share/ai-memory/hooks"}},
 				},
 			},
 		},

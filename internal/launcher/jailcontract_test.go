@@ -443,8 +443,20 @@ func TestJailStoreDirUsesXDGConfigHome(t *testing.T) {
 	}
 }
 
+// realTempDir is t.TempDir with its symlinks resolved: on macOS the temp dir
+// lives under /var, itself a link to /private/var, which the symlink check
+// rightly reports for every path built on it.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestJailStoreIssuesFlagHomeSymlinksAndOldVersions(t *testing.T) {
-	home := t.TempDir()
+	home := realTempDir(t)
 	cfg := LaunchConfig{UseJail: true, Agent: config.Agent{Command: "claude"}, JailVersion: "3.0.0"}
 	issues := jailStoreIssues(cfg, fixedDir(home), fixedDir(home), "")
 	if len(issues) != 1 || issues[0].Code != "jail-xdg-store-inside-project" {
@@ -458,7 +470,7 @@ func TestJailStoreIssuesFlagHomeSymlinksAndOldVersions(t *testing.T) {
 	if issues := jailStoreIssues(cfg, fixedDir(home), fixedDir(home), "relative/config"); len(issues) != 1 || issues[0].Code != "jail-xdg-store-invalid" {
 		t.Fatalf("relative XDG issues = %#v", issues)
 	}
-	outside := t.TempDir()
+	outside := realTempDir(t)
 	linkHome := filepath.Join(outside, "home")
 	if err := os.MkdirAll(filepath.Join(linkHome, ".config"), 0o700); err != nil {
 		t.Fatal(err)

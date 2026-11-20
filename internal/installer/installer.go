@@ -147,15 +147,16 @@ func (i *Installer) Install(ctx context.Context, name, command, configuredPath s
 	if err != nil {
 		return Result{Name: name}, err
 	}
-	if installIsCurrent(currentState, target, release.Repository, latest.TagName, asset.Name, force) {
+	if installIsCurrent(currentState, target, release.Repository, latest.TagName, asset.Name, force) &&
+		dirsPresent(i.HomeDir, release.Dirs) {
 		return Result{Name: name, Version: latest.TagName, Path: target, Status: "current"}, nil
 	}
 
-	binaryBytes, err := i.downloadVerifiedBinary(ctx, asset, latest, release, command)
+	binaryBytes, archiveBytes, err := i.downloadVerifiedBinary(ctx, asset, latest, release, command)
 	if err != nil {
 		return Result{Name: name}, err
 	}
-	if err := i.installFile(target, binaryBytes); err != nil {
+	if err := i.place(target, binaryBytes, archiveBytes, asset.Name, release.Dirs); err != nil {
 		return Result{Name: name}, fmt.Errorf("install %s: %w", name, err)
 	}
 	currentState.Installs[target] = stateEntry{
@@ -220,20 +221,35 @@ func installIsCurrent(currentState state, target, repository, tag, assetName str
 }
 
 // downloadVerifiedBinary downloads the asset, verifies its checksum, and
-// extracts the executable bytes from the archive.
-func (i *Installer) downloadVerifiedBinary(ctx context.Context, asset Asset, latest releaseResponse, release *config.GitHubRelease, command string) ([]byte, error) {
+// extracts the executable bytes from the archive. The verified archive is
+// returned too, for the release dirs installed beside the binary.
+func (i *Installer) downloadVerifiedBinary(ctx context.Context, asset Asset, latest releaseResponse, release *config.GitHubRelease, command string) ([]byte, []byte, error) {
 	archiveBytes, err := i.download(ctx, asset)
 	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", asset.Name, err)
+		return nil, nil, fmt.Errorf("download %s: %w", asset.Name, err)
 	}
 	if err := i.verifyChecksum(ctx, latest.Assets, asset, archiveBytes, release, latest.Body); err != nil {
-		return nil, fmt.Errorf("verify %s: %w", asset.Name, err)
+		return nil, nil, fmt.Errorf("verify %s: %w", asset.Name, err)
 	}
 	binaryBytes, err := extractBinary(archiveBytes, asset.Name, release.Binary, command)
 	if err != nil {
-		return nil, fmt.Errorf("extract %s: %w", asset.Name, err)
+		return nil, nil, fmt.Errorf("extract %s: %w", asset.Name, err)
 	}
-	return binaryBytes, nil
+	return binaryBytes, archiveBytes, nil
+}
+
+// place installs the binary and its release dirs. The dirs are extracted
+// before the binary is written, so a refused archive changes nothing.
+func (i *Installer) place(target string, binary, archive []byte, assetName string, dirs []config.ArchiveDir) error {
+	staged, err := i.stageDirs(archive, assetName, dirs)
+	if err != nil {
+		return err
+	}
+	defer staged.discard()
+	if err := i.installFile(target, binary); err != nil {
+		return err
+	}
+	return staged.commit()
 }
 
 func (i *Installer) platform() string {
